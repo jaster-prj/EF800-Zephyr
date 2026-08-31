@@ -12,6 +12,15 @@
 - Native keyboard protocol tests.
 - MainApplication linked to its fixed `0x08030000` partition.
 - Compile-time and CI checks for the fixed image layout and image sizes.
+- Backend-neutral persistence API with safe names, read/write/append/stat/list/
+  remove operations, and a no-storage Zephyr adapter.
+- Workspace create, select, restore-current, list, and append behavior with a
+  deterministic native fake backend.
+- MainApplication Workspace menu integration with restore, create, select, and
+  list actions while storage remains disabled by default.
+- Position record formatting and Workspace append behavior using fixed-point
+  millimetres.
+- MainApplication Position entry dialog gated on a selected Workspace.
 
 ## Software verification
 
@@ -20,9 +29,10 @@ SDK `1.0.1`:
 
 - Second-level bootloader builds at `0x08000000` (`37264` bytes).
 - Backup application builds at `0x08010000` (`53500` bytes).
-- MainApplication builds at `0x08030000` (`86080` bytes).
+- MainApplication builds at `0x08030000` (`91116` bytes).
 - Keyboard-controller application builds (`20348` bytes).
-- Native keyboard protocol and RTC suite passes all five tests.
+- Native keyboard, protocol, RTC, persistence, and Position suite passes all ten
+  tests.
 
 The backup application currently uses about 82 percent of its 64 KiB
 partition. Treat additions to that recovery image as size-sensitive.
@@ -37,3 +47,6 @@ partition. Treat additions to that recovery image as size-sensitive.
 - USB switch polarity and USB VBUS behavior.
 - Production image signing and update package policy.
 - Final MainApplication port and external device protocol validation.
+- Physical QSPI/FAT validation of the Workspace and Position services.
+- Position input and persistence on hardware requires validated Workspace
+  storage.

@@ -18,7 +18,10 @@
 #include "ef800_max17043.h"
 #include "ef800_main.h"
 #include "ef800_mcp23017.h"
+#include "ef800_persistence.h"
+#include "ef800_position.h"
 #include "ef800_t6963.h"
+#include "ef800_workspace.h"
 #include "keyboard_host.h"
 
 LOG_MODULE_REGISTER(ef800_main_app, LOG_LEVEL_INF);
@@ -39,9 +42,45 @@ K_MSGQ_DEFINE(keyboard_rx_msgq, sizeof(uint8_t), KEYBOARD_RX_QUEUE_SIZE, 1);
 static struct ef800_mcp23017 mcp23017;
 static struct ef800_t6963 lcd;
 static struct ef800_max17043 fuel_gauge;
+static struct ef800_persistence persistence;
+static struct ef800_workspace workspace;
 static bool lcd_ready;
 static bool fuel_gauge_ready;
 static uint8_t menu_selection;
+
+enum application_menu {
+	APPLICATION_MENU_MAIN = 0,
+	APPLICATION_MENU_SETTINGS,
+	APPLICATION_MENU_WORKSPACE,
+	APPLICATION_MENU_WORKSPACE_CREATE,
+	APPLICATION_MENU_WORKSPACE_SELECT,
+	APPLICATION_MENU_WORKSPACE_LIST,
+	APPLICATION_MENU_POSITION,
+};
+
+#define WORKSPACE_LIST_MAX 16U
+
+static enum application_menu active_menu = APPLICATION_MENU_MAIN;
+static char workspace_input[EF800_WORKSPACE_NAME_MAX + 1U];
+static uint8_t workspace_input_length;
+static char workspace_names[WORKSPACE_LIST_MAX][EF800_WORKSPACE_NAME_MAX + 1U];
+static size_t workspace_name_count;
+
+enum position_editor_field {
+	POSITION_EDITOR_STP = 0,
+	POSITION_EDITOR_CODE,
+	POSITION_EDITOR_HEIGHT,
+};
+
+struct position_editor_state {
+	bool active;
+	enum position_editor_field field;
+	uint8_t length;
+	char input[EF800_POSITION_TEXT_MAX + 1U];
+	struct ef800_position_entry entry;
+};
+
+static struct position_editor_state position_editor;
 
 enum time_editor_field {
 	TIME_EDITOR_WEEKDAY,
@@ -72,6 +111,24 @@ static const char *const menu_items[] = {
 	"Measurement",
 	"Settings",
 };
+
+static const char *const menu_shortcuts[] = {"w", "s", "m", "e"};
+static const char *const settings_items[] = {
+	"Set time",
+	"Port assignment",
+};
+static const char *const settings_shortcuts[] = {"z", "p"};
+static const char *const workspace_items[] = {
+	"Restore current",
+	"Load existing",
+	"New workspace",
+	"List workspaces",
+};
+static const char *const workspace_shortcuts[] = {"l", "e", "n", "i"};
+
+static void start_time_editor(void);
+static void display_workspace_list(void);
+static void display_position_editor(void);
 
 static const struct gpio_dt_spec keyboard_reset =
 	GPIO_DT_SPEC_GET_OR(EF800_USER_NODE, keyboard_reset_gpios, {0});
@@ -143,20 +200,507 @@ static void display_banner(void)
 	display_line(0U, "EF800 MainApplication");
 	display_line(1U, "Zephyr runtime/menu foundation");
 	display_line(6U, "Keyboard startup...");
-	display_line(4U, "> Workspace");
-	display_line(5U, "  Position  Measurement");
+}
+
+static void display_menu_entries(const char *title, const char *const *items,
+				 const char *const *shortcuts, size_t count)
+{
+	char line[STATUS_LINE_SIZE];
+
+	display_line(0U, title);
+	if (ef800_workspace_is_selected(&workspace)) {
+		snprintk(line, sizeof(line), "Workspace: %s",
+			ef800_workspace_get_name(&workspace));
+	} else {
+		snprintk(line, sizeof(line), "Workspace: none");
+	}
+	display_line(1U, line);
+	for (size_t index = 0U; index < 4U; ++index) {
+		if (index < count) {
+			snprintk(line, sizeof(line), "%c %s [%s]",
+				index == menu_selection ? '>' : ' ', items[index],
+				shortcuts[index]);
+		} else {
+			line[0] = '\0';
+		}
+		display_line((uint8_t)(4U + index), line);
+	}
 }
 
 static void display_menu(void)
 {
+	display_menu_entries("Main menu", menu_items, menu_shortcuts,
+				     ARRAY_SIZE(menu_items));
+}
+
+static void display_settings_menu(void)
+{
+	display_menu_entries("Settings", settings_items, settings_shortcuts,
+				     ARRAY_SIZE(settings_items));
+}
+
+static void display_workspace_menu(void)
+{
+	display_menu_entries("Workspace", workspace_items, workspace_shortcuts,
+				     ARRAY_SIZE(workspace_items));
+}
+
+static void display_active_menu(void)
+{
+	switch (active_menu) {
+	case APPLICATION_MENU_SETTINGS:
+		display_settings_menu();
+		break;
+	case APPLICATION_MENU_WORKSPACE:
+		display_workspace_menu();
+		break;
+	case APPLICATION_MENU_WORKSPACE_SELECT:
+	case APPLICATION_MENU_WORKSPACE_LIST:
+		display_workspace_list();
+		break;
+	case APPLICATION_MENU_MAIN:
+	default:
+		display_menu();
+		break;
+	}
+}
+
+static size_t active_menu_count(void)
+{
+	switch (active_menu) {
+	case APPLICATION_MENU_SETTINGS:
+		return ARRAY_SIZE(settings_items);
+	case APPLICATION_MENU_WORKSPACE:
+		return ARRAY_SIZE(workspace_items);
+	case APPLICATION_MENU_WORKSPACE_SELECT:
+	case APPLICATION_MENU_WORKSPACE_LIST:
+		return workspace_name_count;
+	case APPLICATION_MENU_MAIN:
+	default:
+		return ARRAY_SIZE(menu_items);
+	}
+}
+
+static void move_menu_selection(int direction)
+{
+	size_t count = active_menu_count();
+
+	if (count == 0U) {
+		menu_selection = 0U;
+		return;
+	}
+	if (direction < 0 && menu_selection > 0U) {
+		--menu_selection;
+	} else if (direction > 0 && menu_selection + 1U < count) {
+		++menu_selection;
+	}
+	display_active_menu();
+}
+
+static void return_to_workspace_menu(void)
+{
+	active_menu = APPLICATION_MENU_WORKSPACE;
+	menu_selection = 0U;
+	display_workspace_menu();
+}
+
+static void return_to_main_menu(void)
+{
+	active_menu = APPLICATION_MENU_MAIN;
+	menu_selection = 0U;
+	display_menu();
+}
+
+static void return_from_child_menu(void)
+{
+	if (active_menu == APPLICATION_MENU_WORKSPACE ||
+	    active_menu == APPLICATION_MENU_SETTINGS) {
+		return_to_main_menu();
+	} else {
+		return_to_workspace_menu();
+	}
+}
+
+static void return_from_position_editor(void)
+{
+	position_editor.active = false;
+	(void)ef800_t6963_clear_text(&lcd);
+	active_menu = APPLICATION_MENU_MAIN;
+	menu_selection = 1U;
+	display_menu();
+}
+
+static void display_workspace_input(void)
+{
 	char line[STATUS_LINE_SIZE];
 
-	snprintk(line, sizeof(line), "> %s", menu_items[menu_selection]);
+	display_line(0U, "New workspace");
+	display_line(1U, "Use letters, numbers, _ - .");
+	snprintk(line, sizeof(line), "> %s", workspace_input);
 	display_line(4U, line);
-	snprintk(line, sizeof(line), "  %s  %s",
-		menu_items[(menu_selection + 1U) % ARRAY_SIZE(menu_items)],
-		menu_items[(menu_selection + 2U) % ARRAY_SIZE(menu_items)]);
+	display_line(6U, "ENTER create  ESC cancel");
+}
+
+static void display_workspace_list(void)
+{
+	size_t first;
+
+	display_line(0U, active_menu == APPLICATION_MENU_WORKSPACE_SELECT ?
+			"Load existing workspace" : "Workspaces");
+	if (workspace_name_count == 0U) {
+		display_line(4U, "No workspaces");
+		display_line(6U, "ESC back");
+		return;
+	}
+
+	first = menu_selection >= 3U ? menu_selection - 3U : 0U;
+	for (size_t row = 0U; row < 4U; ++row) {
+		char line[STATUS_LINE_SIZE];
+		size_t index = first + row;
+
+		if (index >= workspace_name_count) {
+			display_line((uint8_t)(3U + row), "");
+			continue;
+		}
+		snprintk(line, sizeof(line), "%c %s", index == menu_selection ? '>' : ' ',
+				workspace_names[index]);
+		display_line((uint8_t)(3U + row), line);
+	}
+	display_line(7U, active_menu == APPLICATION_MENU_WORKSPACE_SELECT ?
+			"ENTER select  ESC back" : "ESC back");
+}
+
+static const char *position_editor_prompt(enum position_editor_field field)
+{
+	switch (field) {
+	case POSITION_EDITOR_STP:
+		return "STP";
+	case POSITION_EDITOR_CODE:
+		return "Code";
+	case POSITION_EDITOR_HEIGHT:
+		return "Height metres";
+	default:
+		return "";
+	}
+}
+
+static void display_position_editor(void)
+{
+	char line[STATUS_LINE_SIZE];
+
+	display_line(0U, "Enter position");
+	if (ef800_workspace_is_selected(&workspace)) {
+		snprintk(line, sizeof(line), "Workspace: %s",
+			ef800_workspace_get_name(&workspace));
+	} else {
+		snprintk(line, sizeof(line), "Workspace: none");
+	}
+	display_line(1U, line);
+	snprintk(line, sizeof(line), "> %s: %s", position_editor_prompt(position_editor.field),
+		position_editor.input);
 	display_line(5U, line);
+	display_line(7U, "ENTER next  ESC cancel");
+}
+
+static void start_position_editor(void)
+{
+	memset(&position_editor, 0, sizeof(position_editor));
+	position_editor.active = true;
+	position_editor.field = POSITION_EDITOR_STP;
+	display_position_editor();
+}
+
+static void copy_position_field(void)
+{
+	switch (position_editor.field) {
+	case POSITION_EDITOR_STP:
+		strcpy(position_editor.entry.stp, position_editor.input);
+		break;
+	case POSITION_EDITOR_CODE:
+		strcpy(position_editor.entry.code, position_editor.input);
+		break;
+	default:
+		break;
+	}
+}
+
+static void handle_position_editor_key(uint8_t key)
+{
+	int32_t height;
+	int result;
+
+	if (key == 0x1BU) {
+		return_from_position_editor();
+		return;
+	}
+	if (key == 0x08U || key == 0x7FU) {
+		if (position_editor.length > 0U) {
+			position_editor.input[--position_editor.length] = '\0';
+			display_position_editor();
+		}
+		return;
+	}
+	if (key == '\r' || key == '\n') {
+		if (position_editor.length == 0U) {
+			display_line(6U, "Value is empty");
+			return;
+		}
+		if (position_editor.field == POSITION_EDITOR_HEIGHT) {
+			result = ef800_position_parse_height(position_editor.input, &height);
+			if (result != 0) {
+				display_line(6U, "Invalid height");
+				return;
+			}
+			position_editor.entry.height_millimeters = height;
+			result = ef800_position_append(&workspace, &position_editor.entry);
+			if (result != 0) {
+				display_line(6U, result == -ENODEV ?
+					"Workspace not selected" : "Position save failed");
+				LOG_WRN("Position append failed: %d", result);
+				return;
+			}
+			display_line(6U, "Position saved");
+			return_from_position_editor();
+			return;
+		}
+		copy_position_field();
+		position_editor.field++;
+		position_editor.length = 0U;
+		position_editor.input[0] = '\0';
+		display_position_editor();
+		return;
+	}
+	if (position_editor.field == POSITION_EDITOR_HEIGHT) {
+		if ((key >= '0' && key <= '9') ||
+		    ((key == '+' || key == '-') && position_editor.length == 0U) ||
+		    (key == '.' && position_editor.length > 0U &&
+		     strchr(position_editor.input, '.') == NULL)) {
+			if (position_editor.length + 1U < sizeof(position_editor.input)) {
+				position_editor.input[position_editor.length++] = (char)key;
+				position_editor.input[position_editor.length] = '\0';
+				display_position_editor();
+			}
+		}
+	} else if (ef800_position_text_char_valid((char)key) &&
+		   position_editor.length + 1U < sizeof(position_editor.input)) {
+		position_editor.input[position_editor.length++] = (char)key;
+		position_editor.input[position_editor.length] = '\0';
+		display_position_editor();
+	}
+}
+
+static int collect_workspace_name(const char *name, void *context)
+{
+	ARG_UNUSED(context);
+	if (workspace_name_count >= ARRAY_SIZE(workspace_names)) {
+		return -ENOSPC;
+	}
+	strcpy(workspace_names[workspace_name_count++], name);
+	return 0;
+}
+
+static int load_workspace_names(void)
+{
+	workspace_name_count = 0U;
+	return ef800_workspace_list(&workspace, collect_workspace_name, NULL);
+}
+
+static void display_workspace_result(const char *operation, int result)
+{
+	char line[STATUS_LINE_SIZE];
+
+	if (result == 0) {
+		snprintk(line, sizeof(line), "%s: %s", operation,
+			ef800_workspace_get_name(&workspace) == NULL ? "none" :
+			ef800_workspace_get_name(&workspace));
+	} else {
+		snprintk(line, sizeof(line), "%s failed (%d)", operation, result);
+	}
+	LOG_INF("%s", line);
+	display_line(6U, line);
+}
+
+static void open_workspace_list(bool select_workspace)
+{
+	int result = load_workspace_names();
+
+	if (result != 0) {
+		display_workspace_result("Workspace list", result);
+		return;
+	}
+	active_menu = select_workspace ? APPLICATION_MENU_WORKSPACE_SELECT :
+		APPLICATION_MENU_WORKSPACE_LIST;
+	menu_selection = 0U;
+	display_workspace_list();
+}
+
+static void activate_workspace_entry(void)
+{
+	int result;
+
+	switch (menu_selection) {
+	case 0U:
+		result = ef800_workspace_load_current(&workspace);
+		display_workspace_result("Restore current", result);
+		break;
+	case 1U:
+		open_workspace_list(true);
+		break;
+	case 2U:
+		memset(workspace_input, 0, sizeof(workspace_input));
+		workspace_input_length = 0U;
+		active_menu = APPLICATION_MENU_WORKSPACE_CREATE;
+		display_workspace_input();
+		break;
+	case 3U:
+		open_workspace_list(false);
+		break;
+	default:
+		break;
+	}
+}
+
+static void activate_menu_entry(void)
+{
+	if (active_menu == APPLICATION_MENU_MAIN) {
+		switch (menu_selection) {
+		case 0U:
+			active_menu = APPLICATION_MENU_WORKSPACE;
+			menu_selection = 0U;
+			display_workspace_menu();
+			break;
+		case 1U:
+			if (!ef800_workspace_is_selected(&workspace)) {
+				display_line(6U, "Workspace not selected");
+				LOG_INF("Position entry requires a selected Workspace");
+			} else {
+				start_position_editor();
+			}
+			break;
+		case 3U:
+			active_menu = APPLICATION_MENU_SETTINGS;
+			menu_selection = 0U;
+			display_settings_menu();
+			break;
+		default:
+			display_line(6U, "Not implemented yet");
+			LOG_INF("Menu entry not implemented: %s", menu_items[menu_selection]);
+			break;
+		}
+		return;
+	}
+	if (active_menu == APPLICATION_MENU_SETTINGS) {
+		if (menu_selection == 0U) {
+			start_time_editor();
+		} else {
+			display_line(6U, "Port assignment not implemented");
+			LOG_INF("Port assignment is not implemented");
+		}
+		return;
+	}
+	if (active_menu == APPLICATION_MENU_WORKSPACE) {
+		activate_workspace_entry();
+	}
+}
+
+static bool workspace_input_character_valid(uint8_t key)
+{
+	return (key >= 'a' && key <= 'z') || (key >= 'A' && key <= 'Z') ||
+	       (key >= '0' && key <= '9') || key == '_' || key == '-' || key == '.';
+}
+
+static void handle_workspace_dialog_key(uint8_t key)
+{
+	int result;
+
+	if (key == 0x1BU || key == 0x08U || key == 0x7FU) {
+		if (active_menu == APPLICATION_MENU_WORKSPACE_CREATE &&
+		    key != 0x1BU && workspace_input_length > 0U) {
+			workspace_input[--workspace_input_length] = '\0';
+			display_workspace_input();
+		} else {
+			return_to_workspace_menu();
+		}
+		return;
+	}
+	if (key == '\r' || key == '\n') {
+		if (active_menu == APPLICATION_MENU_WORKSPACE_CREATE) {
+			if (workspace_input_length == 0U) {
+				display_line(6U, "Workspace name is empty");
+				return;
+			}
+			result = ef800_workspace_create(&workspace, workspace_input);
+			display_workspace_result("Create workspace", result);
+			if (result == 0) {
+				return_to_workspace_menu();
+			}
+			return;
+		}
+		if (active_menu == APPLICATION_MENU_WORKSPACE_SELECT &&
+		    workspace_name_count > 0U) {
+			result = ef800_workspace_select(&workspace,
+						workspace_names[menu_selection]);
+			display_workspace_result("Load workspace", result);
+			if (result == 0) {
+				return_to_workspace_menu();
+			}
+		}
+		return;
+	}
+	if (active_menu == APPLICATION_MENU_WORKSPACE_CREATE &&
+	    workspace_input_character_valid(key) &&
+	    workspace_input_length + 1U < sizeof(workspace_input)) {
+		workspace_input[workspace_input_length++] = (char)key;
+		workspace_input[workspace_input_length] = '\0';
+		display_workspace_input();
+	}
+}
+
+static bool handle_application_key(uint8_t key)
+{
+	const char *const *shortcuts;
+	size_t count;
+
+	if (position_editor.active) {
+		handle_position_editor_key(key);
+		return true;
+	}
+	if (active_menu == APPLICATION_MENU_WORKSPACE_CREATE ||
+	    active_menu == APPLICATION_MENU_WORKSPACE_SELECT ||
+	    active_menu == APPLICATION_MENU_WORKSPACE_LIST) {
+		handle_workspace_dialog_key(key);
+		return true;
+	}
+	if (key == 0x1BU || key == 0x08U || key == 0x7FU) {
+		if (active_menu == APPLICATION_MENU_MAIN) {
+			display_line(6U, "Already at main menu");
+		} else {
+			return_from_child_menu();
+		}
+		return true;
+	}
+	if (key == '\r' || key == '\n') {
+		activate_menu_entry();
+		return true;
+	}
+	if (active_menu == APPLICATION_MENU_MAIN) {
+		shortcuts = menu_shortcuts;
+		count = ARRAY_SIZE(menu_items);
+	} else if (active_menu == APPLICATION_MENU_SETTINGS) {
+		shortcuts = settings_shortcuts;
+		count = ARRAY_SIZE(settings_items);
+	} else {
+		shortcuts = workspace_shortcuts;
+		count = ARRAY_SIZE(workspace_items);
+	}
+	for (size_t index = 0U; index < count; ++index) {
+		if (key == (uint8_t)shortcuts[index][0]) {
+			menu_selection = (uint8_t)index;
+			activate_menu_entry();
+			return true;
+		}
+	}
+	return false;
 }
 
 static void draw_battery_icon(uint8_t soc)
@@ -421,7 +965,9 @@ static void finish_time_editor(void)
 		time_editor.active = false;
 		(void)ef800_t6963_clear_text(&lcd);
 		display_banner();
-		display_menu();
+		active_menu = APPLICATION_MENU_SETTINGS;
+		menu_selection = 0U;
+		display_settings_menu();
 	} else {
 		LOG_ERR("RTC update failed: %d", ret);
 		display_line(6U, "RTC update failed; retry");
@@ -438,7 +984,9 @@ static void handle_time_editor_key(uint8_t key)
 		time_editor.active = false;
 		(void)ef800_t6963_clear_text(&lcd);
 		display_banner();
-		display_menu();
+		active_menu = APPLICATION_MENU_SETTINGS;
+		menu_selection = 0U;
+		display_settings_menu();
 		return;
 	}
 	if (key == 0x08U || key == 0x7FU) {
@@ -590,27 +1138,32 @@ static void handle_keyboard_event(uint32_t event)
 		}
 		return;
 	}
+	if (time_editor.active) {
+		return;
+	}
+	if (position_editor.active) {
+		if ((event & KB_EVENT_ARROWLEFT) != 0U) {
+			return_from_position_editor();
+		}
+		return;
+	}
 	if ((event & KB_EVENT_ARROWUP) != 0U) {
-		menu_selection = (menu_selection + ARRAY_SIZE(menu_items) - 1U) %
-			ARRAY_SIZE(menu_items);
-		display_menu();
-		LOG_INF("Menu selection: %s", menu_items[menu_selection]);
+		move_menu_selection(-1);
 		return;
 	}
 	if ((event & KB_EVENT_ARROWDOWN) != 0U) {
-		menu_selection = (menu_selection + 1U) % ARRAY_SIZE(menu_items);
-		display_menu();
-		LOG_INF("Menu selection: %s", menu_items[menu_selection]);
+		move_menu_selection(1);
 		return;
 	}
 	if ((event & KB_EVENT_ARROWLEFT) != 0U) {
-		LOG_INF("Menu back");
-		display_line(6U, "Menu back");
+		if (active_menu != APPLICATION_MENU_MAIN) {
+			LOG_INF("Menu back");
+			return_from_child_menu();
+		}
 		return;
 	}
 	if ((event & KB_EVENT_ARROWRIGHT) != 0U) {
-		LOG_INF("Menu open: %s", menu_items[menu_selection]);
-		display_line(6U, menu_items[menu_selection]);
+		activate_menu_entry();
 		return;
 	}
 
@@ -647,13 +1200,7 @@ static void process_keyboard_output(void)
 				(key >= 0x20U && key < 0x7FU) ? key : '.');
 			display_line(7U, line);
 		}
-		if (key == '\r' || key == '\n') {
-			LOG_INF("Menu activate: %s", menu_items[menu_selection]);
-			display_line(6U, menu_items[menu_selection]);
-		}
-		if (key == 'z') {
-			start_time_editor();
-		}
+		(void)handle_application_key(key);
 	}
 	while (ef800_keyboard_host_get_event(&keyboard_host, &event) == 0) {
 		handle_keyboard_event(event);
@@ -721,6 +1268,21 @@ int main(void)
 	uint16_t mcp_port;
 
 	(void)ef800_main_foundation_init();
+	result = ef800_persistence_init(&persistence,
+				       ef800_persistence_zephyr_backend());
+	if (result != 0) {
+		LOG_ERR("Persistence service initialization failed: %d", result);
+	} else {
+		result = ef800_workspace_init(&workspace, &persistence);
+		if (result != 0) {
+			LOG_ERR("Workspace service initialization failed: %d", result);
+		} else if (ef800_storage_is_mounted()) {
+			result = ef800_workspace_load_current(&workspace);
+			if (result != 0 && result != -ENOENT) {
+				LOG_WRN("Current Workspace unavailable: %d", result);
+			}
+		}
+	}
 
 #if DT_HAS_COMPAT_STATUS_OKAY(microchip_mcp23017)
 result = ef800_mcp23017_open(&mcp23017,

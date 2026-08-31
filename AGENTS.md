@@ -92,7 +92,7 @@ cache. Build into a new directory or remove only that ignored build directory.
 
 ## Tests
 
-Build and run the native keyboard, protocol, and RTC tests with:
+Build and run the native keyboard, protocol, RTC, and persistence tests with:
 
 ```powershell
 docker exec -w /workspace EF800_Devcontainer /opt/venv/bin/west build -p always -b native_sim application/tests/keyboard_protocol -d application/build/keyboard-protocol
@@ -100,7 +100,7 @@ docker exec -w /workspace EF800_Devcontainer application/build/keyboard-protocol
 ```
 
 All four firmware builds and the native tests must pass before considering a
-porting increment complete.
+porting increment complete. The current closeout baseline is 10 native tests.
 
 ## Image Contract
 

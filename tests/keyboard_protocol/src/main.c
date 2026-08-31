@@ -5,6 +5,10 @@
 #include "keyboard_protocol.h"
 #include "keyboard_translation.h"
 #include "ef800_time.h"
+#include "ef800_persistence.h"
+#include "ef800_persistence_fake.h"
+#include "ef800_position.h"
+#include "ef800_workspace.h"
 
 ZTEST(keyboard_protocol, test_raw_key_map)
 {
@@ -159,6 +163,185 @@ ZTEST(keyboard_protocol, test_rtc_date_validation)
 	zassert_true(ef800_rtc_time_valid(&leap_day), NULL);
 	zassert_false(ef800_rtc_time_valid(&invalid_day), NULL);
 	zassert_false(ef800_rtc_time_valid(&invalid_weekday), NULL);
+}
+
+struct workspace_names {
+	char values[4][EF800_WORKSPACE_NAME_MAX + 1U];
+	size_t count;
+};
+
+static int collect_workspace_name(const char *name, void *context)
+{
+	struct workspace_names *names = context;
+
+	if (names->count >= ARRAY_SIZE(names->values)) {
+		return -ENOMEM;
+	}
+	strcpy(names->values[names->count++], name);
+	return 0;
+}
+
+static int ignore_persistence_entry(
+	const struct ef800_persistence_entry *entry, void *context)
+{
+	ARG_UNUSED(entry);
+	ARG_UNUSED(context);
+	return 0;
+}
+
+ZTEST(keyboard_protocol, test_persistence_name_validation)
+{
+	zassert_true(ef800_persistence_valid_name("settings/time"), NULL);
+	zassert_true(ef800_persistence_valid_name("workspace.dat"), NULL);
+	zassert_false(ef800_persistence_valid_name(NULL), NULL);
+	zassert_false(ef800_persistence_valid_name(""), NULL);
+	zassert_false(ef800_persistence_valid_name("/absolute"), NULL);
+	zassert_false(ef800_persistence_valid_name("../escape"), NULL);
+	zassert_false(ef800_persistence_valid_name("safe/../escape"), NULL);
+	zassert_false(ef800_persistence_valid_name("safe//name"), NULL);
+	zassert_false(ef800_persistence_valid_name("not safe"), NULL);
+	zassert_false(ef800_persistence_valid_name("trailing/"), NULL);
+}
+
+ZTEST(keyboard_protocol, test_disabled_zephyr_persistence)
+{
+	struct ef800_persistence storage;
+	const struct ef800_persistence_backend *backend =
+		ef800_persistence_zephyr_backend();
+	char buffer[8];
+	size_t length;
+
+	zassert_not_null(backend, NULL);
+	zassert_ok(ef800_persistence_init(&storage, backend), NULL);
+	zassert_equal(ef800_persistence_read(&storage,
+					EF800_PERSISTENCE_DATA, "alpha.dat",
+					buffer, sizeof(buffer), &length), -ENOTSUP, NULL);
+	zassert_equal(ef800_persistence_write(&storage,
+					 EF800_PERSISTENCE_DATA, "alpha.dat",
+					 "x", 1U), -ENOTSUP, NULL);
+	zassert_equal(ef800_persistence_list(&storage,
+					 EF800_PERSISTENCE_DATA, ignore_persistence_entry,
+					 NULL), -ENOTSUP, NULL);
+}
+
+ZTEST(keyboard_protocol, test_workspace_persistence)
+{
+	struct ef800_persistence_fake fake;
+	struct ef800_persistence storage;
+	struct ef800_workspace workspace;
+	struct ef800_workspace restored;
+	struct ef800_persistence_entry entry;
+	struct workspace_names names = {0};
+	char content[32] = {0};
+	size_t length;
+	int ret;
+
+	ef800_persistence_fake_init(&fake);
+	zassert_ok(ef800_persistence_init(&storage, &fake.backend), NULL);
+	zassert_ok(ef800_workspace_init(&workspace, &storage), NULL);
+
+	zassert_ok(ef800_workspace_create(&workspace, "alpha"), NULL);
+	zassert_true(ef800_workspace_is_selected(&workspace), NULL);
+	zassert_str_equal(ef800_workspace_get_name(&workspace), "alpha");
+	zassert_str_equal(ef800_workspace_get_filename(&workspace), "alpha.dat");
+	zassert_equal(ef800_workspace_create(&workspace, "alpha"), -EEXIST, NULL);
+
+	zassert_ok(ef800_workspace_append(&workspace, "P1\n", 3U), NULL);
+	zassert_ok(ef800_persistence_read(&storage, EF800_PERSISTENCE_DATA,
+					 "alpha.dat", content, sizeof(content), &length), NULL);
+	zassert_equal(length, 3U, NULL);
+	zassert_mem_equal(content, "P1\n", 3U, NULL);
+
+	zassert_ok(ef800_workspace_create(&workspace, "beta"), NULL);
+	zassert_str_equal(ef800_workspace_get_name(&workspace), "beta");
+	zassert_ok(ef800_workspace_select(&workspace, "alpha"), NULL);
+	zassert_str_equal(ef800_workspace_get_name(&workspace), "alpha");
+
+	zassert_ok(ef800_persistence_write(&storage,
+					EF800_PERSISTENCE_CONFIGURATION,
+					EF800_WORKSPACE_CONFIGURATION_FILE,
+					"alpha.dat\r\n", 10U), NULL);
+	zassert_ok(ef800_workspace_init(&restored, &storage), NULL);
+	zassert_ok(ef800_workspace_load_current(&restored), NULL);
+	zassert_str_equal(ef800_workspace_get_name(&restored), "alpha");
+	zassert_str_equal(ef800_workspace_get_filename(&restored), "alpha.dat");
+
+	zassert_ok(ef800_persistence_write(&storage, EF800_PERSISTENCE_DATA,
+					"readme.txt", "ignored", 7U), NULL);
+	zassert_ok(ef800_workspace_list(&restored, collect_workspace_name, &names),
+			   NULL);
+	zassert_equal(names.count, 2U, NULL);
+	zassert_str_equal(names.values[0], "alpha");
+	zassert_str_equal(names.values[1], "beta");
+
+	zassert_ok(ef800_persistence_stat(&storage, EF800_PERSISTENCE_DATA,
+					 "alpha.dat", &entry), NULL);
+	zassert_equal(entry.type, EF800_PERSISTENCE_FILE, NULL);
+	zassert_equal(entry.size, 3U, NULL);
+	zassert_ok(ef800_persistence_remove(&storage, EF800_PERSISTENCE_DATA,
+					"beta.dat"), NULL);
+	zassert_equal(ef800_persistence_stat(&storage, EF800_PERSISTENCE_DATA,
+						"beta.dat", &entry), -ENOENT, NULL);
+	ret = ef800_workspace_init(&restored, &storage);
+	zassert_ok(ret, NULL);
+	zassert_equal(ef800_workspace_select(&restored, "missing"), -ENOENT, NULL);
+}
+
+ZTEST(keyboard_protocol, test_position_record_format)
+{
+	struct ef800_position_entry entry = {
+		.stp = "STP1",
+		.code = "P001",
+		.height_millimeters = 1234,
+	};
+	char record[96];
+	int32_t height;
+
+	zassert_ok(ef800_position_parse_height("1.234", &height), NULL);
+	zassert_equal(height, 1234, NULL);
+	zassert_ok(ef800_position_parse_height("-0.5", &height), NULL);
+	zassert_equal(height, -500, NULL);
+	zassert_ok(ef800_position_parse_height("+2", &height), NULL);
+	zassert_equal(height, 2000, NULL);
+	zassert_equal(ef800_position_parse_height("1.2345", &height), -EINVAL,
+		      NULL);
+	zassert_equal(ef800_position_parse_height("1.", &height), -EINVAL, NULL);
+	zassert_equal(ef800_position_parse_height("abc", &height), -EINVAL, NULL);
+	zassert_true(ef800_position_text_valid("P-001;A"), NULL);
+	zassert_false(ef800_position_text_valid("P 001"), NULL);
+
+	zassert_true(ef800_position_format_record(&entry, record, sizeof(record)) > 0,
+		     NULL);
+	zassert_str_equal(record, "-STP1 1.234 P001 \r");
+
+	entry.height_millimeters = -500;
+	zassert_true(ef800_position_format_record(&entry, record, sizeof(record)) > 0,
+		     NULL);
+	zassert_str_equal(record, "-STP1 -0.500 P001 \r");
+}
+
+ZTEST(keyboard_protocol, test_position_append_to_workspace)
+{
+	struct ef800_persistence_fake fake;
+	struct ef800_persistence storage;
+	struct ef800_workspace workspace;
+	struct ef800_position_entry position = {
+		.stp = "STP1",
+		.code = "P001",
+		.height_millimeters = 2500,
+	};
+	char content[64] = {0};
+	size_t length;
+
+	ef800_persistence_fake_init(&fake);
+	zassert_ok(ef800_persistence_init(&storage, &fake.backend), NULL);
+	zassert_ok(ef800_workspace_init(&workspace, &storage), NULL);
+	zassert_ok(ef800_workspace_create(&workspace, "survey"), NULL);
+	zassert_ok(ef800_position_append(&workspace, &position), NULL);
+	zassert_ok(ef800_persistence_read(&storage, EF800_PERSISTENCE_DATA,
+					 "survey.dat", content, sizeof(content), &length), NULL);
+	zassert_equal(length, strlen("-STP1 2.500 P001 \r"), NULL);
+	zassert_mem_equal(content, "-STP1 2.500 P001 \r", length, NULL);
 }
 
 ZTEST_SUITE(keyboard_protocol, NULL, NULL, NULL, NULL, NULL);

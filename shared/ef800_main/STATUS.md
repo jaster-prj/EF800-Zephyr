@@ -22,14 +22,19 @@ Initialized by this increment:
 - Keyboard RTC editor: press `z`, enter weekday, date, month, year, hour,
   minute, second, UTC offset as hours or `HH:MM`, and DST (`0` or `1`); the
   final Enter writes the RTC.
+- Backend-neutral persistence and Workspace services with safe path handling,
+  native fake storage, Workspace create/select/restore/list, and append.
+- MainApplication Workspace menu and Position entry dialog. Position records use
+  fixed-point millimetres and append through the selected Workspace.
 - Shell commands on the console UART:
   - `rtc get`
   - `rtc set YYYY-MM-DDTHH:MM:SS offset_hours_or_HH:MM dst`
 
 Still not ported:
 
-- Legacy Mbed C++ menu, Elta3/FTS3XX device protocols, port assignment,
-  workspace persistence, and USB application behavior.
+- Elta3/FTS3XX device protocols, typed port assignment, and USB application
+  behavior.
+- Workspace/Position operation against the physical QSPI/FAT volume.
 - Production validation of the fitted QSPI part and existing FAT contents.
 - DS3231 alarm/update workflows and board-specific alarm/interrupt wiring.
 - Hardware validation of T6963 bus timing, pixel bit order, and control-line
