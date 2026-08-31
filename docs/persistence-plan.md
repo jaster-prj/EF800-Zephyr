@@ -106,8 +106,12 @@ Before enabling `CONFIG_EF800_MAIN_STORAGE`:
 
 ## Phase 5: Port and Device Persistence
 
-- Add typed port-assignment records with explicit version and checksum.
-- Add validated builder-ID lookup and unknown-ID handling.
+Status: typed port assignments implemented in this increment; device
+configuration persistence remains deferred until protocol ownership and UART
+routing are available.
+
+- Define typed port-assignment records with explicit version and checksum.
+- Validate builder-ID lookup, port IDs, and capability compatibility.
 - Add Debug, FTS3XX, and Elta3 configuration persistence only after typed port
   ownership and UART routing are resolved.
 - Keep USB MSD persistence last because it shares the QSPI ownership boundary.

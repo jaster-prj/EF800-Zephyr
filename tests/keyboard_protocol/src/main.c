@@ -8,6 +8,7 @@
 #include "ef800_persistence.h"
 #include "ef800_persistence_fake.h"
 #include "ef800_position.h"
+#include "ef800_ports.h"
 #include "ef800_workspace.h"
 
 ZTEST(keyboard_protocol, test_raw_key_map)
@@ -342,6 +343,134 @@ ZTEST(keyboard_protocol, test_position_append_to_workspace)
 					 "survey.dat", content, sizeof(content), &length), NULL);
 	zassert_equal(length, strlen("-STP1 2.500 P001 \r"), NULL);
 	zassert_mem_equal(content, "-STP1 2.500 P001 \r", length, NULL);
+}
+
+ZTEST(keyboard_protocol, test_port_descriptors_and_compatibility)
+{
+	const struct ef800_port_descriptor *parallel = ef800_port_get(1U);
+	const struct ef800_port_descriptor *serial = ef800_port_get(2U);
+	const struct ef800_port_descriptor *usb = ef800_port_get(4U);
+	const struct ef800_port_device_descriptor *debug =
+		ef800_port_device_get(EF800_PORT_BUILDER_DEBUG);
+	const struct ef800_port_device_descriptor *elta3 =
+		ef800_port_device_get(EF800_PORT_BUILDER_ELTA3);
+	const struct ef800_port_device_descriptor *msd =
+		ef800_port_device_get(EF800_PORT_BUILDER_MSD);
+
+	zassert_equal(ef800_port_count(), EF800_PORT_COUNT, NULL);
+	zassert_equal(ef800_port_device_count(), EF800_PORT_DEVICE_COUNT, NULL);
+	zassert_not_null(parallel, NULL);
+	zassert_not_null(serial, NULL);
+	zassert_not_null(usb, NULL);
+	zassert_true((parallel->capabilities & EF800_PORT_CAP_PARALLEL) != 0U, NULL);
+	zassert_true(ef800_port_device_is_compatible(parallel, debug), NULL);
+	zassert_true(ef800_port_device_is_compatible(serial, elta3), NULL);
+	zassert_false(ef800_port_device_is_compatible(serial, msd), NULL);
+	zassert_true(ef800_port_device_is_compatible(usb, debug), NULL);
+	zassert_true(ef800_port_device_is_compatible(usb, msd), NULL);
+	zassert_is_null(ef800_port_get(0U), NULL);
+	zassert_is_null(ef800_port_device_get(99U), NULL);
+}
+
+ZTEST(keyboard_protocol, test_port_assignment_record_validation)
+{
+	struct ef800_port_assignment_state state = {
+		.port_id = 1U,
+		.builder_id = EF800_PORT_BUILDER_DEBUG,
+		.assigned = true,
+	};
+	struct ef800_port_assignment_state decoded;
+	uint8_t record[EF800_PORT_ASSIGNMENT_RECORD_SIZE];
+	uint8_t invalid[EF800_PORT_ASSIGNMENT_RECORD_SIZE];
+	size_t length;
+
+	zassert_ok(ef800_port_assignment_encode(&state, record, sizeof(record),
+						&length), NULL);
+	zassert_equal(length, EF800_PORT_ASSIGNMENT_RECORD_SIZE, NULL);
+	zassert_ok(ef800_port_assignment_decode(record, length, &decoded), NULL);
+	zassert_equal(decoded.port_id, state.port_id, NULL);
+	zassert_equal(decoded.builder_id, state.builder_id, NULL);
+	zassert_true(decoded.assigned, NULL);
+
+	memcpy(invalid, record, sizeof(invalid));
+	invalid[0] = 'X';
+	zassert_equal(ef800_port_assignment_decode(invalid, sizeof(invalid),
+							  &decoded), -EINVAL, NULL);
+	memcpy(invalid, record, sizeof(invalid));
+	invalid[2]++;
+	zassert_equal(ef800_port_assignment_decode(invalid, sizeof(invalid),
+							  &decoded), -EINVAL, NULL);
+	memcpy(invalid, record, sizeof(invalid));
+	invalid[4] = 4U;
+	zassert_equal(ef800_port_assignment_decode(invalid, sizeof(invalid),
+							  &decoded), -EINVAL, NULL);
+	memcpy(invalid, record, sizeof(invalid));
+	invalid[5] = EF800_PORT_BUILDER_MSD;
+	zassert_equal(ef800_port_assignment_decode(invalid, sizeof(invalid),
+							  &decoded), -EINVAL, NULL);
+	memcpy(invalid, record, sizeof(invalid));
+	invalid[8]++;
+	zassert_equal(ef800_port_assignment_decode(invalid, sizeof(invalid),
+							  &decoded), -EINVAL, NULL);
+	zassert_equal(ef800_port_assignment_decode(record, length - 1U, &decoded),
+				      -EINVAL, NULL);
+	state.assigned = false;
+	zassert_equal(ef800_port_assignment_encode(&state, record, sizeof(record),
+						&length), -EINVAL, NULL);
+}
+
+ZTEST(keyboard_protocol, test_port_assignment_persistence)
+{
+	struct ef800_persistence_fake fake;
+	struct ef800_persistence storage;
+	struct ef800_port_assignment_service service;
+	struct ef800_port_assignment_service restored;
+	uint8_t record[EF800_PORT_ASSIGNMENT_RECORD_SIZE];
+	char name[] = "port_1";
+	size_t length;
+
+	ef800_persistence_fake_init(&fake);
+	zassert_ok(ef800_persistence_init(&storage, &fake.backend), NULL);
+	zassert_ok(ef800_port_assignment_init(&service, &storage), NULL);
+	zassert_false(ef800_port_assignment_is_assigned(&service, 1U), NULL);
+	zassert_ok(ef800_port_assignment_set(&service, 1U,
+						 EF800_PORT_BUILDER_DEBUG), NULL);
+	zassert_true(ef800_port_assignment_is_assigned(&service, 1U), NULL);
+	zassert_equal(ef800_port_assignment_get_builder(&service, 1U),
+			      EF800_PORT_BUILDER_DEBUG, NULL);
+	zassert_equal(ef800_port_assignment_set(&service, 4U,
+						 EF800_PORT_BUILDER_ELTA3), -EINVAL, NULL);
+	zassert_equal(ef800_port_assignment_get_builder(&service, 4U),
+			      EF800_PORT_BUILDER_NONE, NULL);
+
+	zassert_ok(ef800_persistence_read(&storage,
+					 EF800_PERSISTENCE_CONFIGURATION, name, record,
+					 sizeof(record), &length), NULL);
+	zassert_equal(ef800_port_assignment_decode(record, length, NULL), -EINVAL,
+			      NULL);
+	zassert_ok(ef800_port_assignment_init(&restored, &storage), NULL);
+	zassert_ok(ef800_port_assignment_load(&restored, 1U), NULL);
+	zassert_equal(ef800_port_assignment_get_builder(&restored, 1U),
+			      EF800_PORT_BUILDER_DEBUG, NULL);
+	zassert_ok(ef800_port_assignment_remove(&restored, 1U), NULL);
+	zassert_false(ef800_port_assignment_is_assigned(&restored, 1U), NULL);
+	zassert_ok(ef800_port_assignment_remove(&restored, 1U), NULL);
+	zassert_equal(ef800_port_assignment_load(&restored, 4U), 0, NULL);
+}
+
+ZTEST(keyboard_protocol, test_disabled_port_assignment_storage)
+{
+	struct ef800_persistence storage;
+	struct ef800_port_assignment_service service;
+
+	zassert_ok(ef800_persistence_init(&storage,
+					 ef800_persistence_zephyr_backend()), NULL);
+	zassert_ok(ef800_port_assignment_init(&service, &storage), NULL);
+	zassert_equal(ef800_port_assignment_set(&service, 1U,
+						 EF800_PORT_BUILDER_DEBUG), -ENOTSUP, NULL);
+	zassert_false(ef800_port_assignment_is_assigned(&service, 1U), NULL);
+	zassert_equal(ef800_port_assignment_load(&service, 1U), -ENOTSUP, NULL);
+	zassert_false(ef800_port_assignment_is_assigned(&service, 1U), NULL);
 }
 
 ZTEST_SUITE(keyboard_protocol, NULL, NULL, NULL, NULL, NULL);

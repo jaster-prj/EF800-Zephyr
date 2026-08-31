@@ -20,6 +20,7 @@
 #include "ef800_mcp23017.h"
 #include "ef800_persistence.h"
 #include "ef800_position.h"
+#include "ef800_ports.h"
 #include "ef800_t6963.h"
 #include "ef800_workspace.h"
 #include "keyboard_host.h"
@@ -44,9 +45,11 @@ static struct ef800_t6963 lcd;
 static struct ef800_max17043 fuel_gauge;
 static struct ef800_persistence persistence;
 static struct ef800_workspace workspace;
+static struct ef800_port_assignment_service port_assignments;
 static bool lcd_ready;
 static bool fuel_gauge_ready;
 static uint8_t menu_selection;
+static uint8_t selected_port_index;
 
 enum application_menu {
 	APPLICATION_MENU_MAIN = 0,
@@ -56,6 +59,8 @@ enum application_menu {
 	APPLICATION_MENU_WORKSPACE_SELECT,
 	APPLICATION_MENU_WORKSPACE_LIST,
 	APPLICATION_MENU_POSITION,
+	APPLICATION_MENU_PORTS,
+	APPLICATION_MENU_PORT_DEVICES,
 };
 
 #define WORKSPACE_LIST_MAX 16U
@@ -129,6 +134,8 @@ static const char *const workspace_shortcuts[] = {"l", "e", "n", "i"};
 static void start_time_editor(void);
 static void display_workspace_list(void);
 static void display_position_editor(void);
+static void display_port_assignment_ports(void);
+static void display_port_assignment_devices(void);
 
 static const struct gpio_dt_spec keyboard_reset =
 	GPIO_DT_SPEC_GET_OR(EF800_USER_NODE, keyboard_reset_gpios, {0});
@@ -245,6 +252,111 @@ static void display_workspace_menu(void)
 				     ARRAY_SIZE(workspace_items));
 }
 
+static void display_port_assignment_ports(void)
+{
+	char line[STATUS_LINE_SIZE];
+
+	display_line(0U, "Port assignment");
+	display_line(1U, "Select a logical port");
+	for (size_t index = 0U; index < EF800_PORT_COUNT; ++index) {
+		const struct ef800_port_descriptor *port = ef800_port_at(index);
+		const struct ef800_port_device_descriptor *device = NULL;
+
+		if (ef800_port_assignment_is_assigned(&port_assignments, port->id)) {
+			device = ef800_port_device_get(
+				ef800_port_assignment_get_builder(&port_assignments, port->id));
+		}
+		snprintk(line, sizeof(line), "%c %c %s: %s",
+			index == menu_selection ? '>' : ' ', port->shortcut, port->title,
+			device == NULL ? "none" : device->title);
+		display_line((uint8_t)(3U + index), line);
+	}
+	display_line(7U, "ENTER edit  ESC back");
+}
+
+static size_t compatible_device_count(const struct ef800_port_descriptor *port)
+{
+	size_t count = 0U;
+
+	if (port == NULL) {
+		return 0U;
+	}
+	for (size_t index = 0U; index < ef800_port_device_count(); ++index) {
+		if (ef800_port_device_is_compatible(port,
+							 ef800_port_device_at(index))) {
+			++count;
+		}
+	}
+	return count;
+}
+
+static size_t port_assignment_device_count(void)
+{
+	const struct ef800_port_descriptor *port =
+		ef800_port_at(selected_port_index);
+
+	return compatible_device_count(port) + 1U;
+}
+
+static const struct ef800_port_device_descriptor *device_at_selection(
+	const struct ef800_port_descriptor *port, size_t selection)
+{
+	size_t compatible_index = 0U;
+
+	if (port == NULL) {
+		return NULL;
+	}
+	for (size_t index = 0U; index < ef800_port_device_count(); ++index) {
+		const struct ef800_port_device_descriptor *device =
+			ef800_port_device_at(index);
+		if (ef800_port_device_is_compatible(port, device)) {
+			if (compatible_index++ == selection) {
+				return device;
+			}
+		}
+	}
+	return NULL;
+}
+
+static void display_port_assignment_devices(void)
+{
+	const struct ef800_port_descriptor *port = ef800_port_at(selected_port_index);
+	const struct ef800_port_device_descriptor *current;
+	char line[STATUS_LINE_SIZE];
+	size_t row = 3U;
+	size_t device_index = 0U;
+
+	if (port == NULL) {
+		return;
+	}
+	display_line(0U, "Port assignment");
+	snprintk(line, sizeof(line), "Port %u: %s", port->id, port->title);
+	display_line(1U, line);
+	current = ef800_port_device_get(ef800_port_assignment_get_builder(
+		&port_assignments, port->id));
+	if (!ef800_port_assignment_is_assigned(&port_assignments, port->id)) {
+		current = NULL;
+	}
+	snprintk(line, sizeof(line), "Current: %s", current == NULL ? "none" : current->title);
+	display_line(2U, line);
+	for (size_t index = 0U; index < ef800_port_device_count(); ++index) {
+		const struct ef800_port_device_descriptor *device =
+			ef800_port_device_at(index);
+		if (!ef800_port_device_is_compatible(port, device)) {
+			continue;
+		}
+		snprintk(line, sizeof(line), "%c %s [%c]",
+			device_index == menu_selection ? '>' : ' ', device->title,
+			device->shortcut);
+		display_line((uint8_t)row++, line);
+		++device_index;
+	}
+	snprintk(line, sizeof(line), "%c Remove assignment [r]",
+		menu_selection == device_index ? '>' : ' ');
+	display_line((uint8_t)row, line);
+	display_line(7U, "ENTER select  ESC back");
+}
+
 static void display_active_menu(void)
 {
 	switch (active_menu) {
@@ -253,6 +365,12 @@ static void display_active_menu(void)
 		break;
 	case APPLICATION_MENU_WORKSPACE:
 		display_workspace_menu();
+		break;
+	case APPLICATION_MENU_PORTS:
+		display_port_assignment_ports();
+		break;
+	case APPLICATION_MENU_PORT_DEVICES:
+		display_port_assignment_devices();
 		break;
 	case APPLICATION_MENU_WORKSPACE_SELECT:
 	case APPLICATION_MENU_WORKSPACE_LIST:
@@ -275,6 +393,10 @@ static size_t active_menu_count(void)
 	case APPLICATION_MENU_WORKSPACE_SELECT:
 	case APPLICATION_MENU_WORKSPACE_LIST:
 		return workspace_name_count;
+	case APPLICATION_MENU_PORTS:
+		return EF800_PORT_COUNT;
+	case APPLICATION_MENU_PORT_DEVICES:
+		return port_assignment_device_count();
 	case APPLICATION_MENU_MAIN:
 	default:
 		return ARRAY_SIZE(menu_items);
@@ -316,6 +438,14 @@ static void return_from_child_menu(void)
 	if (active_menu == APPLICATION_MENU_WORKSPACE ||
 	    active_menu == APPLICATION_MENU_SETTINGS) {
 		return_to_main_menu();
+	} else if (active_menu == APPLICATION_MENU_PORTS) {
+		active_menu = APPLICATION_MENU_SETTINGS;
+		menu_selection = 1U;
+		display_settings_menu();
+	} else if (active_menu == APPLICATION_MENU_PORT_DEVICES) {
+		active_menu = APPLICATION_MENU_PORTS;
+		menu_selection = selected_port_index;
+		display_port_assignment_ports();
 	} else {
 		return_to_workspace_menu();
 	}
@@ -560,6 +690,61 @@ static void activate_workspace_entry(void)
 	}
 }
 
+static void display_port_assignment_result(const char *operation, int result)
+{
+	char line[STATUS_LINE_SIZE];
+
+	if (result == 0) {
+		snprintk(line, sizeof(line), "%s", operation);
+	} else if (result == -ENOTSUP) {
+		snprintk(line, sizeof(line), "%s: storage unavailable", operation);
+	} else {
+		snprintk(line, sizeof(line), "%s failed (%d)", operation, result);
+	}
+	LOG_INF("%s", line);
+	display_line(6U, line);
+}
+
+static void activate_port_assignment_entry(void)
+{
+	const struct ef800_port_descriptor *port =
+		ef800_port_at(selected_port_index);
+	const struct ef800_port_device_descriptor *device;
+	int result;
+
+	if (port == NULL) {
+		return;
+	}
+	if (menu_selection == port_assignment_device_count() - 1U) {
+		result = ef800_port_assignment_remove(&port_assignments, port->id);
+		display_port_assignment_result("Assignment removed", result);
+		if (result == 0) {
+			active_menu = APPLICATION_MENU_PORTS;
+			menu_selection = selected_port_index;
+			display_port_assignment_ports();
+		}
+		return;
+	}
+	device = device_at_selection(port, menu_selection);
+	if (device == NULL) {
+		display_port_assignment_result("Invalid device selection", -EINVAL);
+		return;
+	}
+	result = ef800_port_assignment_set(&port_assignments, port->id,
+						   device->builder_id);
+	if (result == 0) {
+		char line[STATUS_LINE_SIZE];
+		snprintk(line, sizeof(line), "Assigned %s to port %u", device->title,
+			port->id);
+		display_port_assignment_result(line, 0);
+		active_menu = APPLICATION_MENU_PORTS;
+		menu_selection = selected_port_index;
+		display_port_assignment_ports();
+	} else {
+		display_port_assignment_result("Assignment failed", result);
+	}
+}
+
 static void activate_menu_entry(void)
 {
 	if (active_menu == APPLICATION_MENU_MAIN) {
@@ -593,9 +778,21 @@ static void activate_menu_entry(void)
 		if (menu_selection == 0U) {
 			start_time_editor();
 		} else {
-			display_line(6U, "Port assignment not implemented");
-			LOG_INF("Port assignment is not implemented");
+			active_menu = APPLICATION_MENU_PORTS;
+			menu_selection = 0U;
+			display_port_assignment_ports();
 		}
+		return;
+	}
+	if (active_menu == APPLICATION_MENU_PORTS) {
+		selected_port_index = menu_selection;
+		active_menu = APPLICATION_MENU_PORT_DEVICES;
+		menu_selection = 0U;
+		display_port_assignment_devices();
+		return;
+	}
+	if (active_menu == APPLICATION_MENU_PORT_DEVICES) {
+		activate_port_assignment_entry();
 		return;
 	}
 	if (active_menu == APPLICATION_MENU_WORKSPACE) {
@@ -689,6 +886,42 @@ static bool handle_application_key(uint8_t key)
 	} else if (active_menu == APPLICATION_MENU_SETTINGS) {
 		shortcuts = settings_shortcuts;
 		count = ARRAY_SIZE(settings_items);
+	} else if (active_menu == APPLICATION_MENU_PORTS) {
+		for (size_t index = 0U; index < ef800_port_count(); ++index) {
+			if (key == (uint8_t)ef800_port_at(index)->shortcut) {
+				menu_selection = (uint8_t)index;
+				activate_menu_entry();
+				return true;
+			}
+		}
+		return false;
+	} else if (active_menu == APPLICATION_MENU_PORT_DEVICES) {
+		const struct ef800_port_descriptor *port =
+			ef800_port_at(selected_port_index);
+		for (size_t index = 0U; index < ef800_port_device_count(); ++index) {
+			const struct ef800_port_device_descriptor *device =
+				ef800_port_device_at(index);
+			if (ef800_port_device_is_compatible(port, device) &&
+				key == (uint8_t)device->shortcut) {
+				/* The displayed list contains only compatible devices. */
+				size_t selection = 0U;
+				for (size_t candidate = 0U; candidate < index; ++candidate) {
+					if (ef800_port_device_is_compatible(port,
+									 ef800_port_device_at(candidate))) {
+						++selection;
+					}
+				}
+				menu_selection = (uint8_t)selection;
+				activate_menu_entry();
+				return true;
+			}
+		}
+		if (key == 'r') {
+			menu_selection = (uint8_t)(port_assignment_device_count() - 1U);
+			activate_menu_entry();
+			return true;
+		}
+		return false;
 	} else {
 		shortcuts = workspace_shortcuts;
 		count = ARRAY_SIZE(workspace_items);
@@ -1273,6 +1506,10 @@ int main(void)
 	if (result != 0) {
 		LOG_ERR("Persistence service initialization failed: %d", result);
 	} else {
+		result = ef800_port_assignment_init(&port_assignments, &persistence);
+		if (result != 0) {
+			LOG_ERR("Port assignment service initialization failed: %d", result);
+		}
 		result = ef800_workspace_init(&workspace, &persistence);
 		if (result != 0) {
 			LOG_ERR("Workspace service initialization failed: %d", result);
@@ -1280,6 +1517,10 @@ int main(void)
 			result = ef800_workspace_load_current(&workspace);
 			if (result != 0 && result != -ENOENT) {
 				LOG_WRN("Current Workspace unavailable: %d", result);
+			}
+			result = ef800_port_assignment_load_all(&port_assignments);
+			if (result != 0) {
+				LOG_WRN("Port assignments unavailable: %d", result);
 			}
 		}
 	}
