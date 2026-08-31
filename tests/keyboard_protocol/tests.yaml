@@ -1,0 +1,10 @@
+common:
+  tags:
+    - keyboard
+    - protocol
+  harness: ztest
+tests:
+  ef800.keyboard_protocol:
+    type: unit
+    platform_allow:
+      - native_sim

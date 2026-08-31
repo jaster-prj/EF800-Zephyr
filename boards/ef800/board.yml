@@ -1,0 +1,6 @@
+board:
+  name: ef800
+  full_name: EF800 main controller
+  vendor: jaster
+  socs:
+    - name: stm32l496xx

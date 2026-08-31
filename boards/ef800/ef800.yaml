@@ -1,0 +1,17 @@
+identifier: ef800
+name: Jaster EF800
+type: mcu
+arch: arm
+toolchain:
+  - zephyr
+  - gnuarmemb
+ram: 256
+flash: 1024
+supported:
+  - gpio
+  - i2c
+  - qspi
+  - usb_device
+  - usbd
+  - watchdog
+vendor: jaster

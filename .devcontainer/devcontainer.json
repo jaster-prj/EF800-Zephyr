@@ -1,0 +1,9 @@
+{
+  "name": "EF800",
+  "image": "ghcr.io/jaster-prj/devcontainer-zephyr:latest",
+  "runArgs": [
+    "--name=EF800_Devcontainer"
+  ],
+  "workspaceMount": "source=${localWorkspaceFolder},target=/workspace/application,type=bind",
+  "workspaceFolder": "/workspace"
+}

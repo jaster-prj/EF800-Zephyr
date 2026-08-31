@@ -1,0 +1,10 @@
+/build/
+/zephyr/
+/modules/
+/bootloader/
+/tools/west_commands/
+/.west/
+
+# Local signing material and generated firmware packages.
+/keys/
+/artifacts/

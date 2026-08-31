@@ -1,0 +1,6 @@
+board:
+  name: ef800_keyboard
+  full_name: EF800 keyboard controller
+  vendor: jaster
+  socs:
+    - name: stm32l431xx

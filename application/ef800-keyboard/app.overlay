@@ -1,0 +1,36 @@
+#include <zephyr/dt-bindings/pinctrl/stm32-pinctrl.h>
+
+&pinctrl {
+	usart3_tx_pb10: usart3_tx_pb10 {
+		pinmux = <STM32_PINMUX('B', 10, AF7)>;
+		bias-pull-up;
+		drive-push-pull;
+	};
+
+	usart3_rx_pb11: usart3_rx_pb11 {
+		pinmux = <STM32_PINMUX('B', 11, AF7)>;
+		bias-pull-up;
+	};
+};
+
+&clk_hsi {
+	status = "okay";
+};
+
+&pll {
+	div-m = <1>;
+	mul-n = <20>;
+	div-p = <7>;
+	div-q = <2>;
+	div-r = <4>;
+	clocks = <&clk_hsi>;
+	status = "okay";
+};
+
+&rcc {
+	clocks = <&pll>;
+	clock-frequency = <DT_FREQ_M(80)>;
+	ahb-prescaler = <1>;
+	apb1-prescaler = <1>;
+	apb2-prescaler = <1>;
+};

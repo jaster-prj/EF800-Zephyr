@@ -1,0 +1,38 @@
+# Inspect the reusable workspace first. The image may already contain the
+# required Zephyr revision and dependencies.
+/opt/venv/bin/west topdir
+/opt/venv/bin/west config manifest.path
+/opt/venv/bin/west config manifest.file
+/opt/venv/bin/west list zephyr -f "{path} {revision} {sha}"
+
+# Run the setup commands only when the container is missing its west workspace,
+# when manifest-repo/west.yml changed, or when a required module is absent.
+# Run them from /workspace.
+# The application repository is mounted at /workspace/application.
+# Do not put these commands in devcontainer.json: the downloaded Zephyr
+# workspace should be reused when the container is reopened.
+
+if [ -d .west ]; then
+    /opt/venv/bin/west config manifest.path application/manifest-repo
+    /opt/venv/bin/west config manifest.file west.yml
+else
+    /opt/venv/bin/west init -l application/manifest-repo
+fi
+/opt/venv/bin/west update
+/opt/venv/bin/west zephyr-export
+/opt/venv/bin/python -m pip install -r zephyr/scripts/requirements.txt
+
+# Later development sessions start here. Use `west build` directly when only
+# application source files changed.
+
+# Build targets. Build output stays in the mounted repository so it is visible
+# from the host and is ignored by Git.
+/opt/venv/bin/west build -p always -b ef800 application/application/ef800-main --build-dir application/build/ef800-main
+/opt/venv/bin/west build -p always -b ef800 application/application/ef800-backup --build-dir application/build/ef800-backup
+/opt/venv/bin/west build -p always -b ef800 application/application/ef800-bootloader --build-dir application/build/ef800-bootloader
+/opt/venv/bin/west build -p always -b ef800_keyboard application/application/ef800-keyboard --build-dir application/build/ef800-keyboard
+
+# Native tests and fixed-image contract verification.
+/opt/venv/bin/west build -p always -b native_sim application/tests/keyboard_protocol --build-dir application/build/keyboard-protocol
+application/build/keyboard-protocol/zephyr/zephyr.exe
+bash application/scripts/verify-images.sh

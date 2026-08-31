@@ -1,0 +1,18 @@
+# SPDX-License-Identifier: Apache-2.0
+
+description: EF800 matrix keyboard controller GPIO assignment
+
+compatible: "jaster,ef800-keyboard"
+
+include: base.yaml
+
+properties:
+  row-gpios:
+    type: phandle-array
+    required: true
+  column-gpios:
+    type: phandle-array
+    required: true
+  special-gpios:
+    type: phandle-array
+    required: true

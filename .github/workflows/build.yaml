@@ -1,0 +1,92 @@
+name: EF800 Zephyr build
+
+on:
+  push:
+    branches:
+      - main
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    container:
+      image: ghcr.io/jaster-prj/devcontainer-zephyr-workspace:latest
+      volumes:
+        - /opt/hostedtoolcache:/delete-me
+
+    steps:
+      - name: Clean host tool cache mount
+        run: rm -rf /delete-me/*
+
+      - name: Link workspace
+        run: ln -s /workspace ./zephyr_workspace
+
+      - name: Checkout application
+        uses: actions/checkout@v4
+        with:
+          path: ./zephyr_workspace/application
+
+      - name: Select and update EF800 workspace
+        working-directory: ./zephyr_workspace
+        run: |
+          /opt/venv/bin/west config manifest.path application/manifest-repo
+          /opt/venv/bin/west config manifest.file west.yml
+          /opt/venv/bin/west update
+          /opt/venv/bin/west zephyr-export
+          /opt/venv/bin/python -m pip install -r zephyr/scripts/requirements.txt
+
+      - name: Test keyboard protocol
+        working-directory: ./zephyr_workspace
+        run: |
+          /opt/venv/bin/west build -p always -b native_sim \
+            application/tests/keyboard_protocol \
+            --build-dir application/build/keyboard-protocol
+          application/build/keyboard-protocol/zephyr/zephyr.exe
+
+      - name: Build keyboard controller
+        working-directory: ./zephyr_workspace
+        run: |
+          /opt/venv/bin/west build -p always -b ef800_keyboard \
+            application/application/ef800-keyboard \
+            --build-dir application/build/ef800-keyboard
+
+      - name: Build main application
+        working-directory: ./zephyr_workspace
+        run: |
+          /opt/venv/bin/west build -p always -b ef800 \
+            application/application/ef800-main \
+            --build-dir application/build/ef800-main
+
+      - name: Build backup application
+        working-directory: ./zephyr_workspace
+        run: |
+          /opt/venv/bin/west build -p always -b ef800 \
+            application/application/ef800-backup \
+            --build-dir application/build/ef800-backup
+
+      - name: Build second-level bootloader
+        working-directory: ./zephyr_workspace
+        run: |
+          /opt/venv/bin/west build -p always -b ef800 \
+            application/application/ef800-bootloader \
+            --build-dir application/build/ef800-bootloader
+
+      - name: Verify image contract
+        working-directory: ./zephyr_workspace
+        run: bash application/scripts/verify-images.sh
+
+      - name: Package development images
+        working-directory: ./zephyr_workspace
+        run: |
+          mkdir -p application/artifacts
+          cp application/build/ef800-bootloader/zephyr/zephyr.bin application/artifacts/ef800-bootloader.bin
+          cp application/build/ef800-backup/zephyr/zephyr.bin application/artifacts/ef800-backup.bin
+          cp application/build/ef800-main/zephyr/zephyr.bin application/artifacts/ef800-main.bin
+          cp application/build/ef800-keyboard/zephyr/zephyr.bin application/artifacts/ef800-keyboard.bin
+
+      - name: Publish images
+        uses: actions/upload-artifact@v4
+        with:
+          name: ef800-zephyr-images
+          path: zephyr_workspace/application/artifacts/

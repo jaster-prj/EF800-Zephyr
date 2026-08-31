@@ -1,0 +1,13 @@
+identifier: ef800_keyboard
+name: Jaster EF800 keyboard controller
+type: mcu
+arch: arm
+toolchain:
+  - zephyr
+  - gnuarmemb
+ram: 64
+flash: 256
+supported:
+  - gpio
+  - watchdog
+vendor: jaster

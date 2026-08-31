@@ -1,0 +1,58 @@
+# SPDX-License-Identifier: Apache-2.0
+
+menu "EF800 MainApplication foundation"
+
+config EF800_MAIN_KEYBOARD_STARTUP_TIMEOUT_MS
+	int "Keyboard startup timeout (ms)"
+	default 3000
+	range 1 60000
+	help
+	  Maximum time the MainApplication waits for the keyboard's initialized
+	  indication before continuing with the rest of the foundation.
+
+config EF800_MAIN_WATCHDOG_TIMEOUT_MS
+	int "Watchdog timeout (ms)"
+	default 1000
+	range 1 26214
+	help
+	  Maximum watchdog window used by the foundation watchdog task.
+
+config EF800_MAIN_WATCHDOG_FEED_MS
+	int "Watchdog feed period (ms)"
+	default 100
+	range 1 26214
+	help
+	  Period between watchdog feeds. Keep this below the watchdog timeout.
+
+config EF800_MAIN_WATCHDOG_STACK_SIZE
+	int "Watchdog task stack size"
+	default 768
+	range 512 4096
+
+config EF800_MAIN_STORAGE
+	bool "Mount the external QSPI FAT filesystem"
+	default n
+	depends on DT_HAS_ZEPHYR_FLASH_DISK_ENABLED
+	depends on !USBD_MSC_CLASS
+	select DISK_DRIVERS
+	select DISK_DRIVER_FLASH
+	select FILE_SYSTEM
+	select FAT_FILESYSTEM_ELM
+	select FS_FATFS_LFN
+	help
+	  Mount the existing EF800 QSPI flash disk as a FAT filesystem. The
+	  foundation never formats the disk on a mount failure and does not enable
+	  USB MSC, so only the application owns the disk in this mode.
+
+config EF800_MAIN_LCD_STATUS_TIMEOUT_US
+	int "T6963 status polling timeout (us)"
+	default 1000
+	range 100 100000
+	help
+	  Maximum time spent polling the T6963 ready bits for one bus operation.
+	  A bounded timeout keeps a missing or disconnected LCD from blocking the
+	  MainApplication forever.
+
+endmenu
+
+source "Kconfig.zephyr"

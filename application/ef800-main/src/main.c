@@ -1,0 +1,820 @@
+/* SPDX-License-Identifier: Apache-2.0 */
+#include <stdbool.h>
+#include <errno.h>
+#include <limits.h>
+#include <stdio.h>
+#include <stdlib.h>
+#include <stdint.h>
+#include <string.h>
+
+#include <zephyr/device.h>
+#include <zephyr/devicetree.h>
+#include <zephyr/drivers/uart.h>
+#include <zephyr/drivers/gpio.h>
+#include <zephyr/kernel.h>
+#include <zephyr/logging/log.h>
+#include <zephyr/shell/shell.h>
+
+#include "ef800_max17043.h"
+#include "ef800_main.h"
+#include "ef800_mcp23017.h"
+#include "ef800_t6963.h"
+#include "keyboard_host.h"
+
+LOG_MODULE_REGISTER(ef800_main_app, LOG_LEVEL_INF);
+
+/* lpuart1 is the EF800 board's PG7/PC0 keyboard link. */
+#define KEYBOARD_UART_NODE DT_CHOSEN(zephyr_keyboard_uart)
+#define KEYBOARD_RX_QUEUE_SIZE 128U
+#define EF800_USER_NODE DT_PATH(zephyr_user)
+#define LCD_NODE EF800_USER_NODE
+#define LCD_COLUMNS 40U
+#define STATUS_LINE_SIZE 80U
+
+static const struct device *const keyboard_uart =
+	DEVICE_DT_GET(KEYBOARD_UART_NODE);
+static struct ef800_keyboard_host keyboard_host;
+K_MSGQ_DEFINE(keyboard_rx_msgq, sizeof(uint8_t), KEYBOARD_RX_QUEUE_SIZE, 1);
+
+static struct ef800_mcp23017 mcp23017;
+static struct ef800_t6963 lcd;
+static struct ef800_max17043 fuel_gauge;
+static bool lcd_ready;
+static bool fuel_gauge_ready;
+static uint8_t menu_selection;
+
+enum time_editor_field {
+	TIME_EDITOR_WEEKDAY,
+	TIME_EDITOR_DATE,
+	TIME_EDITOR_MONTH,
+	TIME_EDITOR_YEAR,
+	TIME_EDITOR_HOUR,
+	TIME_EDITOR_MINUTE,
+	TIME_EDITOR_SECOND,
+	TIME_EDITOR_OFFSET,
+	TIME_EDITOR_DST,
+};
+
+struct time_editor_state {
+	bool active;
+	enum time_editor_field field;
+	uint8_t length;
+	char input[8];
+	struct rtc_time local;
+	struct ef800_time_settings settings;
+};
+
+static struct time_editor_state time_editor;
+
+static const char *const menu_items[] = {
+	"Workspace",
+	"Position",
+	"Measurement",
+	"Settings",
+};
+
+static const struct gpio_dt_spec keyboard_reset =
+	GPIO_DT_SPEC_GET_OR(EF800_USER_NODE, keyboard_reset_gpios, {0});
+static const struct gpio_dt_spec usb_select =
+	GPIO_DT_SPEC_GET_OR(EF800_USER_NODE, usb_select_gpios, {0});
+static const struct gpio_dt_spec power_down =
+	GPIO_DT_SPEC_GET_OR(EF800_USER_NODE, power_down_gpios, {0});
+
+#if DT_HAS_COMPAT_STATUS_OKAY(maxim_max17043)
+static const struct i2c_dt_spec fuel_gauge_i2c =
+	I2C_DT_SPEC_GET(DT_COMPAT_GET_ANY_STATUS_OKAY(maxim_max17043));
+#endif
+
+static const struct ef800_t6963_config lcd_config = {
+	.data = {
+		GPIO_DT_SPEC_GET_BY_IDX_OR(LCD_NODE, data_gpios, 0, {0}),
+		GPIO_DT_SPEC_GET_BY_IDX_OR(LCD_NODE, data_gpios, 1, {0}),
+		GPIO_DT_SPEC_GET_BY_IDX_OR(LCD_NODE, data_gpios, 2, {0}),
+		GPIO_DT_SPEC_GET_BY_IDX_OR(LCD_NODE, data_gpios, 3, {0}),
+		GPIO_DT_SPEC_GET_BY_IDX_OR(LCD_NODE, data_gpios, 4, {0}),
+		GPIO_DT_SPEC_GET_BY_IDX_OR(LCD_NODE, data_gpios, 5, {0}),
+		GPIO_DT_SPEC_GET_BY_IDX_OR(LCD_NODE, data_gpios, 6, {0}),
+		GPIO_DT_SPEC_GET_BY_IDX_OR(LCD_NODE, data_gpios, 7, {0}),
+	},
+	.cd = GPIO_DT_SPEC_GET_OR(LCD_NODE, cd_gpios, {0}),
+	.wr = GPIO_DT_SPEC_GET_OR(LCD_NODE, wr_gpios, {0}),
+	.rd = GPIO_DT_SPEC_GET_OR(LCD_NODE, rd_gpios, {0}),
+	.ce = GPIO_DT_SPEC_GET_OR(LCD_NODE, ce_gpios, {0}),
+	.fs = GPIO_DT_SPEC_GET_OR(LCD_NODE, fs_gpios, {0}),
+	.reset = GPIO_DT_SPEC_GET_OR(LCD_NODE, reset_gpios, {0}),
+	.pixels_horizontal = DT_PROP_OR(LCD_NODE, pixels_horizontal, 0),
+	.pixels_vertical = DT_PROP_OR(LCD_NODE, pixels_vertical, 0),
+	.font_width = DT_PROP_OR(LCD_NODE, font_width, 0),
+	.memory_kb = DT_PROP_OR(LCD_NODE, memory_kb, 0),
+};
+
+static int configure_keyboard_uart(void)
+{
+	const struct uart_config config = {
+		.baudrate = KB_UART_BAUDRATE,
+		.parity = UART_CFG_PARITY_ODD,
+		.stop_bits = UART_CFG_STOP_BITS_2,
+		.data_bits = UART_CFG_DATA_BITS_8,
+		.flow_ctrl = UART_CFG_FLOW_CTRL_NONE,
+	};
+
+	return uart_configure(keyboard_uart, &config);
+}
+
+static void display_line(uint8_t row, const char *text)
+{
+	char line[STATUS_LINE_SIZE];
+	int length;
+
+	if (!lcd_ready) {
+		return;
+	}
+
+	length = snprintf(line, sizeof(line), "%-40.40s", text == NULL ? "" : text);
+	if (length < 0) {
+		return;
+	}
+	(void)ef800_t6963_text_cursor(&lcd, 0U, row);
+	(void)ef800_t6963_write_string(&lcd, line);
+}
+
+static void display_banner(void)
+{
+	display_line(0U, "EF800 MainApplication");
+	display_line(1U, "Zephyr runtime/menu foundation");
+	display_line(6U, "Keyboard startup...");
+	display_line(4U, "> Workspace");
+	display_line(5U, "  Position  Measurement");
+}
+
+static void display_menu(void)
+{
+	char line[STATUS_LINE_SIZE];
+
+	snprintk(line, sizeof(line), "> %s", menu_items[menu_selection]);
+	display_line(4U, line);
+	snprintk(line, sizeof(line), "  %s  %s",
+		menu_items[(menu_selection + 1U) % ARRAY_SIZE(menu_items)],
+		menu_items[(menu_selection + 2U) % ARRAY_SIZE(menu_items)]);
+	display_line(5U, line);
+}
+
+static void draw_battery_icon(uint8_t soc)
+{
+	static const uint16_t outline[][2] = {
+		{228U, 1U}, {229U, 1U}, {230U, 1U}, {231U, 1U},
+		{232U, 1U}, {233U, 1U}, {228U, 2U}, {233U, 2U},
+		{234U, 2U}, {228U, 3U}, {234U, 3U}, {228U, 4U},
+		{233U, 4U}, {234U, 4U}, {228U, 5U}, {229U, 5U},
+		{230U, 5U}, {231U, 5U}, {232U, 5U}, {233U, 5U},
+	};
+
+	for (size_t index = 0U; index < ARRAY_SIZE(outline); ++index) {
+		(void)ef800_t6963_write_pixel(&lcd, outline[index][0],
+						      outline[index][1], true);
+	}
+			for (uint16_t x = 229U; x <= 233U; ++x) {
+				bool filled = soc >= (uint8_t)((x - 228U) * 20U);
+				for (uint16_t y = 2U; y <= 4U; ++y) {
+					(void)ef800_t6963_write_pixel(&lcd, x, y, filled);
+				}
+			}
+			for (uint16_t y = 2U; y <= 4U; ++y) {
+				(void)ef800_t6963_write_pixel(&lcd, 233U, y, soc > 95U);
+			}
+}
+
+static void update_lcd_status(void)
+{
+	char line[STATUS_LINE_SIZE];
+	struct rtc_time time;
+	struct ef800_max17043_status battery;
+	int ret = 0;
+	int rtc_ret;
+
+	if (!lcd_ready) {
+		return;
+	}
+
+	rtc_ret = ef800_main_rtc_get_local_time(&time);
+	if (rtc_ret == 0) {
+		snprintk(line, sizeof(line), "Local %04d-%02d-%02d %02d:%02d:%02d",
+			time.tm_year + 1900, time.tm_mon + 1, time.tm_mday,
+			time.tm_hour, time.tm_min, time.tm_sec);
+	} else {
+		snprintk(line, sizeof(line), "RTC unavailable (%d)", rtc_ret);
+	}
+	display_line(2U, line);
+
+	if (fuel_gauge_ready) {
+		ret = ef800_max17043_read(&fuel_gauge, &battery);
+		if (ret == 0) {
+			snprintk(line, sizeof(line), "Battery %u%% %lumV",
+				battery.soc_percent,
+				(unsigned long)(battery.voltage_uv / 1000U));
+		} else {
+			snprintk(line, sizeof(line), "Battery read failed (%d)", ret);
+		}
+	} else {
+		snprintk(line, sizeof(line), "Battery unavailable");
+	}
+	display_line(3U, line);
+
+	if (fuel_gauge_ready && ret == 0) {
+		static uint8_t last_soc = UINT8_MAX;
+
+		if (battery.soc_percent != last_soc) {
+			draw_battery_icon(battery.soc_percent);
+			last_soc = battery.soc_percent;
+		}
+	}
+
+	/* The old LcdHelper keeps a compact local-time clock in the header. */
+	if (rtc_ret == 0 &&
+		(time.tm_hour >= 0 && time.tm_min >= 0)) {
+		static int last_hour = -1;
+		static int last_minute = -1;
+
+		if (time.tm_hour != last_hour || time.tm_min != last_minute) {
+			char clock_text[16];
+			uint8_t hour = (uint8_t)time.tm_hour;
+			uint8_t minute = (uint8_t)time.tm_min;
+			snprintk(clock_text, sizeof(clock_text), "%02u:%02u",
+				hour, minute);
+			(void)ef800_t6963_text_cursor(&lcd, 17U, 0U);
+			(void)ef800_t6963_write_string(&lcd, clock_text);
+			last_hour = time.tm_hour;
+			last_minute = time.tm_min;
+		}
+	}
+}
+
+static const char *time_editor_prompt(enum time_editor_field field)
+{
+	switch (field) {
+	case TIME_EDITOR_WEEKDAY:
+		return "Weekday 1-7";
+	case TIME_EDITOR_DATE:
+		return "Date 1-31";
+	case TIME_EDITOR_MONTH:
+		return "Month 1-12";
+	case TIME_EDITOR_YEAR:
+		return "Year 2000-2099";
+	case TIME_EDITOR_HOUR:
+		return "Hour 0-23";
+	case TIME_EDITOR_MINUTE:
+		return "Minute 0-59";
+	case TIME_EDITOR_SECOND:
+		return "Second 0-59";
+	case TIME_EDITOR_OFFSET:
+		return "UTC offset hours or HH:MM";
+	case TIME_EDITOR_DST:
+		return "DST 0=off 1=on";
+	default:
+		return "";
+	}
+}
+
+static void display_time_editor(void)
+{
+	char line[STATUS_LINE_SIZE];
+
+	if (!lcd_ready) {
+		return;
+	}
+	(void)ef800_t6963_clear_text(&lcd);
+	display_line(0U, "EF800 RTC setup");
+	snprintk(line, sizeof(line), "%04d-%02d-%02d %02d:%02d:%02d",
+		time_editor.local.tm_year + 1900, time_editor.local.tm_mon + 1,
+		time_editor.local.tm_mday, time_editor.local.tm_hour,
+		time_editor.local.tm_min, time_editor.local.tm_sec);
+	display_line(1U, line);
+	snprintk(line, sizeof(line), "Offset %+d DST %d",
+		time_editor.settings.utc_offset_minutes,
+		time_editor.settings.daylight_saving ? 1 : 0);
+	display_line(3U, line);
+	display_line(5U, time_editor_prompt(time_editor.field));
+	snprintk(line, sizeof(line), "> %s", time_editor.input);
+	display_line(6U, line);
+	display_line(7U, "ENTER next  ESC cancel");
+}
+
+static void start_time_editor(void)
+{
+	struct rtc_time current;
+
+	memset(&time_editor, 0, sizeof(time_editor));
+	time_editor.active = true;
+	time_editor.field = TIME_EDITOR_WEEKDAY;
+	time_editor.settings = *ef800_main_get_time_settings();
+	if (ef800_main_rtc_get_local_time(&current) == 0) {
+		time_editor.local = current;
+	} else {
+		time_editor.local = (struct rtc_time){
+			.tm_year = 124,
+			.tm_mon = 0,
+			.tm_mday = 1,
+			.tm_hour = 0,
+			.tm_min = 0,
+			.tm_sec = 0,
+			.tm_wday = 0,
+			.tm_yday = -1,
+			.tm_isdst = -1,
+		};
+	}
+	display_time_editor();
+}
+
+static int parse_time_editor_value(int *value)
+{
+	char *end;
+	long parsed;
+
+	if (time_editor.length == 0U) {
+		return -EINVAL;
+	}
+	if (time_editor.field == TIME_EDITOR_OFFSET &&
+		strchr(time_editor.input, ':') != NULL) {
+		int hours;
+		int minutes;
+		char sign = time_editor.input[0] == '-' ? '-' : '+';
+		if (sscanf(time_editor.input, "%d:%d", &hours, &minutes) != 2 ||
+			hours < -24 || hours > 24 || minutes < 0 || minutes >= 60) {
+			return -EINVAL;
+		}
+		if (sign == '-') {
+			*value = hours * 60 - minutes;
+		} else {
+			*value = hours * 60 + minutes;
+		}
+		return 0;
+	}
+	parsed = strtol(time_editor.input, &end, 10);
+	if (*end != '\0' || parsed < INT_MIN || parsed > INT_MAX) {
+		return -EINVAL;
+	}
+	*value = time_editor.field == TIME_EDITOR_OFFSET ? (int)parsed * 60 :
+		(int)parsed;
+	return 0;
+}
+
+static int commit_time_editor_value(void)
+{
+	int value;
+	int ret = parse_time_editor_value(&value);
+
+	if (ret != 0) {
+		return ret;
+	}
+	switch (time_editor.field) {
+	case TIME_EDITOR_WEEKDAY:
+		if (value < 1 || value > 7) return -ERANGE;
+		time_editor.local.tm_wday = value - 1;
+		break;
+	case TIME_EDITOR_DATE:
+		time_editor.local.tm_mday = value;
+		break;
+	case TIME_EDITOR_MONTH:
+		if (value < 1 || value > 12) return -ERANGE;
+		time_editor.local.tm_mon = value - 1;
+		break;
+	case TIME_EDITOR_YEAR:
+		if (value < 2000 || value > 2099) return -ERANGE;
+		time_editor.local.tm_year = value - 1900;
+		break;
+	case TIME_EDITOR_HOUR:
+		if (value < 0 || value > 23) return -ERANGE;
+		time_editor.local.tm_hour = value;
+		break;
+	case TIME_EDITOR_MINUTE:
+		if (value < 0 || value > 59) return -ERANGE;
+		time_editor.local.tm_min = value;
+		break;
+	case TIME_EDITOR_SECOND:
+		if (value < 0 || value > 59) return -ERANGE;
+		time_editor.local.tm_sec = value;
+		break;
+	case TIME_EDITOR_OFFSET:
+		if (value < -24 * 60 || value > 24 * 60) return -ERANGE;
+		time_editor.settings.utc_offset_minutes = value;
+		break;
+	case TIME_EDITOR_DST:
+		if (value != 0 && value != 1) return -ERANGE;
+		time_editor.settings.daylight_saving = value != 0;
+		break;
+	default:
+		return -EINVAL;
+	}
+	/* The complete date is checked when the final DST field is submitted.
+	 * This allows the user to change month and day in either order. */
+	return 0;
+}
+
+static void finish_time_editor(void)
+{
+	int ret = ef800_main_rtc_set_local_time(&time_editor.local,
+						&time_editor.settings);
+
+	if (ret == 0) {
+		LOG_INF("RTC updated from local time editor");
+		display_line(6U, "RTC updated successfully");
+		time_editor.active = false;
+		(void)ef800_t6963_clear_text(&lcd);
+		display_banner();
+		display_menu();
+	} else {
+		LOG_ERR("RTC update failed: %d", ret);
+		display_line(6U, "RTC update failed; retry");
+		time_editor.length = 0U;
+		time_editor.input[0] = '\0';
+	}
+}
+
+static void handle_time_editor_key(uint8_t key)
+{
+	int ret;
+
+	if (key == 0x1BU) {
+		time_editor.active = false;
+		(void)ef800_t6963_clear_text(&lcd);
+		display_banner();
+		display_menu();
+		return;
+	}
+	if (key == 0x08U || key == 0x7FU) {
+		if (time_editor.length != 0U) {
+			time_editor.input[--time_editor.length] = '\0';
+			display_time_editor();
+		}
+		return;
+	}
+	if (key == '\r' || key == '\n') {
+		ret = commit_time_editor_value();
+		if (ret != 0) {
+			display_line(6U, "Invalid value, try again");
+			time_editor.length = 0U;
+			time_editor.input[0] = '\0';
+			return;
+		}
+		if (time_editor.field == TIME_EDITOR_DST) {
+			finish_time_editor();
+			return;
+		}
+		time_editor.field++;
+		time_editor.length = 0U;
+		time_editor.input[0] = '\0';
+		display_time_editor();
+		return;
+	}
+	if ((key >= '0' && key <= '9') ||
+		(time_editor.field == TIME_EDITOR_OFFSET && key == '+' &&
+		 time_editor.length == 0U) ||
+		(time_editor.field == TIME_EDITOR_OFFSET && key == ':' &&
+		 time_editor.length > 0U &&
+		 strchr(time_editor.input, ':') == NULL) ||
+		(time_editor.field == TIME_EDITOR_OFFSET && key == '-' &&
+		 time_editor.length == 0U)) {
+		if (time_editor.length + 1U < sizeof(time_editor.input)) {
+			time_editor.input[time_editor.length++] = (char)key;
+			time_editor.input[time_editor.length] = '\0';
+			display_time_editor();
+		}
+	}
+}
+
+static int cmd_rtc_get(const struct shell *shell, size_t argc, char **argv)
+{
+	struct rtc_time local;
+	const struct ef800_time_settings *settings;
+
+	ARG_UNUSED(argc);
+	ARG_UNUSED(argv);
+	if (ef800_main_rtc_get_local_time(&local) != 0) {
+		shell_error(shell, "RTC unavailable");
+		return -ENODEV;
+	}
+	settings = ef800_main_get_time_settings();
+	shell_print(shell, "%04d-%02d-%02dT%02d:%02d:%02d offset=%d dst=%d",
+		local.tm_year + 1900, local.tm_mon + 1, local.tm_mday,
+		local.tm_hour, local.tm_min, local.tm_sec,
+		settings->utc_offset_minutes, settings->daylight_saving ? 1 : 0);
+	return 0;
+}
+
+static int cmd_rtc_set(const struct shell *shell, size_t argc, char **argv)
+{
+	struct rtc_time local = {
+		.tm_wday = 0,
+		.tm_yday = -1,
+		.tm_isdst = -1,
+	};
+	struct ef800_time_settings settings;
+	int year;
+	int month;
+	int offset;
+	int dst;
+	char *offset_end;
+	int time_fields;
+
+	if (argc != 4) {
+		shell_error(shell,
+			"usage: rtc set YYYY-MM-DDTHH:MM:SS offset_hours_or_HH:MM dst");
+		return -EINVAL;
+	}
+	time_fields = sscanf(argv[1], "%d-%d-%dT%d:%d:%d",
+		&year, &month, &local.tm_mday, &local.tm_hour,
+		&local.tm_min, &local.tm_sec);
+	offset = (int)strtol(argv[2], &offset_end, 10);
+	if (time_fields != 6 ||
+		(*offset_end != '\0' && strchr(argv[2], ':') == NULL) ||
+		sscanf(argv[3], "%d", &dst) != 1) {
+		shell_error(shell,
+			"usage: rtc set YYYY-MM-DDTHH:MM:SS offset_hours_or_HH:MM dst");
+		return -EINVAL;
+	}
+	local.tm_year = year - 1900;
+	local.tm_mon = month - 1;
+	if (strchr(argv[2], ':') != NULL) {
+		int hours;
+		int minutes;
+		char sign = argv[2][0] == '-' ? '-' : '+';
+		if (sscanf(argv[2], "%d:%d", &hours, &minutes) != 2 ||
+			hours < -24 || hours > 24 || minutes < 0 || minutes >= 60) {
+			shell_error(shell, "invalid UTC offset");
+			return -EINVAL;
+		}
+		offset = hours * 60 + (sign == '-' ? -minutes : minutes);
+	} else {
+		if (offset < -24 || offset > 24) {
+			shell_error(shell, "UTC offset hours must be between -24 and 24");
+			return -EINVAL;
+		}
+		offset *= 60;
+	}
+	settings.utc_offset_minutes = offset;
+	settings.daylight_saving = dst != 0;
+	if ((dst != 0 && dst != 1) ||
+		!ef800_rtc_time_valid(&local) ||
+		offset < -24 * 60 || offset > 24 * 60) {
+		shell_error(shell, "invalid date/time, offset, or DST value");
+		return -EINVAL;
+	}
+	if (ef800_main_rtc_set_local_time(&local, &settings) != 0) {
+		shell_error(shell, "RTC update failed");
+		return -EIO;
+	}
+	shell_print(shell, "RTC updated");
+	return 0;
+}
+
+SHELL_STATIC_SUBCMD_SET_CREATE(rtc_commands,
+	SHELL_CMD_ARG(get, NULL, "Read local RTC time", cmd_rtc_get, 1, 0),
+	SHELL_CMD_ARG(set, NULL,
+		"Set local time, offset hours/minutes, and DST flag",
+		cmd_rtc_set, 4, 0),
+	SHELL_SUBCMD_SET_END
+);
+SHELL_CMD_REGISTER(rtc, &rtc_commands, "EF800 RTC commands", NULL);
+
+static void handle_keyboard_event(uint32_t event)
+{
+	if ((event & KB_EVENT_OFF) != 0U) {
+		int ret = power_down.port == NULL ? -ENODEV :
+			gpio_pin_set_dt(&power_down, 1);
+
+		if (ret != 0) {
+			LOG_WRN("Keyboard OFF power-down output failed: %d", ret);
+		} else {
+			LOG_INF("Keyboard OFF: PB5 power-down output asserted");
+			display_line(6U, "Keyboard OFF: power-down");
+		}
+		return;
+	}
+	if ((event & KB_EVENT_ARROWUP) != 0U) {
+		menu_selection = (menu_selection + ARRAY_SIZE(menu_items) - 1U) %
+			ARRAY_SIZE(menu_items);
+		display_menu();
+		LOG_INF("Menu selection: %s", menu_items[menu_selection]);
+		return;
+	}
+	if ((event & KB_EVENT_ARROWDOWN) != 0U) {
+		menu_selection = (menu_selection + 1U) % ARRAY_SIZE(menu_items);
+		display_menu();
+		LOG_INF("Menu selection: %s", menu_items[menu_selection]);
+		return;
+	}
+	if ((event & KB_EVENT_ARROWLEFT) != 0U) {
+		LOG_INF("Menu back");
+		display_line(6U, "Menu back");
+		return;
+	}
+	if ((event & KB_EVENT_ARROWRIGHT) != 0U) {
+		LOG_INF("Menu open: %s", menu_items[menu_selection]);
+		display_line(6U, menu_items[menu_selection]);
+		return;
+	}
+
+	LOG_INF("Keyboard event: 0x%08x", event);
+}
+
+static void keyboard_uart_isr(const struct device *dev, void *user_data)
+{
+	uint8_t byte;
+
+	ARG_UNUSED(user_data);
+	if (uart_irq_update(dev) <= 0 || !uart_irq_rx_ready(dev)) {
+		return;
+	}
+	while (uart_fifo_read(dev, &byte, 1U) == 1) {
+		(void)k_msgq_put(&keyboard_rx_msgq, &byte, K_NO_WAIT);
+	}
+}
+
+static void process_keyboard_output(void)
+{
+	uint8_t key;
+	uint32_t event;
+
+	while (ef800_keyboard_host_get_key(&keyboard_host, &key) == 0) {
+		if (time_editor.active) {
+			handle_time_editor_key(key);
+			continue;
+		}
+		LOG_INF("Keyboard key: 0x%02x", key);
+		if (lcd_ready) {
+			char line[STATUS_LINE_SIZE];
+			snprintk(line, sizeof(line), "Key 0x%02x '%c'", key,
+				(key >= 0x20U && key < 0x7FU) ? key : '.');
+			display_line(7U, line);
+		}
+		if (key == '\r' || key == '\n') {
+			LOG_INF("Menu activate: %s", menu_items[menu_selection]);
+			display_line(6U, menu_items[menu_selection]);
+		}
+		if (key == 'z') {
+			start_time_editor();
+		}
+	}
+	while (ef800_keyboard_host_get_event(&keyboard_host, &event) == 0) {
+		handle_keyboard_event(event);
+	}
+	if (ef800_keyboard_host_take_overflow(&keyboard_host)) {
+		LOG_WRN("Keyboard host output queue overflowed");
+	}
+}
+
+static void process_keyboard_byte(uint8_t byte, uint32_t now_ms)
+{
+	enum ef800_host_feed_result result;
+
+	result = ef800_keyboard_host_feed_at(&keyboard_host, byte, now_ms);
+	switch (result) {
+	case EF800_HOST_FEED_READY:
+		LOG_INF("Keyboard host ready indication received");
+		break;
+	case EF800_HOST_FEED_COMMAND:
+		LOG_DBG("Keyboard command 0x%02x status 0x%02x",
+			keyboard_host.last_command,
+			keyboard_host.last_command_status);
+		break;
+	case EF800_HOST_FEED_ECHO:
+		LOG_DBG("Keyboard echo indication received");
+		break;
+	case EF800_HOST_FEED_ERROR:
+		LOG_WRN("Keyboard host rejected byte 0x%02x", byte);
+		break;
+	default:
+		break;
+	}
+
+	process_keyboard_output();
+}
+
+static bool wait_for_keyboard_startup(void)
+{
+	uint8_t byte;
+	int64_t deadline = k_uptime_get() +
+		CONFIG_EF800_MAIN_KEYBOARD_STARTUP_TIMEOUT_MS;
+
+	while (!ef800_keyboard_host_is_ready(&keyboard_host) &&
+	       k_uptime_get() < deadline) {
+		while (k_msgq_get(&keyboard_rx_msgq, &byte, K_NO_WAIT) == 0) {
+			process_keyboard_byte(byte, k_uptime_get_32());
+		}
+		k_msleep(10);
+	}
+
+	if (!ef800_keyboard_host_is_ready(&keyboard_host)) {
+		LOG_WRN("Keyboard startup timed out after %d ms; continuing",
+			CONFIG_EF800_MAIN_KEYBOARD_STARTUP_TIMEOUT_MS);
+		return false;
+	}
+
+	LOG_INF("Keyboard startup completed");
+	return true;
+}
+
+int main(void)
+{
+	uint8_t byte;
+	int result;
+	uint16_t mcp_port;
+
+	(void)ef800_main_foundation_init();
+
+#if DT_HAS_COMPAT_STATUS_OKAY(microchip_mcp23017)
+result = ef800_mcp23017_open(&mcp23017,
+			DEVICE_DT_GET(DT_COMPAT_GET_ANY_STATUS_OKAY(microchip_mcp23017)));
+#else
+	result = -ENODEV;
+#endif
+	if (result == 0) {
+		if (usb_select.port == NULL || keyboard_reset.port == NULL) {
+			result = -ENODEV;
+		} else {
+			result = ef800_mcp23017_configure_outputs(&mcp23017,
+				BIT(usb_select.pin) | BIT(keyboard_reset.pin) |
+				BIT(lcd_config.fs.pin) | BIT(lcd_config.reset.pin),
+				BIT(lcd_config.fs.pin));
+		}
+	}
+	if (result == 0) {
+		result = ef800_mcp23017_set_pin(&mcp23017, usb_select.pin, true);
+	}
+	if (result == 0) {
+		result = gpio_pin_configure_dt(&keyboard_reset, GPIO_OUTPUT_INACTIVE);
+	}
+	if (result == 0) {
+		k_msleep(10U);
+		result = gpio_pin_set_dt(&keyboard_reset, 1);
+	}
+	if (result != 0) {
+		LOG_WRN("MCP23017 controls unavailable: %d", result);
+	} else if (ef800_mcp23017_read(&mcp23017, &mcp_port) == 0) {
+		LOG_INF("MCP23017 controls initialized (port=0x%04x)", mcp_port);
+	}
+
+	if (power_down.port == NULL) {
+		result = -ENODEV;
+	} else {
+		result = gpio_pin_configure_dt(&power_down, GPIO_OUTPUT_INACTIVE);
+	}
+	if (result != 0) {
+		LOG_WRN("PB5 keyboard power-down output unavailable: %d", result);
+	} else {
+		LOG_INF("PB5 keyboard power-down output initialized inactive");
+	}
+
+	result = ef800_t6963_init(&lcd, &lcd_config);
+	if (result == 0) {
+		result = ef800_t6963_initialize(&lcd);
+	}
+	if (result != 0) {
+		LOG_WRN("T6963 LCD unavailable; continuing without display: %d", result);
+	} else {
+		lcd_ready = true;
+		display_banner();
+	}
+
+#if DT_HAS_COMPAT_STATUS_OKAY(maxim_max17043)
+	result = ef800_max17043_init(&fuel_gauge, &fuel_gauge_i2c);
+	if (result != 0) {
+		LOG_WRN("MAX17043 unavailable; continuing without battery status: %d",
+			result);
+	} else {
+		fuel_gauge_ready = true;
+	}
+#else
+	LOG_INF("MAX17043 disabled: no enabled fuel_gauge node");
+#endif
+
+	update_lcd_status();
+
+	if (!device_is_ready(keyboard_uart)) {
+		LOG_ERR("Keyboard UART is not ready");
+		return 0;
+	}
+	result = configure_keyboard_uart();
+	if (result != 0) {
+		LOG_ERR("Keyboard UART configuration failed: %d", result);
+		return 0;
+	}
+
+	ef800_keyboard_host_init(&keyboard_host);
+	uart_irq_callback_user_data_set(keyboard_uart, keyboard_uart_isr, NULL);
+	uart_irq_rx_enable(keyboard_uart);
+	if (wait_for_keyboard_startup()) {
+		display_line(6U, "Keyboard ready");
+	}
+	display_menu();
+
+	while (true) {
+		if (k_msgq_get(&keyboard_rx_msgq, &byte, K_MSEC(1000)) == 0) {
+			process_keyboard_byte(byte, k_uptime_get_32());
+		}
+		while (k_msgq_get(&keyboard_rx_msgq, &byte, K_NO_WAIT) == 0) {
+			process_keyboard_byte(byte, k_uptime_get_32());
+		}
+		update_lcd_status();
+	}
+}
