@@ -28,7 +28,7 @@ static const struct ef800_port_descriptor ports[] = {
 		.title = "Multi-function Port",
 		.shortcut = '3',
 		.capabilities = EF800_PORT_CAP_SERIAL |
-			EF800_PORT_CAP_SERIAL_FLOW_CONTROL | EF800_PORT_CAP_PARALLEL |
+			EF800_PORT_CAP_PARALLEL |
 			EF800_PORT_CAP_I2C | EF800_PORT_CAP_SPI,
 	},
 	{
@@ -93,7 +93,6 @@ static const struct ef800_port_connection_descriptor port2_connections[] = {
 
 static const struct ef800_port_connection_descriptor port3_connections[] = {
 	{ EF800_PORT_CONNECTION_SERIAL, "UART4" },
-	{ EF800_PORT_CONNECTION_SERIAL_FLOW_CONTROL, "UART4 with flow control" },
 	{ EF800_PORT_CONNECTION_PARALLEL, "Parallel" },
 	{ EF800_PORT_CONNECTION_I2C, "I2C" },
 	{ EF800_PORT_CONNECTION_SPI, "SPI" },
@@ -107,24 +106,6 @@ static const struct ef800_port_connection_descriptor port4_connections[] = {
 static const struct ef800_port_connection_descriptor port5_connections[] = {
 	{ EF800_PORT_CONNECTION_SPI, "SPI1 BlueNRG" },
 };
-
-static bool builder_allowed_on_port(uint8_t port_id, uint8_t builder_id)
-{
-	if (builder_id == EF800_PORT_BUILDER_NONE) {
-		return true;
-	}
-	if (builder_id == EF800_PORT_BUILDER_MSD && port_id != 4U) {
-		return false;
-	}
-	if (builder_id == EF800_PORT_BUILDER_BLUENRG && port_id != 5U) {
-		return false;
-	}
-	if ((builder_id == EF800_PORT_BUILDER_ELTA3 ||
-	     builder_id == EF800_PORT_BUILDER_FTS3XX) && port_id >= 4U) {
-		return false;
-	}
-	return true;
-}
 
 size_t ef800_port_count(void)
 {
@@ -171,7 +152,7 @@ bool ef800_port_device_is_compatible(
 	const struct ef800_port_device_descriptor *device)
 {
 	return port != NULL && device != NULL &&
-	       builder_allowed_on_port(port->id, device->builder_id) &&
+	       ef800_port_builder_allowed_on_port(port->id, device->builder_id) &&
 	       (!port->fixed || device->builder_id == EF800_PORT_BUILDER_BLUENRG) &&
 	       (port->capabilities & device->capabilities) != 0U;
 }
@@ -210,6 +191,9 @@ bool ef800_port_device_supports_connection(uint8_t builder_id,
 		return false;
 	}
 	if ((device->capabilities & capability) == 0U) {
+		return false;
+	}
+	if (!ef800_port_builder_connection_valid(builder_id, connection)) {
 		return false;
 	}
 	if (builder_id == EF800_PORT_BUILDER_MSD &&
@@ -318,7 +302,8 @@ static int assignment_file_name(uint8_t port_id, char *name, size_t capacity)
 	if (ef800_port_get(port_id) == NULL || name == NULL || capacity == 0U) {
 		return -EINVAL;
 	}
-	length = snprintf(name, capacity, "port_%u", port_id);
+	length = snprintf(name, capacity, "%s%u", EF800_PORT_ASSIGNMENT_FILE_PREFIX,
+				 port_id);
 	return length < 0 || (size_t)length >= capacity ? -ENAMETOOLONG : 0;
 }
 
@@ -336,6 +321,8 @@ int ef800_port_assignment_encode(const struct ef800_port_assignment_state *state
 	device = ef800_port_device_get(state->builder_id);
 	if (!ef800_port_device_is_compatible(port, device) ||
 		!ef800_port_connection_is_valid(state->port_id, state->connection) ||
+		!ef800_port_assignment_record_valid(state->port_id, state->builder_id,
+										 state->connection) ||
 		!ef800_port_device_supports_connection(state->builder_id,
 								 state->connection)) {
 		return -EINVAL;
@@ -377,6 +364,8 @@ int ef800_port_assignment_decode(const uint8_t *buffer, size_t length,
 	if (!ef800_port_device_is_compatible(ef800_port_get(decoded.port_id),
 								     ef800_port_device_get(decoded.builder_id)) ||
 		!ef800_port_connection_is_valid(decoded.port_id, decoded.connection) ||
+		!ef800_port_assignment_record_valid(decoded.port_id, decoded.builder_id,
+										 decoded.connection) ||
 		!ef800_port_device_supports_connection(decoded.builder_id,
 									 decoded.connection)) {
 		return -EINVAL;
@@ -426,7 +415,7 @@ int ef800_port_assignment_load(struct ef800_port_assignment_service *service,
 	struct ef800_port_assignment_state *current;
 	struct ef800_port_assignment_state decoded;
 	uint8_t buffer[EF800_PORT_ASSIGNMENT_RECORD_SIZE];
-	char name[16];
+	char name[32];
 	size_t length;
 	int ret;
 
@@ -509,7 +498,7 @@ int ef800_port_assignment_import_with_connection(
 		 (!ef800_port_device_is_compatible(port, device) ||
 		  !ef800_port_connection_is_valid(port_id, connection) ||
 		  !ef800_port_device_supports_connection(builder_id, connection))) ||
-		!builder_allowed_on_port(port_id, builder_id) ||
+		!ef800_port_builder_allowed_on_port(port_id, builder_id) ||
 		(port->fixed && (builder_id != EF800_PORT_BUILDER_BLUENRG ||
 			connection != EF800_PORT_CONNECTION_SPI))) {
 		return -EINVAL;
@@ -555,7 +544,7 @@ int ef800_port_assignment_set_with_connection(
 		.assigned = true,
 	};
 	uint8_t buffer[EF800_PORT_ASSIGNMENT_RECORD_SIZE];
-	char name[16];
+	char name[32];
 	size_t length;
 	int ret;
 
@@ -568,7 +557,7 @@ int ef800_port_assignment_set_with_connection(
 		!ef800_port_connection_is_valid(port_id, connection)) {
 		return -EINVAL;
 	}
-	if (!builder_allowed_on_port(port_id, builder_id) ||
+	if (!ef800_port_builder_allowed_on_port(port_id, builder_id) ||
 		!ef800_port_device_supports_connection(builder_id, connection) ||
 		(port->fixed && (builder_id != EF800_PORT_BUILDER_BLUENRG ||
 		 connection != EF800_PORT_CONNECTION_SPI))) {
@@ -630,7 +619,7 @@ int ef800_port_assignment_remove(struct ef800_port_assignment_service *service,
 					 uint8_t port_id)
 {
 	struct ef800_port_assignment_state *current;
-	char name[16];
+	char name[32];
 	int ret;
 
 	current = assignment_state(service, port_id);

@@ -48,16 +48,6 @@ static const struct ef800_port_uart_route routes[] = {
 		.has_rts = true,
 		.has_cts = true,
 	},
-	{
-		.uart_id = EF800_PORT_UART4,
-		.port_id = 3U,
-		.connection = EF800_PORT_CONNECTION_SERIAL_FLOW_CONTROL,
-		.name = "UART4",
-		.tx_pins = "PC10",
-		.rx_pins = "PC11",
-		.has_rts = true,
-		.has_cts = false,
-	},
 };
 
 const struct ef800_port_uart_route *ef800_port_uart_for_port(uint8_t port_id)

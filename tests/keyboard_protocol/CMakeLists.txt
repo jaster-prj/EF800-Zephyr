@@ -11,6 +11,7 @@ target_sources(app PRIVATE
 	${CMAKE_CURRENT_LIST_DIR}/../../application/ef800-main/src/keyboard_host.c
 	${CMAKE_CURRENT_LIST_DIR}/../../shared/ef800_main/ef800_time.c
 	${CMAKE_CURRENT_LIST_DIR}/../../shared/ef800_persistence/ef800_persistence.c
+	${CMAKE_CURRENT_LIST_DIR}/../../shared/ef800_persistence/ef800_persistence_legacy.c
 	${CMAKE_CURRENT_LIST_DIR}/../../shared/ef800_persistence/ef800_persistence_zephyr.c
 	${CMAKE_CURRENT_LIST_DIR}/../../shared/ef800_persistence/ef800_workspace.c
 	${CMAKE_CURRENT_LIST_DIR}/../../shared/ef800_persistence/ef800_persistence_fake.c

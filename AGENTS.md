@@ -100,7 +100,7 @@ docker exec -w /workspace EF800_Devcontainer application/build/keyboard-protocol
 ```
 
 All four firmware builds and the native tests must pass before considering a
-porting increment complete. The current closeout baseline is 10 native tests.
+porting increment complete. The current closeout baseline is 24 native tests.
 
 ## Image Contract
 

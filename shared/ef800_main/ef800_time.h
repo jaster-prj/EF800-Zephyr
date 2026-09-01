@@ -13,6 +13,7 @@ struct ef800_time_settings {
 };
 
 bool ef800_rtc_time_valid(const struct rtc_time *time);
+int ef800_parse_utc_offset(const char *text, int32_t *offset_minutes);
 int ef800_local_time_to_utc(const struct rtc_time *local,
 				   const struct ef800_time_settings *settings,
 				   struct rtc_time *utc);

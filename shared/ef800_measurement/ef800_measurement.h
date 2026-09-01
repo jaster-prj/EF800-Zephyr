@@ -19,12 +19,19 @@ enum ef800_measurement_parity {
 	EF800_MEASUREMENT_PARITY_EVEN,
 };
 
+enum ef800_measurement_flow_control {
+	EF800_MEASUREMENT_FLOW_NONE = 0,
+	EF800_MEASUREMENT_FLOW_RTS,
+	EF800_MEASUREMENT_FLOW_CTS,
+	EF800_MEASUREMENT_FLOW_RTS_CTS,
+};
+
 struct ef800_measurement_serial_config {
 	uint32_t baudrate;
 	uint8_t data_bits;
 	enum ef800_measurement_parity parity;
 	uint8_t stop_bits;
-	bool flow_control;
+	enum ef800_measurement_flow_control flow_control;
 };
 
 struct ef800_measurement_transport {

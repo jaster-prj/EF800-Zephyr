@@ -3,6 +3,8 @@
 #include "ef800_time.h"
 
 #include <errno.h>
+#include <stdlib.h>
+#include <string.h>
 #include <time.h>
 
 #include <zephyr/sys/timeutil.h>
@@ -47,6 +49,43 @@ static int settings_valid(const struct ef800_time_settings *settings)
 {
 	return settings != NULL && settings->utc_offset_minutes >= -24 * 60 &&
 		settings->utc_offset_minutes <= 24 * 60;
+}
+
+int ef800_parse_utc_offset(const char *text, int32_t *offset_minutes)
+{
+	char *end;
+	long hours;
+	long minutes;
+	int sign;
+	const char *colon;
+
+	if (text == NULL || offset_minutes == NULL || text[0] == '\0') {
+		return -EINVAL;
+	}
+	colon = strchr(text, ':');
+	if (colon == NULL) {
+		hours = strtol(text, &end, 10);
+		if (*end != '\0' || hours < -24L || hours > 24L) {
+			return -EINVAL;
+		}
+		*offset_minutes = (int32_t)(hours * 60L);
+		return 0;
+	}
+	if (colon == text || (text[0] != '+' && text[0] != '-')) {
+		return -EINVAL;
+	}
+	sign = text[0] == '-' ? -1 : 1;
+	hours = strtol(text + 1, &end, 10);
+	if (end != colon || hours < 0L || hours > 24L || colon[1] < '0' ||
+		colon[1] > '9' || colon[2] < '0' || colon[2] > '9' || colon[3] != '\0') {
+		return -EINVAL;
+	}
+	minutes = (colon[1] - '0') * 10L + colon[2] - '0';
+	if (minutes >= 60L || (hours == 24L && minutes != 0L)) {
+		return -EINVAL;
+	}
+	*offset_minutes = (int32_t)(sign * (hours * 60L + minutes));
+	return 0;
 }
 
 static int epoch_to_rtc_time(int64_t epoch, struct rtc_time *time)

@@ -703,6 +703,12 @@ const struct ef800_time_settings *ef800_main_get_time_settings(void)
 	return &time_settings;
 }
 
+int ef800_main_reload_time_settings(void)
+{
+	load_time_settings();
+	return 0;
+}
+
 int ef800_main_foundation_init(void)
 {
 	bool watchdog_task_started;

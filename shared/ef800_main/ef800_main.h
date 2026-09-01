@@ -47,5 +47,6 @@ int ef800_main_rtc_set_local_time(const struct rtc_time *local,
 int ef800_main_rtc_set_utc_time(const struct rtc_time *utc);
 int ef800_main_rtc_get_local_time(struct rtc_time *local);
 const struct ef800_time_settings *ef800_main_get_time_settings(void);
+int ef800_main_reload_time_settings(void);
 
 #endif /* EF800_MAIN_FOUNDATION_H */

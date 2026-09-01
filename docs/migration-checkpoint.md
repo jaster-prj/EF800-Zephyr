@@ -2,18 +2,17 @@
 
 ## Checkpoint State
 
-This file records the routing/protocol increment and its remaining hardware
-gates. The implementation is buildable, verified, and committed; the current
-worktree contains local documentation corrections only.
+This file records the routing/protocol/persistence increments and their
+remaining hardware gates. The implementation is buildable and verified; the
+current source and documentation changes are uncommitted.
 
-- Repository HEAD: `21e68af` (`Added Elta3 and FTS3XX implementation`).
+- Repository HEAD: `c3932be` (`Update plans`).
 - Routing and metadata implementation: `bffe7a6` (`Add next iteration of
   migration`). Protocol and measurement implementation: `21e68af`.
-- The current tree verifies nineteen native tests, all four firmware images,
+- The current tree verifies twenty-four native tests, all four firmware images,
   and the image checker.
-- Previous baseline image sizes were bootloader `37264`, backup `53500`, main
-  `93664`, and keyboard `20348` bytes. Current verified sizes are bootloader
-  `35360`, backup `53644`, main `113180`, and keyboard `20348` bytes.
+- Current verified sizes are bootloader `35592`, backup `53644`, main `117724`,
+  and keyboard `20348` bytes.
 
 ## Authoritative Hardware Topology
 
@@ -90,6 +89,13 @@ The committed increment touches these areas:
 - MainApplication consumes metadata at startup, reconciles assignments, and
   selects the persisted console with safe fallback behavior.
 - Assignment UI supports connection selection and bounds the five-port display.
+- Legacy Mbed persistence readers decode bounded little-endian records without
+  native-ABI struct casts.
+- Migration writes versioned/checksummed timezone, port-assignment, and serial
+  configuration records, verifies them by decoding, and rejects duplicate
+  DebugDevice assignments before conversion.
+- Converted Elta3 and FTS3XX serial settings are loaded when configuring their
+  assigned UARTs; defaults remain the fallback when no converted record exists.
 
 ## Remaining Problems To Fix
 
@@ -110,6 +116,9 @@ The committed increment touches these areas:
 - The custom log backend redirects logger output, but Zephyr shell/console
   routing remains compile-time based. Decide explicitly whether shell input is
   fixed on `USART1` or is part of the dynamic application console contract.
+- Legacy migration has only been exercised with synthetic native fixtures. A
+  production device dump is required to confirm the deployed Mbed enum and
+  padding representation before relying on automatic migration.
 
 ## Resume Order
 
@@ -117,21 +126,22 @@ The committed increment touches these areas:
    wiring against the schematic before changing board resources.
 2. Add confirmed DeviceTree/pinctrl states for active Port 2/3 modes and the
    fixed BlueNRG device without reserving inactive alternate resources.
-3. Validate the Elta3 and FTS3XX serial protocols on hardware, then add
-   device-specific configuration persistence.
+3. Validate the Elta3 and FTS3XX serial protocols and migrated serial
+   configuration on hardware.
 4. Resolve the USB CDC implementation and finalize MainApplication FAT/MSC
    ownership transitions; keep all storage options hardware-gated.
-5. Add validated Mbed persistence migration readers if deployed settings must
-   survive the firmware migration.
+5. Capture deployed Mbed persistence fixtures and validate the compatibility
+   readers against the actual production toolchain output.
 6. Flash the image set to hardware and validate boot handoff, watchdog fallback,
    LCD, keyboard, RTC, battery, external protocols, QSPI/FAT, and USB behavior.
 7. Re-run the native suite, all four firmware builds, image checker, and update
    package checks before changing this checkpoint to a release baseline.
 
-The protocol foundation, assigned-port UART setup, and MainApplication
-measurement workflow are implemented and verified. The remaining work is
-device-specific configuration persistence, hardware validation of the selected
-UART routes and framing, and the QSPI/USB and alternate-port gates above.
+The protocol foundation, assigned-port UART setup, device configuration
+persistence/migration, and MainApplication measurement workflow are implemented
+and verified in native and firmware builds. The remaining work is validation of
+the selected UART routes and framing against hardware, an actual deployed Mbed
+file dump, and the QSPI/USB and alternate-port gates above.
 
 ## Required Verification Commands
 

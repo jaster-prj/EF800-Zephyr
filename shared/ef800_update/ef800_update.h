@@ -93,6 +93,11 @@ uint32_t ef800_console_target_encode(uint8_t port_id, uint8_t builder_id);
 uint8_t ef800_console_target_port(uint32_t target);
 uint8_t ef800_console_target_builder(uint32_t target);
 bool ef800_console_target_valid(uint32_t target);
+bool ef800_port_builder_allowed_on_port(uint8_t port_id, uint8_t builder_id);
+bool ef800_port_builder_connection_valid(uint8_t builder_id,
+								 uint8_t connection);
+bool ef800_port_assignment_record_valid(uint8_t port_id, uint8_t builder_id,
+								uint8_t connection);
 bool ef800_port_assignments_valid(uint64_t assignments);
 uint8_t ef800_console_port_select(const struct ef800_boot_metadata *metadata,
 					  bool usb_debug_available);

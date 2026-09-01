@@ -71,12 +71,24 @@ Status: implemented in this increment.
 
 ## Phase 3: Settings and Format Migration
 
+- Status: implemented against the observed deployed Mbed layout; production
+  acceptance still requires fixtures captured from the deployed Mbed toolchain.
+
 - Keep the current Zephyr text format for timezone settings:
   `<offset_minutes> <dst>\n`.
-- Decide whether Mbed binary settings must be migrated from deployed devices.
-- If required, add fixtures for legacy time, debug, Elta3, and FTS3XX records.
-- Write only the new validated format after a successful migration.
-- Add version and checksum fields before persisting device configurations.
+- Read legacy port assignments as bounded decimal files and legacy
+  `Persistence<T>` files as explicitly decoded little-endian records; never
+  cast legacy bytes directly to a Zephyr or C++ structure.
+- Validate record count, exact file length, IDs, ranges, duplicate IDs, and
+  serial enum values before accepting a record.
+- Convert legacy timezone hours to Zephyr minutes and convert DebugDevice,
+  Elta3, and FTS3XX serial settings to the new typed representation.
+- Keep legacy `port_N` assignment files separate from new
+  `port_assignment_N` records while conversion is in progress.
+- Write only the new validated format, decode it again, and compare fields
+  before removing legacy aggregate files.
+- Keep malformed, conflicting, or partially converted legacy data available
+  for diagnosis; migration returns an error instead of applying a partial set.
 
 ## Position Records
 
@@ -108,14 +120,15 @@ Before enabling `CONFIG_EF800_MAIN_STORAGE`:
 
 Status: typed port assignments, five-port metadata, connection-aware routing,
 cross-image console selection, Elta3/FTS3XX protocol and record handling,
-assigned-port UART setup, and the MainApplication measurement workflow are
-implemented and verified. Hardware pin ownership and device-specific
-configuration persistence remain unfinished; see `docs/migration-checkpoint.md`.
+assigned-port UART setup, device serial-configuration persistence, legacy
+Mbed migration readers, and the MainApplication measurement workflow are
+implemented and verified. Hardware pin ownership and deployed-file validation
+remain unfinished; see `docs/migration-checkpoint.md`.
 
 - Define typed port-assignment records with explicit version and checksum.
 - Validate builder-ID lookup, port IDs, and capability compatibility.
-- Add Debug, FTS3XX, and Elta3 configuration persistence only after typed port
-  ownership and UART routing are resolved.
+- Keep Debug, FTS3XX, and Elta3 configuration records versioned and checksummed;
+  use the validated legacy reader only as a migration input.
 - Keep USB MSD persistence last because it shares the QSPI ownership boundary.
 
 ## Verification Gates

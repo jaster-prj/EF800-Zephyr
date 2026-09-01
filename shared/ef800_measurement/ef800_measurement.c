@@ -168,7 +168,7 @@ void ef800_elta3_default_serial_config(
 		.data_bits = 7U,
 		.parity = EF800_MEASUREMENT_PARITY_ODD,
 		.stop_bits = 2U,
-		.flow_control = false,
+		.flow_control = EF800_MEASUREMENT_FLOW_NONE,
 	};
 }
 
@@ -183,7 +183,7 @@ void ef800_fts3xx_default_serial_config(
 		.data_bits = 8U,
 		.parity = EF800_MEASUREMENT_PARITY_NONE,
 		.stop_bits = 1U,
-		.flow_control = false,
+		.flow_control = EF800_MEASUREMENT_FLOW_NONE,
 	};
 }
 
@@ -203,7 +203,8 @@ int ef800_measurement_serial_config_for_builder(
 		return -EINVAL;
 	}
 	config->flow_control = connection ==
-		EF800_PORT_CONNECTION_SERIAL_FLOW_CONTROL;
+		EF800_PORT_CONNECTION_SERIAL_FLOW_CONTROL ?
+		EF800_MEASUREMENT_FLOW_RTS_CTS : EF800_MEASUREMENT_FLOW_NONE;
 	return 0;
 }
 

@@ -1,5 +1,6 @@
 /* SPDX-License-Identifier: Apache-2.0 */
 #include <zephyr/ztest.h>
+#include <zephyr/sys/byteorder.h>
 
 #include "keyboard_host.h"
 #include "keyboard_protocol.h"
@@ -7,6 +8,7 @@
 #include "ef800_time.h"
 #include "ef800_persistence.h"
 #include "ef800_persistence_fake.h"
+#include "ef800_persistence_legacy.h"
 #include "ef800_position.h"
 #include "ef800_ports.h"
 #include "ef800_port_uart.h"
@@ -167,6 +169,20 @@ ZTEST(keyboard_protocol, test_rtc_date_validation)
 	zassert_true(ef800_rtc_time_valid(&leap_day), NULL);
 	zassert_false(ef800_rtc_time_valid(&invalid_day), NULL);
 	zassert_false(ef800_rtc_time_valid(&invalid_weekday), NULL);
+}
+
+ZTEST(keyboard_protocol, test_rtc_offset_parsing)
+{
+	int32_t offset;
+
+	zassert_ok(ef800_parse_utc_offset("+02:30", &offset), NULL);
+	zassert_equal(offset, 150, NULL);
+	zassert_ok(ef800_parse_utc_offset("-02:30", &offset), NULL);
+	zassert_equal(offset, -150, NULL);
+	zassert_ok(ef800_parse_utc_offset("-2", &offset), NULL);
+	zassert_equal(offset, -120, NULL);
+	zassert_equal(ef800_parse_utc_offset("+24:01", &offset), -EINVAL, NULL);
+	zassert_equal(ef800_parse_utc_offset("02:30", &offset), -EINVAL, NULL);
 }
 
 struct workspace_names {
@@ -371,6 +387,7 @@ ZTEST(keyboard_protocol, test_port_descriptors_and_compatibility)
 	zassert_not_null(bluenrg_port, NULL);
 	zassert_false((rs232->capabilities & EF800_PORT_CAP_PARALLEL) != 0U, NULL);
 	zassert_true((multifunction->capabilities & EF800_PORT_CAP_PARALLEL) != 0U, NULL);
+	zassert_false((multifunction->capabilities & EF800_PORT_CAP_SERIAL_FLOW_CONTROL) != 0U, NULL);
 	zassert_true(ef800_port_device_is_compatible(rs232, debug), NULL);
 	zassert_true(ef800_port_device_is_compatible(serial, elta3), NULL);
 	zassert_false(ef800_port_device_is_compatible(serial, msd), NULL);
@@ -381,6 +398,10 @@ ZTEST(keyboard_protocol, test_port_descriptors_and_compatibility)
 		EF800_PORT_BUILDER_BLUENRG, EF800_PORT_CONNECTION_SPI), NULL);
 	zassert_false(ef800_port_device_supports_connection(
 		EF800_PORT_BUILDER_BLUENRG, EF800_PORT_CONNECTION_SERIAL), NULL);
+	zassert_true(ef800_port_builder_connection_valid(
+		EF800_PORT_BUILDER_DEBUG, EF800_PORT_CONNECTION_USB_CDC), NULL);
+	zassert_false(ef800_port_builder_connection_valid(
+		EF800_PORT_BUILDER_MSD, EF800_PORT_CONNECTION_USB_CDC), NULL);
 	zassert_is_null(ef800_port_get(0U), NULL);
 	zassert_is_null(ef800_port_device_get(99U), NULL);
 }
@@ -441,7 +462,7 @@ ZTEST(keyboard_protocol, test_port_assignment_persistence)
 	struct ef800_port_assignment_service service;
 	struct ef800_port_assignment_service restored;
 	uint8_t record[EF800_PORT_ASSIGNMENT_RECORD_SIZE];
-	char name[] = "port_1";
+	char name[] = "port_assignment_1";
 	size_t length;
 
 	ef800_persistence_fake_init(&fake);
@@ -479,6 +500,25 @@ ZTEST(keyboard_protocol, test_port_assignment_persistence)
 	zassert_equal(ef800_port_assignment_remove(&restored, 5U), -EPERM, NULL);
 }
 
+ZTEST(keyboard_protocol, test_disabled_assignment_uses_runtime_model)
+{
+	struct ef800_persistence storage;
+	struct ef800_port_assignment_service service;
+
+	zassert_ok(ef800_persistence_init(&storage,
+						 ef800_persistence_zephyr_backend()), NULL);
+	zassert_ok(ef800_port_assignment_init(&service, &storage), NULL);
+	zassert_equal(ef800_port_assignment_set_with_connection(&service, 1U,
+									 EF800_PORT_BUILDER_ELTA3,
+									 EF800_PORT_CONNECTION_SERIAL), -ENOTSUP, NULL);
+	zassert_ok(ef800_port_assignment_import_with_connection(&service, 1U,
+									 EF800_PORT_BUILDER_ELTA3,
+									 EF800_PORT_CONNECTION_SERIAL), NULL);
+	zassert_true(ef800_port_assignment_is_assigned(&service, 1U), NULL);
+	zassert_equal(ef800_port_assignment_get_builder(&service, 1U),
+				      EF800_PORT_BUILDER_ELTA3, NULL);
+}
+
 ZTEST(keyboard_protocol, test_disabled_port_assignment_storage)
 {
 	struct ef800_persistence storage;
@@ -492,6 +532,196 @@ ZTEST(keyboard_protocol, test_disabled_port_assignment_storage)
 	zassert_false(ef800_port_assignment_is_assigned(&service, 1U), NULL);
 	zassert_equal(ef800_port_assignment_load(&service, 1U), -ENOTSUP, NULL);
 	zassert_false(ef800_port_assignment_is_assigned(&service, 1U), NULL);
+}
+
+ZTEST(keyboard_protocol, test_legacy_persistence_parsers)
+{
+	uint8_t time_record[16] = {0};
+	uint8_t serial_records[52] = {0};
+	struct ef800_time_settings time_settings;
+	struct ef800_measurement_serial_config serial_config;
+	uint8_t builder_id;
+
+	sys_put_le32(1U, &time_record[0]);
+	sys_put_le32(0U, &time_record[4]);
+	sys_put_le32((uint32_t)-2, &time_record[8]);
+	time_record[12] = 1U;
+	time_record[13] = 0xA5U; /* Native C++ padding is not a data field. */
+	zassert_ok(ef800_legacy_parse_time(time_record, sizeof(time_record),
+							&time_settings), NULL);
+	zassert_equal(time_settings.utc_offset_minutes, -120, NULL);
+	zassert_true(time_settings.daylight_saving, NULL);
+
+	zassert_ok(ef800_legacy_parse_port_assignment((const uint8_t *)"3\r\n", 3U,
+								&builder_id), NULL);
+	zassert_equal(builder_id, EF800_PORT_BUILDER_FTS3XX, NULL);
+	zassert_equal(ef800_legacy_parse_port_assignment((const uint8_t *)"5", 1U,
+								&builder_id), -EINVAL, NULL);
+	{
+		const uint8_t embedded_nul[] = {'1', '\0', 'x'};
+
+		zassert_equal(ef800_legacy_parse_port_assignment(embedded_nul,
+									 sizeof(embedded_nul), &builder_id), -EINVAL, NULL);
+	}
+
+	sys_put_le32(2U, &serial_records[0]);
+	sys_put_le32(1U, &serial_records[4]);
+	sys_put_le32(1200U, &serial_records[8]);
+	sys_put_le32(7U, &serial_records[12]);
+	sys_put_le32(EF800_MEASUREMENT_PARITY_ODD, &serial_records[16]);
+	sys_put_le32(2U, &serial_records[20]);
+	sys_put_le32(0U, &serial_records[24]);
+	sys_put_le32(3U, &serial_records[28]);
+	sys_put_le32(9600U, &serial_records[32]);
+	sys_put_le32(8U, &serial_records[36]);
+	sys_put_le32(EF800_MEASUREMENT_PARITY_NONE, &serial_records[40]);
+	sys_put_le32(1U, &serial_records[44]);
+	sys_put_le32(0U, &serial_records[48]);
+	zassert_ok(ef800_legacy_parse_serial_config(serial_records,
+								sizeof(serial_records),
+								EF800_LEGACY_SERIAL_ELTA3, 1U,
+								&serial_config), NULL);
+	zassert_equal(serial_config.baudrate, 1200U, NULL);
+	zassert_equal(serial_config.data_bits, 7U, NULL);
+	zassert_equal(serial_config.parity, EF800_MEASUREMENT_PARITY_ODD, NULL);
+	zassert_equal(serial_config.stop_bits, 2U, NULL);
+	zassert_equal(serial_config.flow_control, EF800_MEASUREMENT_FLOW_NONE, NULL);
+	sys_put_le32(5U, &serial_records[12]);
+	sys_put_le32(EF800_MEASUREMENT_PARITY_EVEN, &serial_records[16]);
+	sys_put_le32(EF800_MEASUREMENT_FLOW_RTS_CTS, &serial_records[24]);
+	zassert_ok(ef800_legacy_parse_serial_config(serial_records,
+								sizeof(serial_records),
+								EF800_LEGACY_SERIAL_ELTA3, 1U,
+								&serial_config), NULL);
+	zassert_equal(serial_config.data_bits, 5U, NULL);
+	zassert_equal(serial_config.parity, EF800_MEASUREMENT_PARITY_EVEN, NULL);
+	zassert_equal(serial_config.flow_control, EF800_MEASUREMENT_FLOW_RTS_CTS, NULL);
+	zassert_equal(ef800_legacy_parse_serial_config(serial_records, 51U,
+								EF800_LEGACY_SERIAL_ELTA3, 1U,
+								&serial_config), -EINVAL, NULL);
+		sys_put_le32(2U, &serial_records[0]);
+		sys_put_le32(1U, &serial_records[28]);
+	zassert_equal(ef800_legacy_parse_serial_config(serial_records,
+								sizeof(serial_records),
+								EF800_LEGACY_SERIAL_ELTA3, 1U,
+								&serial_config), -EINVAL, NULL);
+		sys_put_le32(0U, &serial_records[0]);
+	zassert_equal(ef800_legacy_parse_serial_config(serial_records, 4U,
+								EF800_LEGACY_SERIAL_ELTA3, 1U,
+								&serial_config), -ENOENT, NULL);
+	time_record[12] = 2U;
+	zassert_equal(ef800_legacy_parse_time(time_record, sizeof(time_record),
+							&time_settings), -EINVAL, NULL);
+}
+
+ZTEST(keyboard_protocol, test_legacy_persistence_migration)
+{
+	struct ef800_persistence_fake fake;
+	struct ef800_persistence storage;
+	struct ef800_time_settings time_settings;
+	struct ef800_time_settings decoded_time;
+	struct ef800_measurement_serial_config serial_config = {
+		.baudrate = 9600U,
+		.data_bits = 8U,
+		.parity = EF800_MEASUREMENT_PARITY_NONE,
+		.stop_bits = 1U,
+		.flow_control = EF800_MEASUREMENT_FLOW_NONE,
+	};
+	struct ef800_measurement_serial_config decoded_serial;
+	struct ef800_port_assignment_state assignment;
+	uint8_t legacy_time[16] = {0};
+	uint8_t legacy_serial[28] = {0};
+	uint8_t record[EF800_PORT_ASSIGNMENT_RECORD_SIZE];
+	uint8_t buffer[64];
+	size_t length;
+
+	ef800_persistence_fake_init(&fake);
+	zassert_ok(ef800_persistence_init(&storage, &fake.backend), NULL);
+	sys_put_le32(1U, &legacy_time[0]);
+	sys_put_le32(0U, &legacy_time[4]);
+	sys_put_le32(1U, &legacy_time[8]);
+	legacy_time[12] = 0U;
+	zassert_ok(ef800_persistence_write(&storage,
+						EF800_PERSISTENCE_CONFIGURATION,
+						EF800_LEGACY_TIME_FILE, legacy_time,
+						sizeof(legacy_time)), NULL);
+	zassert_ok(ef800_persistence_write(&storage,
+						EF800_PERSISTENCE_CONFIGURATION, "port_1",
+						"1\r\n", 3U), NULL);
+	sys_put_le32(1U, &legacy_serial[0]);
+	sys_put_le32(2U, &legacy_serial[4]);
+	sys_put_le32(9600U, &legacy_serial[8]);
+	sys_put_le32(8U, &legacy_serial[12]);
+	sys_put_le32(EF800_MEASUREMENT_PARITY_NONE, &legacy_serial[16]);
+	sys_put_le32(1U, &legacy_serial[20]);
+	sys_put_le32(0U, &legacy_serial[24]);
+	zassert_ok(ef800_persistence_write(&storage,
+						EF800_PERSISTENCE_CONFIGURATION,
+						EF800_LEGACY_ELTA3_FILE, legacy_serial,
+						sizeof(legacy_serial)), NULL);
+	zassert_ok(ef800_legacy_migrate_all(&storage), NULL);
+
+	zassert_equal(ef800_persistence_read(&storage,
+						EF800_PERSISTENCE_CONFIGURATION,
+						EF800_LEGACY_TIME_FILE, buffer, sizeof(buffer),
+						&length), -ENOENT, NULL);
+	zassert_ok(ef800_persistence_read(&storage,
+						EF800_PERSISTENCE_CONFIGURATION,
+						EF800_TIME_SETTINGS_FILE, buffer, sizeof(buffer),
+						&length), NULL);
+	zassert_ok(ef800_time_settings_decode(buffer, length, &decoded_time), NULL);
+	time_settings.utc_offset_minutes = 60;
+	time_settings.daylight_saving = false;
+	zassert_equal(decoded_time.utc_offset_minutes, time_settings.utc_offset_minutes, NULL);
+	zassert_equal(decoded_time.daylight_saving, time_settings.daylight_saving, NULL);
+
+	zassert_ok(ef800_persistence_read(&storage,
+						EF800_PERSISTENCE_CONFIGURATION, "port_assignment_1", record,
+						sizeof(record), &length), NULL);
+	zassert_ok(ef800_port_assignment_decode(record, length, &assignment), NULL);
+	zassert_equal(assignment.port_id, 1U, NULL);
+	zassert_equal(assignment.builder_id, EF800_PORT_BUILDER_DEBUG, NULL);
+	zassert_equal(assignment.connection, EF800_PORT_CONNECTION_SERIAL, NULL);
+	zassert_equal(ef800_persistence_read(&storage,
+						EF800_PERSISTENCE_CONFIGURATION, "port_1", buffer,
+						sizeof(buffer), &length), -ENOENT, NULL);
+
+	zassert_ok(ef800_persistence_read(&storage,
+						EF800_PERSISTENCE_CONFIGURATION, "elta3_2", buffer,
+						sizeof(buffer), &length), NULL);
+	zassert_ok(ef800_serial_config_decode(buffer, length, &decoded_serial), NULL);
+	zassert_equal(decoded_serial.baudrate, serial_config.baudrate, NULL);
+	zassert_equal(decoded_serial.data_bits, serial_config.data_bits, NULL);
+	zassert_equal(decoded_serial.parity, serial_config.parity, NULL);
+	zassert_equal(decoded_serial.stop_bits, serial_config.stop_bits, NULL);
+	zassert_equal(ef800_persistence_read(&storage,
+						EF800_PERSISTENCE_CONFIGURATION,
+						EF800_LEGACY_ELTA3_FILE, buffer, sizeof(buffer),
+						&length), -ENOENT, NULL);
+	zassert_ok(ef800_legacy_migrate_all(&storage), NULL);
+}
+
+ZTEST(keyboard_protocol, test_legacy_migration_preflight_rejects_duplicate_debug)
+{
+	struct ef800_persistence_fake fake;
+	struct ef800_persistence storage;
+	char buffer[4] = {0};
+	size_t length;
+
+	ef800_persistence_fake_init(&fake);
+	zassert_ok(ef800_persistence_init(&storage, &fake.backend), NULL);
+	zassert_ok(ef800_persistence_write(&storage,
+						EF800_PERSISTENCE_CONFIGURATION, "port_1",
+						"1", 1U), NULL);
+	zassert_ok(ef800_persistence_write(&storage,
+						EF800_PERSISTENCE_CONFIGURATION, "port_2",
+						"1", 1U), NULL);
+	zassert_equal(ef800_legacy_migrate_all(&storage), -EADDRINUSE, NULL);
+	zassert_equal(ef800_persistence_read(&storage,
+						EF800_PERSISTENCE_CONFIGURATION, "port_1", buffer,
+						sizeof(buffer), &length), 0, NULL);
+	zassert_equal(length, 1U, NULL);
+	zassert_mem_equal(buffer, "1", 1U, NULL);
 }
 
 ZTEST(keyboard_protocol, test_port_uart_routes_and_ownership)
@@ -522,8 +752,8 @@ ZTEST(keyboard_protocol, test_port_uart_routes_and_ownership)
 								 EF800_PORT_CONNECTION_SERIAL_FLOW_CONTROL)->has_rts,
 			     NULL);
 	zassert_equal(ef800_port_connection_count(2U), 2U, NULL);
-	zassert_equal(ef800_port_connection_count(3U), 5U, NULL);
-	zassert_true(ef800_port_connection_at(3U, 3U)->capability ==
+	zassert_equal(ef800_port_connection_count(3U), 4U, NULL);
+	zassert_true(ef800_port_connection_at(3U, 2U)->capability ==
 			     EF800_PORT_CONNECTION_I2C, NULL);
 	zassert_is_null(ef800_port_uart_for_port(4U), NULL);
 	zassert_is_null(ef800_port_uart_for_id(EF800_PORT_UART_NONE), NULL);
@@ -626,6 +856,15 @@ ZTEST(keyboard_protocol, test_boot_metadata_assignments_and_console_fallback)
 								 EF800_PORT_CONNECTION_PARALLEL), -EINVAL, NULL);
 	metadata.port_assignments |= 0x80ULL;
 	zassert_false(ef800_boot_metadata_valid(&metadata), NULL);
+	metadata.port_assignments &= ~0x80ULL;
+	metadata.port_assignments |= 1ULL << 40;
+	zassert_false(ef800_boot_metadata_valid(&metadata), NULL);
+	metadata.port_assignments &= ~(1ULL << 40);
+	zassert_ok(ef800_port_assignment_set_record(&metadata.port_assignments, 2U,
+								 EF800_PORT_BUILDER_DEBUG,
+								 EF800_PORT_CONNECTION_SERIAL), NULL);
+	metadata.crc32 = ef800_boot_metadata_crc(&metadata);
+	zassert_false(ef800_boot_metadata_valid(&metadata), NULL);
 }
 
 struct measurement_fake_transport {
@@ -708,7 +947,7 @@ ZTEST(keyboard_protocol, test_measurement_protocols)
 	zassert_ok(ef800_measurement_serial_config_for_builder(
 		EF800_PORT_BUILDER_ELTA3, EF800_PORT_CONNECTION_SERIAL_FLOW_CONTROL,
 		&config), NULL);
-	zassert_true(config.flow_control, NULL);
+	zassert_equal(config.flow_control, EF800_MEASUREMENT_FLOW_RTS_CTS, NULL);
 	zassert_equal(ef800_measurement_serial_config_for_builder(
 		EF800_PORT_BUILDER_DEBUG, EF800_PORT_CONNECTION_SERIAL, &config),
 		-EINVAL, NULL);

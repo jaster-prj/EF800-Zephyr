@@ -16,5 +16,9 @@ struct ef800_measurement_zephyr_transport {
 int ef800_measurement_zephyr_init(
 	struct ef800_measurement_zephyr_transport *transport,
 	const struct device *uart, uint8_t builder_id, uint32_t connection);
+int ef800_measurement_zephyr_init_with_config(
+	struct ef800_measurement_zephyr_transport *transport,
+	const struct device *uart,
+	const struct ef800_measurement_serial_config *config);
 
 #endif /* EF800_MEASUREMENT_ZEPHYR_H */

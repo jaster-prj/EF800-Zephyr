@@ -28,85 +28,94 @@ static uint8_t assignment_connection(uint64_t assignments, uint8_t port_id)
 	return (assignment_byte(assignments, port_id) >> 4) & 0x0fU;
 }
 
-static bool assignment_record_valid(uint8_t port_id, uint8_t builder_id,
-					    uint8_t connection)
+bool ef800_port_builder_connection_valid(uint8_t builder_id,
+								 uint8_t connection)
 {
-	if (port_id < 1U || port_id > 5U || builder_id > EF800_PORT_BUILDER_BLUENRG ||
-		connection > EF800_PORT_CONNECTION_SPI) {
-		return false;
-	}
-	if (builder_id == EF800_PORT_BUILDER_NONE) {
-		return port_id != 5U && connection == EF800_PORT_CONNECTION_NONE;
-	}
-
-	switch (port_id) {
-	case 1U:
-		if (connection != EF800_PORT_CONNECTION_SERIAL) {
-			return false;
-		}
-		break;
-	case 2U:
-		if (connection != EF800_PORT_CONNECTION_SERIAL &&
-			connection != EF800_PORT_CONNECTION_SERIAL_FLOW_CONTROL) {
-			return false;
-		}
-		break;
-	case 3U:
-		if (connection != EF800_PORT_CONNECTION_SERIAL &&
-			connection != EF800_PORT_CONNECTION_SERIAL_FLOW_CONTROL &&
-			connection != EF800_PORT_CONNECTION_PARALLEL &&
-			connection != EF800_PORT_CONNECTION_I2C &&
-			connection != EF800_PORT_CONNECTION_SPI) {
-			return false;
-		}
-		break;
-	case 4U:
-		if (connection != EF800_PORT_CONNECTION_USB_CDC &&
-			connection != EF800_PORT_CONNECTION_USB_MSD) {
-			return false;
-		}
-		break;
-	case 5U:
-		if (builder_id != EF800_PORT_BUILDER_BLUENRG ||
-			connection != EF800_PORT_CONNECTION_SPI) {
-			return false;
-		}
-		break;
+	switch (builder_id) {
+	case EF800_PORT_BUILDER_DEBUG:
+		return connection == EF800_PORT_CONNECTION_SERIAL ||
+			connection == EF800_PORT_CONNECTION_SERIAL_FLOW_CONTROL ||
+			connection == EF800_PORT_CONNECTION_USB_CDC;
+	case EF800_PORT_BUILDER_ELTA3:
+	case EF800_PORT_BUILDER_FTS3XX:
+		return connection == EF800_PORT_CONNECTION_SERIAL ||
+			connection == EF800_PORT_CONNECTION_SERIAL_FLOW_CONTROL;
+	case EF800_PORT_BUILDER_MSD:
+		return connection == EF800_PORT_CONNECTION_USB_MSD;
+	case EF800_PORT_BUILDER_BLUENRG:
+		return connection == EF800_PORT_CONNECTION_SPI;
 	default:
 		return false;
 	}
+}
 
-	if (builder_id == EF800_PORT_BUILDER_MSD &&
-		(port_id != 4U || connection != EF800_PORT_CONNECTION_USB_MSD)) {
+bool ef800_port_builder_allowed_on_port(uint8_t port_id, uint8_t builder_id)
+{
+	if (port_id < 1U || port_id > 5U || builder_id > EF800_PORT_BUILDER_BLUENRG) {
 		return false;
 	}
-	if (builder_id == EF800_PORT_BUILDER_BLUENRG && port_id != 5U) {
-		return false;
+	if (builder_id == EF800_PORT_BUILDER_NONE) {
+		return true;
 	}
-	if (builder_id == EF800_PORT_BUILDER_BLUENRG &&
-		connection != EF800_PORT_CONNECTION_SPI) {
-		return false;
+	if (builder_id == EF800_PORT_BUILDER_MSD) {
+		return port_id == 4U;
+	}
+	if (builder_id == EF800_PORT_BUILDER_BLUENRG) {
+		return port_id == 5U;
+	}
+	if (builder_id == EF800_PORT_BUILDER_DEBUG) {
+		return port_id <= 4U;
 	}
 	if ((builder_id == EF800_PORT_BUILDER_ELTA3 ||
 	     builder_id == EF800_PORT_BUILDER_FTS3XX) && port_id >= 4U) {
 		return false;
 	}
-	if ((builder_id == EF800_PORT_BUILDER_ELTA3 ||
-	     builder_id == EF800_PORT_BUILDER_FTS3XX) &&
-		connection != EF800_PORT_CONNECTION_SERIAL &&
-		connection != EF800_PORT_CONNECTION_SERIAL_FLOW_CONTROL) {
+	return port_id <= 3U;
+}
+
+bool ef800_port_assignment_record_valid(uint8_t port_id, uint8_t builder_id,
+								uint8_t connection)
+{
+	if (port_id < 1U || port_id > 5U ||
+		builder_id > EF800_PORT_BUILDER_BLUENRG ||
+		connection > EF800_PORT_CONNECTION_SPI) {
 		return false;
 	}
-	if (builder_id == EF800_PORT_BUILDER_DEBUG && port_id == 4U &&
-		connection != EF800_PORT_CONNECTION_USB_CDC) {
+	if (!ef800_port_builder_allowed_on_port(port_id, builder_id)) {
 		return false;
 	}
-	if (builder_id != EF800_PORT_BUILDER_DEBUG && port_id == 4U &&
-		connection != EF800_PORT_CONNECTION_USB_MSD) {
+	if (builder_id == EF800_PORT_BUILDER_NONE) {
+		return port_id != 5U && connection == EF800_PORT_CONNECTION_NONE;
+	}
+	if (!ef800_port_builder_connection_valid(builder_id, connection)) {
 		return false;
 	}
 
-	return true;
+	switch (port_id) {
+	case 1U:
+		return connection == EF800_PORT_CONNECTION_SERIAL &&
+			(builder_id == EF800_PORT_BUILDER_DEBUG ||
+			 builder_id == EF800_PORT_BUILDER_ELTA3 ||
+			 builder_id == EF800_PORT_BUILDER_FTS3XX);
+	case 2U:
+		return connection == EF800_PORT_CONNECTION_SERIAL ||
+			connection == EF800_PORT_CONNECTION_SERIAL_FLOW_CONTROL;
+	case 3U:
+		return connection == EF800_PORT_CONNECTION_SERIAL ||
+			connection == EF800_PORT_CONNECTION_PARALLEL ||
+			connection == EF800_PORT_CONNECTION_I2C ||
+			connection == EF800_PORT_CONNECTION_SPI;
+	case 4U:
+		return (builder_id == EF800_PORT_BUILDER_DEBUG &&
+			connection == EF800_PORT_CONNECTION_USB_CDC) ||
+			(builder_id == EF800_PORT_BUILDER_MSD &&
+			 connection == EF800_PORT_CONNECTION_USB_MSD);
+	case 5U:
+		return builder_id == EF800_PORT_BUILDER_BLUENRG &&
+			connection == EF800_PORT_CONNECTION_SPI;
+	default:
+		return false;
+	}
 }
 
 static int assignment_set_record(uint64_t *assignments, uint8_t port_id,
@@ -115,8 +124,8 @@ static int assignment_set_record(uint64_t *assignments, uint8_t port_id,
 	uint64_t mask;
 	uint8_t value;
 
-	if (assignments == NULL || !assignment_record_valid(port_id, builder_id,
-							 connection)) {
+	if (assignments == NULL || !ef800_port_assignment_record_valid(port_id,
+										 builder_id, connection)) {
 		return -EINVAL;
 	}
 	mask = 0xffULL << ((port_id - 1U) * 8U);
@@ -359,11 +368,24 @@ bool ef800_console_target_valid(uint32_t target)
 
 bool ef800_port_assignments_valid(uint64_t assignments)
 {
+	const uint64_t defined_bits = 0x000000ffffffffffULL;
+	bool debug_assigned = false;
+
+	if ((assignments & ~defined_bits) != 0U) {
+		return false;
+	}
 	for (uint8_t port_id = 1U; port_id <= 5U; ++port_id) {
-		if (!assignment_record_valid(port_id,
-					     assignment_builder(assignments, port_id),
+		uint8_t builder_id = assignment_builder(assignments, port_id);
+
+		if (!ef800_port_assignment_record_valid(port_id, builder_id,
 					     assignment_connection(assignments, port_id))) {
 			return false;
+		}
+		if (builder_id == EF800_PORT_BUILDER_DEBUG) {
+			if (debug_assigned) {
+				return false;
+			}
+			debug_assigned = true;
 		}
 	}
 	return true;

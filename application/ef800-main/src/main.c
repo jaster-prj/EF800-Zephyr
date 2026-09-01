@@ -19,6 +19,7 @@
 #include "ef800_main.h"
 #include "ef800_mcp23017.h"
 #include "ef800_persistence.h"
+#include "ef800_persistence_legacy.h"
 #include "ef800_position.h"
 #include "ef800_ports.h"
 #include "ef800_port_uart.h"
@@ -182,6 +183,7 @@ static void start_measurement_editor(void);
 static const struct device *port_uart_device(enum ef800_port_uart_id uart_id);
 static int port_uart_check_ready(uint8_t port_id, uint32_t connection);
 static int claim_loaded_port_assignments(void);
+static int set_console_for_port(uint8_t port_id);
 
 static int load_boot_metadata(void)
 {
@@ -291,7 +293,7 @@ static int reconcile_port_uart_state(void)
 		return result;
 	}
 	console_port = ef800_console_port_select(&desired, false);
-	result = ef800_console_set_target(console_port);
+	result = set_console_for_port(console_port);
 	if (result != 0 && console_port != EF800_CONSOLE_SAFE_PORT) {
 		console_port = EF800_CONSOLE_SAFE_PORT;
 		result = ef800_console_set_target(console_port);
@@ -370,6 +372,10 @@ static int claim_loaded_port_assignments(void)
 		}
 		if (builder_id == EF800_PORT_BUILDER_ELTA3 ||
 		    builder_id == EF800_PORT_BUILDER_FTS3XX) {
+			struct ef800_measurement_serial_config config;
+			enum ef800_legacy_serial_kind kind = builder_id ==
+				EF800_PORT_BUILDER_ELTA3 ? EF800_LEGACY_SERIAL_ELTA3 :
+				EF800_LEGACY_SERIAL_FTS3XX;
 			const struct ef800_port_uart_route *route =
 				ef800_port_uart_for_connection(port->id, connection);
 			const struct device *device = route == NULL ? NULL :
@@ -382,9 +388,16 @@ static int claim_loaded_port_assignments(void)
 				}
 				continue;
 			}
-			result = ef800_measurement_zephyr_init(
-				&measurement_transports[port->id - 1U], device,
-				builder_id, connection);
+			result = ef800_serial_config_load(&persistence, kind, port->id,
+									&config);
+			if (result == -ENOENT || result == -ENOTSUP) {
+				result = ef800_measurement_serial_config_for_builder(builder_id,
+										connection, &config);
+			}
+			if (result == 0) {
+				result = ef800_measurement_zephyr_init_with_config(
+					&measurement_transports[port->id - 1U], device, &config);
+			}
 			if (result != 0) {
 				LOG_WRN("Port %u measurement UART setup failed: %d",
 					port->id, result);
@@ -395,6 +408,35 @@ static int claim_loaded_port_assignments(void)
 		}
 	}
 	return first_error;
+}
+
+static void default_debug_serial_config(
+	struct ef800_measurement_serial_config *config)
+{
+	*config = (struct ef800_measurement_serial_config){
+		.baudrate = 9600U,
+		.data_bits = 8U,
+		.parity = EF800_MEASUREMENT_PARITY_NONE,
+		.stop_bits = 1U,
+		.flow_control = EF800_MEASUREMENT_FLOW_NONE,
+	};
+}
+
+static int set_console_for_port(uint8_t port_id)
+{
+	struct ef800_measurement_serial_config config;
+	int result;
+
+	if (port_id == 0U || port_id == 4U) {
+		return ef800_console_set_target(port_id);
+	}
+	default_debug_serial_config(&config);
+	result = ef800_serial_config_load(&persistence, EF800_LEGACY_SERIAL_DEBUG,
+							 port_id, &config);
+	if (result != 0 && result != -ENOENT && result != -ENOTSUP) {
+		return result;
+	}
+	return ef800_console_set_target_with_config(port_id, &config);
 }
 
 static const struct gpio_dt_spec keyboard_reset =
@@ -1371,13 +1413,41 @@ static void display_port_assignment_result(const char *operation, int result)
 	display_line(6U, line);
 }
 
+static int set_port_assignment_runtime(uint8_t port_id, uint8_t builder_id,
+						uint32_t connection)
+{
+	int result = ef800_port_assignment_set_with_connection(&port_assignments,
+													 port_id, builder_id,
+													 connection);
+
+	if (result == -ENOTSUP) {
+		/* Internal metadata remains available during QSPI bring-up. */
+		result = ef800_port_assignment_import_with_connection(&port_assignments,
+													 port_id, builder_id,
+													 connection);
+	}
+	return result;
+}
+
+static int remove_port_assignment_runtime(uint8_t port_id)
+{
+	int result = ef800_port_assignment_remove(&port_assignments, port_id);
+
+	if (result == -ENOTSUP) {
+		result = ef800_port_assignment_import_with_connection(&port_assignments,
+													 port_id,
+													 EF800_PORT_BUILDER_NONE,
+													 EF800_PORT_CONNECTION_NONE);
+	}
+	return result;
+}
+
 static int restore_port_assignment(uint8_t port_id, uint8_t builder_id,
 					   uint32_t connection)
 {
 	return builder_id == EF800_PORT_BUILDER_NONE ?
-		ef800_port_assignment_remove(&port_assignments, port_id) :
-		ef800_port_assignment_set_with_connection(&port_assignments, port_id,
-													 builder_id, connection);
+		remove_port_assignment_runtime(port_id) :
+		set_port_assignment_runtime(port_id, builder_id, connection);
 }
 
 static void activate_port_assignment_entry(void)
@@ -1405,7 +1475,7 @@ static void activate_port_assignment_entry(void)
 				return;
 			}
 		}
-		result = ef800_port_assignment_remove(&port_assignments, port->id);
+		result = remove_port_assignment_runtime(port->id);
 		if (result == 0) {
 			result = persist_port_assignment_metadata();
 		}
@@ -1466,10 +1536,8 @@ static void commit_port_assignment_connection(void)
 		display_port_assignment_result("Connection unavailable", result);
 		return;
 	}
-	result = ef800_port_assignment_set_with_connection(&port_assignments,
-												  port->id,
-												  selected_builder_id,
-												  connection->capability);
+	result = set_port_assignment_runtime(port->id, selected_builder_id,
+													  connection->capability);
 	if (result == 0) {
 		result = persist_port_assignment_metadata();
 	}
@@ -1932,18 +2000,11 @@ static int parse_time_editor_value(int *value)
 	}
 	if (time_editor.field == TIME_EDITOR_OFFSET &&
 		strchr(time_editor.input, ':') != NULL) {
-		int hours;
-		int minutes;
-		char sign = time_editor.input[0] == '-' ? '-' : '+';
-		if (sscanf(time_editor.input, "%d:%d", &hours, &minutes) != 2 ||
-			hours < -24 || hours > 24 || minutes < 0 || minutes >= 60) {
+		int32_t offset_minutes;
+		if (ef800_parse_utc_offset(time_editor.input, &offset_minutes) != 0) {
 			return -EINVAL;
 		}
-		if (sign == '-') {
-			*value = hours * 60 - minutes;
-		} else {
-			*value = hours * 60 + minutes;
-		}
+		*value = offset_minutes;
 		return 0;
 	}
 	parsed = strtol(time_editor.input, &end, 10);
@@ -2136,15 +2197,12 @@ static int cmd_rtc_set(const struct shell *shell, size_t argc, char **argv)
 	local.tm_year = year - 1900;
 	local.tm_mon = month - 1;
 	if (strchr(argv[2], ':') != NULL) {
-		int hours;
-		int minutes;
-		char sign = argv[2][0] == '-' ? '-' : '+';
-		if (sscanf(argv[2], "%d:%d", &hours, &minutes) != 2 ||
-			hours < -24 || hours > 24 || minutes < 0 || minutes >= 60) {
+		int32_t parsed_offset;
+		if (ef800_parse_utc_offset(argv[2], &parsed_offset) != 0) {
 			shell_error(shell, "invalid UTC offset");
 			return -EINVAL;
 		}
-		offset = hours * 60 + (sign == '-' ? -minutes : minutes);
+		offset = parsed_offset;
 	} else {
 		if (offset < -24 || offset > 24) {
 			shell_error(shell, "UTC offset hours must be between -24 and 24");
@@ -2326,6 +2384,13 @@ int main(void)
 	if (result != 0) {
 		LOG_ERR("Persistence service initialization failed: %d", result);
 	} else {
+		if (ef800_storage_is_mounted()) {
+			result = ef800_legacy_migrate_all(&persistence);
+			if (result != 0) {
+				LOG_WRN("Legacy Mbed settings migration incomplete: %d", result);
+			}
+			(void)ef800_main_reload_time_settings();
+		}
 		result = ef800_port_assignment_init(&port_assignments, &persistence);
 		if (result != 0) {
 			LOG_ERR("Port assignment service initialization failed: %d", result);
