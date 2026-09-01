@@ -128,6 +128,11 @@ The uncommitted increment currently touches or adds these areas:
 7. Re-run the native suite, all four firmware builds, image checker, and update
    package checks before changing this checkpoint to a release baseline.
 
+The protocol foundation and MainApplication measurement workflow in step 3 are
+now implemented and verified. The remaining work is device-specific
+configuration persistence, hardware validation of the selected UART routes and
+framing, and the QSPI/USB and alternate-port gates above.
+
 ## Required Verification Commands
 
 Run west only inside `EF800_Devcontainer`:

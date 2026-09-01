@@ -97,6 +97,7 @@ const struct ef800_port_uart_route *ef800_port_uart_for_id(
 	return NULL;
 }
 
+
 static enum ef800_port_uart_owner *owner_for_route(
 	struct ef800_port_uart_registry *registry,
 	const struct ef800_port_uart_route *route)

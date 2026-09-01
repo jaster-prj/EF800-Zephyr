@@ -25,6 +25,7 @@
 #include "ef800_console.h"
 #include "ef800_metadata.h"
 #include "ef800_main_usb_msc.h"
+#include "ef800_measurement_zephyr.h"
 #include "ef800_t6963.h"
 #include "ef800_workspace.h"
 #include "keyboard_host.h"
@@ -52,6 +53,15 @@ static struct ef800_workspace workspace;
 static struct ef800_port_assignment_service port_assignments;
 static struct ef800_port_uart_registry port_uart_registry;
 static struct ef800_boot_metadata boot_metadata;
+static struct ef800_measurement_zephyr_transport measurement_transports[EF800_PORT_COUNT];
+static uint8_t measurement_port_ids[EF800_PORT_COUNT];
+static size_t measurement_port_count;
+static uint8_t selected_measurement_port;
+static bool measurement_pending;
+static bool measurement_fixed;
+static int32_t measurement_number;
+static struct ef800_measurement_record measurement_record;
+static char measurement_code[EF800_MEASUREMENT_TEXT_MAX + 1U] = "02";
 static bool boot_metadata_valid;
 static bool lcd_ready;
 static bool fuel_gauge_ready;
@@ -70,6 +80,9 @@ enum application_menu {
 	APPLICATION_MENU_PORTS,
 	APPLICATION_MENU_PORT_DEVICES,
 	APPLICATION_MENU_PORT_CONNECTIONS,
+	APPLICATION_MENU_MEASUREMENTS,
+	APPLICATION_MENU_MEASUREMENT_ACTIONS,
+	APPLICATION_MENU_MEASUREMENT_EDITOR,
 };
 
 #define WORKSPACE_LIST_MAX 16U
@@ -95,6 +108,20 @@ struct position_editor_state {
 };
 
 static struct position_editor_state position_editor;
+
+enum measurement_editor_field {
+	MEASUREMENT_EDITOR_CODE = 0,
+	MEASUREMENT_EDITOR_STAFF_HEIGHT,
+};
+
+struct measurement_editor_state {
+	bool active;
+	enum measurement_editor_field field;
+	uint8_t length;
+	char input[EF800_MEASUREMENT_TEXT_MAX + 1U];
+};
+
+static struct measurement_editor_state measurement_editor;
 
 enum time_editor_field {
 	TIME_EDITOR_WEEKDAY,
@@ -146,7 +173,14 @@ static void display_position_editor(void);
 static void display_port_assignment_ports(void);
 static void display_port_assignment_devices(void);
 static void display_port_assignment_connections(void);
-static int port_uart_check_ready(uint8_t port_id);
+static void display_measurement_devices(void);
+static void display_measurement_actions(void);
+static void display_measurement_editor(void);
+static void handle_measurement_editor_key(uint8_t key);
+static int trigger_measurement(bool fixed);
+static void start_measurement_editor(void);
+static const struct device *port_uart_device(enum ef800_port_uart_id uart_id);
+static int port_uart_check_ready(uint8_t port_id, uint32_t connection);
 static int claim_loaded_port_assignments(void);
 
 static int load_boot_metadata(void)
@@ -311,7 +345,10 @@ static int claim_loaded_port_assignments(void)
 		if (builder_id == EF800_PORT_BUILDER_NONE) {
 			continue;
 		}
-		result = port_uart_check_ready(port->id);
+		uint32_t connection = ef800_port_assignment_get_connection(
+			&port_assignments, port->id);
+
+		result = port_uart_check_ready(port->id, connection);
 		if (result != 0) {
 			LOG_WRN("Port %u UART is not ready: %d", port->id, result);
 			if (first_error == 0) {
@@ -328,6 +365,32 @@ static int claim_loaded_port_assignments(void)
 				result);
 			if (first_error == 0) {
 				first_error = result;
+			}
+			continue;
+		}
+		if (builder_id == EF800_PORT_BUILDER_ELTA3 ||
+		    builder_id == EF800_PORT_BUILDER_FTS3XX) {
+			const struct ef800_port_uart_route *route =
+				ef800_port_uart_for_connection(port->id, connection);
+			const struct device *device = route == NULL ? NULL :
+				port_uart_device(route->uart_id);
+
+			if (route == NULL || device == NULL) {
+				LOG_WRN("Port %u measurement route is unavailable", port->id);
+				if (first_error == 0) {
+					first_error = -ENODEV;
+				}
+				continue;
+			}
+			result = ef800_measurement_zephyr_init(
+				&measurement_transports[port->id - 1U], device,
+				builder_id, connection);
+			if (result != 0) {
+				LOG_WRN("Port %u measurement UART setup failed: %d",
+					port->id, result);
+				if (first_error == 0) {
+					first_error = result;
+				}
 			}
 		}
 	}
@@ -356,10 +419,10 @@ static const struct device *port_uart_device(
 	}
 }
 
-static int port_uart_check_ready(uint8_t port_id)
+static int port_uart_check_ready(uint8_t port_id, uint32_t connection)
 {
 	const struct ef800_port_uart_route *route =
-		ef800_port_uart_for_port(port_id);
+		ef800_port_uart_for_connection(port_id, connection);
 	const struct device *device;
 
 	if (route == NULL) {
@@ -696,6 +759,235 @@ static void display_port_assignment_connections(void)
 	display_line(7U, "ENTER select  ESC back");
 }
 
+static const char *measurement_device_title(uint8_t port_id)
+{
+	uint8_t builder = ef800_port_assignment_get_builder(&port_assignments, port_id);
+	const struct ef800_port_device_descriptor *device =
+		ef800_port_device_get(builder);
+
+	return device == NULL ? "unknown" : device->title;
+}
+
+static int load_measurement_ports(void)
+{
+	measurement_port_count = 0U;
+	for (uint8_t port_id = 1U; port_id <= EF800_PORT_COUNT; ++port_id) {
+		uint8_t builder = ef800_port_assignment_get_builder(&port_assignments, port_id);
+
+		if ((builder == EF800_PORT_BUILDER_ELTA3 ||
+		     builder == EF800_PORT_BUILDER_FTS3XX) &&
+			measurement_transports[port_id - 1U].uart != NULL) {
+			measurement_port_ids[measurement_port_count++] = port_id;
+		}
+	}
+	return measurement_port_count == 0U ? -ENODEV : 0;
+}
+
+static void display_measurement_devices(void)
+{
+	char line[STATUS_LINE_SIZE];
+	size_t first = menu_selection >= 3U ? menu_selection - 3U : 0U;
+
+	display_line(0U, "Measurement device");
+	display_line(1U, "Select assigned device");
+	for (size_t row = 0U; row < 4U; ++row) {
+		size_t index = first + row;
+
+		if (index >= measurement_port_count) {
+			display_line((uint8_t)(3U + row), "");
+			continue;
+		}
+		snprintk(line, sizeof(line), "%c Port %u: %s",
+			index == menu_selection ? '>' : ' ', measurement_port_ids[index],
+			measurement_device_title(measurement_port_ids[index]));
+		display_line((uint8_t)(3U + row), line);
+	}
+	display_line(7U, "ENTER select  ESC back");
+}
+
+static void display_measurement_actions(void)
+{
+	static const char *const actions[] = {
+		"Trigger measurement", "Save measurement", "Discard measurement",
+		"Fixed measurement",
+	};
+	char line[STATUS_LINE_SIZE];
+
+	display_line(0U, "Measurement");
+	snprintk(line, sizeof(line), "Port %u: %s", selected_measurement_port,
+		measurement_device_title(selected_measurement_port));
+	display_line(1U, line);
+	if (measurement_pending) {
+		snprintk(line, sizeof(line), "No %ld H %ld V %ld D %ldmm",
+			(long)measurement_record.number,
+			(long)measurement_record.data.horizontal_gon_1e4,
+			(long)measurement_record.data.vertical_gon_1e4,
+			(long)measurement_record.data.distance_mm);
+		display_line(2U, line);
+	} else {
+		display_line(2U, "No pending measurement");
+	}
+	for (size_t index = 0U; index < ARRAY_SIZE(actions); ++index) {
+		snprintk(line, sizeof(line), "%c %s", index == menu_selection ? '>' : ' ',
+			actions[index]);
+		display_line((uint8_t)(3U + index), line);
+	}
+	display_line(7U, "ENTER select  ESC back");
+}
+
+static void display_measurement_editor(void)
+{
+	char line[STATUS_LINE_SIZE];
+
+	display_line(0U, "Measurement details");
+	snprintk(line, sizeof(line), "No %ld H %.4ld V %.4ld",
+		(long)measurement_record.number,
+		(long)measurement_record.data.horizontal_gon_1e4,
+		(long)measurement_record.data.vertical_gon_1e4);
+	display_line(1U, line);
+	snprintk(line, sizeof(line), "%s", measurement_editor.field ==
+		MEASUREMENT_EDITOR_CODE ? "Code" : "Staff height mm");
+	display_line(4U, line);
+	snprintk(line, sizeof(line), "> %s", measurement_editor.input);
+	display_line(5U, line);
+	display_line(7U, "ENTER next  ESC cancel");
+}
+
+static void start_measurement_editor(void)
+{
+	memset(&measurement_editor, 0, sizeof(measurement_editor));
+	measurement_editor.active = true;
+	measurement_editor.field = MEASUREMENT_EDITOR_CODE;
+	strncpy(measurement_editor.input, measurement_code,
+		sizeof(measurement_editor.input) - 1U);
+	measurement_editor.length = strlen(measurement_editor.input);
+	display_measurement_editor();
+}
+
+static int trigger_measurement(bool fixed)
+{
+	uint8_t builder = ef800_port_assignment_get_builder(&port_assignments,
+		selected_measurement_port);
+	struct ef800_measurement_data data;
+	int result;
+
+	if (builder == EF800_PORT_BUILDER_ELTA3) {
+		result = ef800_elta3_measure(
+			&measurement_transports[selected_measurement_port - 1U].transport,
+			&data);
+	} else if (builder == EF800_PORT_BUILDER_FTS3XX) {
+		result = ef800_fts3xx_measure(
+			&measurement_transports[selected_measurement_port - 1U].transport,
+			&data);
+	} else {
+		return -EINVAL;
+	}
+	if (result != 0) {
+		return result;
+	}
+	if (measurement_number == INT32_MAX) {
+		return -ERANGE;
+	}
+	measurement_record.number = ++measurement_number;
+	measurement_record.data = data;
+	measurement_record.staff_height_mm = 0;
+	strncpy(measurement_record.code, measurement_code,
+		sizeof(measurement_record.code) - 1U);
+	measurement_record.code[sizeof(measurement_record.code) - 1U] = '\0';
+	measurement_pending = true;
+	measurement_fixed = fixed;
+	return 0;
+}
+
+static int save_measurement(void)
+{
+	int result;
+
+	if (!measurement_pending) {
+		return -ENOENT;
+	}
+	result = ef800_measurement_append(&workspace, &measurement_record);
+	if (result == 0) {
+		measurement_pending = false;
+	}
+	return result;
+}
+
+static int parse_measurement_editor_value(void)
+{
+	char *end;
+	long value;
+
+	if (measurement_editor.length == 0U) {
+		return -EINVAL;
+	}
+	if (measurement_editor.field == MEASUREMENT_EDITOR_CODE) {
+		strncpy(measurement_code, measurement_editor.input,
+			sizeof(measurement_code) - 1U);
+		measurement_code[sizeof(measurement_code) - 1U] = '\0';
+		if (!ef800_position_text_valid(measurement_code)) {
+			return -EINVAL;
+		}
+		strncpy(measurement_record.code, measurement_code,
+			sizeof(measurement_record.code) - 1U);
+		return 0;
+	}
+	value = strtol(measurement_editor.input, &end, 10);
+	if (*end != '\0' || value < 0 || value > INT32_MAX) {
+		return -EINVAL;
+	}
+	measurement_record.staff_height_mm = (int32_t)value;
+	return 0;
+}
+
+static void handle_measurement_editor_key(uint8_t key)
+{
+	int result;
+
+	if (key == 0x1BU) {
+		measurement_editor.active = false;
+		active_menu = APPLICATION_MENU_MEASUREMENT_ACTIONS;
+		menu_selection = 0U;
+		display_measurement_actions();
+		return;
+	}
+	if (key == 0x08U || key == 0x7FU) {
+		if (measurement_editor.length > 0U) {
+			measurement_editor.input[--measurement_editor.length] = '\0';
+			display_measurement_editor();
+		}
+		return;
+	}
+	if (key == '\r' || key == '\n') {
+		result = parse_measurement_editor_value();
+		if (result != 0) {
+			display_line(6U, "Invalid measurement value");
+			return;
+		}
+		if (measurement_editor.field == MEASUREMENT_EDITOR_CODE) {
+			measurement_editor.field = MEASUREMENT_EDITOR_STAFF_HEIGHT;
+			measurement_editor.length = 0U;
+			measurement_editor.input[0] = '\0';
+			display_measurement_editor();
+		} else {
+			measurement_editor.active = false;
+			active_menu = APPLICATION_MENU_MEASUREMENT_ACTIONS;
+			menu_selection = 0U;
+			display_measurement_actions();
+		}
+		return;
+	}
+	if (measurement_editor.field == MEASUREMENT_EDITOR_CODE ?
+		ef800_position_text_char_valid((char)key) :
+		(key >= '0' && key <= '9')) {
+		if (measurement_editor.length + 1U < sizeof(measurement_editor.input)) {
+			measurement_editor.input[measurement_editor.length++] = (char)key;
+			measurement_editor.input[measurement_editor.length] = '\0';
+			display_measurement_editor();
+		}
+	}
+}
+
 static void display_active_menu(void)
 {
 	switch (active_menu) {
@@ -713,6 +1005,15 @@ static void display_active_menu(void)
 		break;
 	case APPLICATION_MENU_PORT_CONNECTIONS:
 		display_port_assignment_connections();
+		break;
+	case APPLICATION_MENU_MEASUREMENTS:
+		display_measurement_devices();
+		break;
+	case APPLICATION_MENU_MEASUREMENT_ACTIONS:
+		display_measurement_actions();
+		break;
+	case APPLICATION_MENU_MEASUREMENT_EDITOR:
+		display_measurement_editor();
 		break;
 	case APPLICATION_MENU_WORKSPACE_SELECT:
 	case APPLICATION_MENU_WORKSPACE_LIST:
@@ -741,6 +1042,12 @@ static size_t active_menu_count(void)
 		return port_assignment_device_count();
 	case APPLICATION_MENU_PORT_CONNECTIONS:
 		return port_assignment_connection_count();
+	case APPLICATION_MENU_MEASUREMENTS:
+		return measurement_port_count;
+	case APPLICATION_MENU_MEASUREMENT_ACTIONS:
+		return 4U;
+	case APPLICATION_MENU_MEASUREMENT_EDITOR:
+		return 0U;
 	case APPLICATION_MENU_MAIN:
 	default:
 		return ARRAY_SIZE(menu_items);
@@ -794,6 +1101,17 @@ static void return_from_child_menu(void)
 		active_menu = APPLICATION_MENU_PORT_DEVICES;
 		menu_selection = 0U;
 		display_port_assignment_devices();
+	} else if (active_menu == APPLICATION_MENU_MEASUREMENTS) {
+		return_to_main_menu();
+	} else if (active_menu == APPLICATION_MENU_MEASUREMENT_ACTIONS) {
+		active_menu = APPLICATION_MENU_MEASUREMENTS;
+		menu_selection = selected_measurement_port;
+		display_measurement_devices();
+	} else if (active_menu == APPLICATION_MENU_MEASUREMENT_EDITOR) {
+		measurement_editor.active = false;
+		active_menu = APPLICATION_MENU_MEASUREMENT_ACTIONS;
+		menu_selection = 0U;
+		display_measurement_actions();
 	} else {
 		return_to_workspace_menu();
 	}
@@ -1053,17 +1371,49 @@ static void display_port_assignment_result(const char *operation, int result)
 	display_line(6U, line);
 }
 
+static int restore_port_assignment(uint8_t port_id, uint8_t builder_id,
+					   uint32_t connection)
+{
+	return builder_id == EF800_PORT_BUILDER_NONE ?
+		ef800_port_assignment_remove(&port_assignments, port_id) :
+		ef800_port_assignment_set_with_connection(&port_assignments, port_id,
+													 builder_id, connection);
+}
+
 static void activate_port_assignment_entry(void)
 {
 	const struct ef800_port_descriptor *port =
 		ef800_port_at(selected_port_index);
 	const struct ef800_port_device_descriptor *device;
+	uint8_t old_builder_id;
+	uint32_t old_connection;
+	int result;
 
 	if (port == NULL) {
 		return;
 	}
 	if (!port->fixed && menu_selection == port_assignment_device_count() - 1U) {
-		int result = ef800_port_assignment_remove(&port_assignments, port->id);
+		old_builder_id = ef800_port_assignment_get_builder(&port_assignments,
+			port->id);
+		old_connection = ef800_port_assignment_get_connection(&port_assignments,
+			port->id);
+		if (old_builder_id != EF800_PORT_BUILDER_NONE) {
+			result = ef800_port_uart_release(&port_uart_registry, port->id,
+							 old_builder_id, old_connection);
+			if (result != 0) {
+				display_port_assignment_result("UART release failed", result);
+				return;
+			}
+		}
+		result = ef800_port_assignment_remove(&port_assignments, port->id);
+		if (result == 0) {
+			result = persist_port_assignment_metadata();
+		}
+		if (result != 0 && old_builder_id != EF800_PORT_BUILDER_NONE) {
+			(void)restore_port_assignment(port->id, old_builder_id, old_connection);
+			(void)ef800_port_uart_claim(&port_uart_registry, port->id,
+							     old_builder_id, old_connection);
+		}
 		display_port_assignment_result("Assignment removed", result);
 		if (result == 0) {
 			active_menu = APPLICATION_MENU_PORTS;
@@ -1134,6 +1484,7 @@ static void commit_port_assignment_connection(void)
 	} else {
 		(void)ef800_port_uart_release(&port_uart_registry, port->id,
 						       selected_builder_id, connection->capability);
+		(void)restore_port_assignment(port->id, old_builder_id, old_connection);
 		if (old_builder_id != EF800_PORT_BUILDER_NONE) {
 			(void)ef800_port_uart_claim(&port_uart_registry, port->id,
 							     old_builder_id, old_connection);
@@ -1157,6 +1508,16 @@ static void activate_menu_entry(void)
 				LOG_INF("Position entry requires a selected Workspace");
 			} else {
 				start_position_editor();
+			}
+			break;
+		case 2U:
+			if (load_measurement_ports() != 0) {
+				display_line(6U, "No measurement device ready");
+				LOG_INF("No assigned measurement device is ready");
+			} else {
+				active_menu = APPLICATION_MENU_MEASUREMENTS;
+				menu_selection = 0U;
+				display_measurement_devices();
 			}
 			break;
 		case 3U:
@@ -1194,6 +1555,55 @@ static void activate_menu_entry(void)
 	}
 	if (active_menu == APPLICATION_MENU_PORT_CONNECTIONS) {
 		commit_port_assignment_connection();
+		return;
+	}
+	if (active_menu == APPLICATION_MENU_MEASUREMENTS) {
+		if (menu_selection < measurement_port_count) {
+			selected_measurement_port = measurement_port_ids[menu_selection];
+			active_menu = APPLICATION_MENU_MEASUREMENT_ACTIONS;
+			menu_selection = 0U;
+			display_measurement_actions();
+		}
+		return;
+	}
+	if (active_menu == APPLICATION_MENU_MEASUREMENT_ACTIONS) {
+		int result;
+
+		switch (menu_selection) {
+		case 0U:
+		case 3U:
+			result = trigger_measurement(menu_selection == 3U);
+			if (result == 0) {
+				active_menu = APPLICATION_MENU_MEASUREMENT_EDITOR;
+				start_measurement_editor();
+			} else {
+				display_line(6U, "Measurement failed");
+				LOG_WRN("Measurement trigger failed: %d", result);
+			}
+			break;
+		case 1U:
+			result = save_measurement();
+			display_line(6U, result == 0 ? "Measurement saved" :
+				(result == -ENODEV ? "Workspace not selected" : "Save failed"));
+			if (result == 0 && measurement_fixed) {
+				result = trigger_measurement(true);
+				if (result == 0) {
+					active_menu = APPLICATION_MENU_MEASUREMENT_EDITOR;
+					start_measurement_editor();
+				} else {
+					measurement_fixed = false;
+					LOG_WRN("Fixed measurement trigger failed: %d", result);
+				}
+			}
+			break;
+		case 2U:
+			measurement_pending = false;
+			measurement_fixed = false;
+			display_line(6U, "Measurement discarded");
+			break;
+		default:
+			break;
+		}
 		return;
 	}
 	if (active_menu == APPLICATION_MENU_WORKSPACE) {
@@ -1263,6 +1673,10 @@ static bool handle_application_key(uint8_t key)
 		handle_position_editor_key(key);
 		return true;
 	}
+	if (measurement_editor.active) {
+		handle_measurement_editor_key(key);
+		return true;
+	}
 	if (active_menu == APPLICATION_MENU_WORKSPACE_CREATE ||
 	    active_menu == APPLICATION_MENU_WORKSPACE_SELECT ||
 	    active_menu == APPLICATION_MENU_WORKSPACE_LIST) {
@@ -1324,6 +1738,9 @@ static bool handle_application_key(uint8_t key)
 		}
 		return false;
 	} else if (active_menu == APPLICATION_MENU_PORT_CONNECTIONS) {
+		return false;
+	} else if (active_menu == APPLICATION_MENU_MEASUREMENTS ||
+		active_menu == APPLICATION_MENU_MEASUREMENT_ACTIONS) {
 		return false;
 	} else {
 		shortcuts = workspace_shortcuts;

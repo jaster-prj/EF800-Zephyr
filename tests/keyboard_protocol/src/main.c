@@ -12,6 +12,7 @@
 #include "ef800_port_uart.h"
 #include "ef800_workspace.h"
 #include "ef800_update.h"
+#include "ef800_measurement.h"
 
 ZTEST(keyboard_protocol, test_raw_key_map)
 {
@@ -625,6 +626,186 @@ ZTEST(keyboard_protocol, test_boot_metadata_assignments_and_console_fallback)
 								 EF800_PORT_CONNECTION_PARALLEL), -EINVAL, NULL);
 	metadata.port_assignments |= 0x80ULL;
 	zassert_false(ef800_boot_metadata_valid(&metadata), NULL);
+}
+
+struct measurement_fake_transport {
+	const uint8_t *response;
+	size_t response_length;
+	size_t response_offset;
+	uint8_t writes[64];
+	size_t write_length;
+};
+
+static int measurement_fake_write(void *context, const uint8_t *data,
+					  size_t length)
+{
+	struct measurement_fake_transport *fake = context;
+
+	if (fake == NULL || data == NULL || length > sizeof(fake->writes) -
+		fake->write_length) {
+		return -EINVAL;
+	}
+	memcpy(&fake->writes[fake->write_length], data, length);
+	fake->write_length += length;
+	return (int)length;
+}
+
+static int measurement_fake_read(void *context, uint8_t *data,
+					 int32_t timeout_ms)
+{
+	struct measurement_fake_transport *fake = context;
+
+	ARG_UNUSED(timeout_ms);
+	if (fake == NULL || data == NULL) {
+		return -EINVAL;
+	}
+	if (fake->response_offset >= fake->response_length) {
+		return 0;
+	}
+	*data = fake->response[fake->response_offset++];
+	return 1;
+}
+
+ZTEST(keyboard_protocol, test_measurement_protocols)
+{
+	struct ef800_measurement_serial_config config;
+	struct ef800_measurement_data measurement;
+	struct measurement_fake_transport elta_fake = {
+		.response = (const uint8_t *)"A\r\n#48 0 1.234; 100.0000; 50.5000\r\n",
+		.response_length = strlen("A\r\n#48 0 1.234; 100.0000; 50.5000\r\n"),
+	};
+	struct measurement_fake_transport fts_fake = {
+		.response = (const uint8_t *)"1234 0900000 1800000\r\n",
+		.response_length = strlen("1234 0900000 1800000\r\n"),
+	};
+	const struct ef800_measurement_transport elta_transport = {
+		.write = measurement_fake_write,
+		.read = measurement_fake_read,
+		.context = &elta_fake,
+	};
+	const struct ef800_measurement_transport fts_transport = {
+		.write = measurement_fake_write,
+		.read = measurement_fake_read,
+		.context = &fts_fake,
+	};
+	struct ef800_measurement_record record = {
+		.number = 7,
+		.data = {
+			.distance_mm = 1234,
+			.horizontal_gon_1e4 = 1000000,
+			.vertical_gon_1e4 = 505000,
+		},
+		.staff_height_mm = 1500,
+		.code = "P001",
+	};
+	char formatted[96];
+
+	ef800_elta3_default_serial_config(&config);
+	zassert_equal(config.baudrate, 1200U, NULL);
+	zassert_equal(config.data_bits, 7U, NULL);
+	zassert_equal(config.parity, EF800_MEASUREMENT_PARITY_ODD, NULL);
+	zassert_equal(config.stop_bits, 2U, NULL);
+	zassert_ok(ef800_measurement_serial_config_for_builder(
+		EF800_PORT_BUILDER_ELTA3, EF800_PORT_CONNECTION_SERIAL_FLOW_CONTROL,
+		&config), NULL);
+	zassert_true(config.flow_control, NULL);
+	zassert_equal(ef800_measurement_serial_config_for_builder(
+		EF800_PORT_BUILDER_DEBUG, EF800_PORT_CONNECTION_SERIAL, &config),
+		-EINVAL, NULL);
+	zassert_ok(ef800_elta3_measure(&elta_transport, &measurement), NULL);
+	zassert_equal(measurement.control, 48U, NULL);
+	zassert_equal(measurement.distance_mm, 1234, NULL);
+	zassert_equal(measurement.horizontal_gon_1e4, 1000000, NULL);
+	zassert_equal(measurement.vertical_gon_1e4, 505000, NULL);
+	zassert_mem_equal(elta_fake.writes, "S14\r\nB\r\nQ\r\n",
+				 strlen("S14\r\nB\r\nQ\r\n"), NULL);
+
+	ef800_fts3xx_default_serial_config(&config);
+	zassert_equal(config.baudrate, 9600U, NULL);
+	zassert_equal(config.data_bits, 8U, NULL);
+	zassert_equal(config.parity, EF800_MEASUREMENT_PARITY_NONE, NULL);
+	zassert_equal(config.stop_bits, 1U, NULL);
+	zassert_ok(ef800_fts3xx_measure(&fts_transport, &measurement), NULL);
+	zassert_equal(measurement.distance_mm, 1234, NULL);
+	zassert_equal(measurement.vertical_gon_1e4, 1000000, NULL);
+	zassert_equal(measurement.horizontal_gon_1e4, 2000000, NULL);
+	zassert_mem_equal(fts_fake.writes, "\x11\r\n", 3U, NULL);
+
+	zassert_true(ef800_measurement_format_record(&record, formatted,
+								 sizeof(formatted)) > 0, NULL);
+	zassert_str_equal(formatted, "7 100.0000 1.234 50.5000 1.500 P001\r", NULL);
+
+	zassert_ok(ef800_elta3_up(&elta_transport), NULL);
+	zassert_ok(ef800_elta3_down(&elta_transport), NULL);
+	zassert_ok(ef800_elta3_enter(&elta_transport), NULL);
+	zassert_mem_equal(&elta_fake.writes[11], "S12\r\nS11\r\nS14\r\n", 15U, NULL);
+}
+
+ZTEST(keyboard_protocol, test_measurement_protocol_rejects_invalid_data)
+{
+	struct ef800_measurement_data measurement;
+	char record[64];
+	struct ef800_measurement_record invalid_record = {
+		.number = 1,
+		.code = "bad code",
+	};
+
+	zassert_equal(ef800_elta3_parse_response("#49 1 2", &measurement), -EINVAL,
+			      NULL);
+	zassert_equal(ef800_elta3_parse_response("#48 0 1.2", &measurement), -EINVAL,
+			      NULL);
+	zassert_ok(ef800_elta3_parse_response("#33 100.0000; 50.5000;",
+								 &measurement), NULL);
+	zassert_equal(measurement.control, 33U, NULL);
+	zassert_equal(measurement.distance_mm, 0, NULL);
+	zassert_equal(measurement.horizontal_gon_1e4, 1000000, NULL);
+	zassert_equal(measurement.vertical_gon_1e4, 505000, NULL);
+	zassert_equal(ef800_fts3xx_parse_response("1234 0966000 1800000",
+								 &measurement), -EINVAL, NULL);
+	{
+		struct measurement_fake_transport fake = {
+			.response = (const uint8_t *)"N\r\n",
+			.response_length = 3U,
+		};
+		const struct ef800_measurement_transport transport = {
+			.write = measurement_fake_write,
+			.read = measurement_fake_read,
+			.context = &fake,
+		};
+
+		zassert_equal(ef800_elta3_measure(&transport, &measurement), -EIO, NULL);
+	}
+	zassert_equal(ef800_measurement_format_record(&invalid_record, record,
+									 sizeof(record)), -EINVAL, NULL);
+}
+
+ZTEST(keyboard_protocol, test_measurement_append_to_workspace)
+{
+	struct ef800_persistence_fake fake;
+	struct ef800_persistence storage;
+	struct ef800_workspace workspace;
+	struct ef800_measurement_record record = {
+		.number = 7,
+		.data = {
+			.distance_mm = 1234,
+			.horizontal_gon_1e4 = 1000000,
+			.vertical_gon_1e4 = 505000,
+		},
+		.staff_height_mm = 1500,
+		.code = "P001",
+	};
+	char content[128] = {0};
+	size_t length;
+
+	ef800_persistence_fake_init(&fake);
+	zassert_ok(ef800_persistence_init(&storage, &fake.backend), NULL);
+	zassert_ok(ef800_workspace_init(&workspace, &storage), NULL);
+	zassert_ok(ef800_workspace_create(&workspace, "survey"), NULL);
+	zassert_ok(ef800_measurement_append(&workspace, &record), NULL);
+	zassert_ok(ef800_persistence_read(&storage, EF800_PERSISTENCE_DATA,
+						 "survey.dat", content, sizeof(content), &length), NULL);
+	zassert_str_equal(content, "7 100.0000 1.234 50.5000 1.500 P001\r", NULL);
+	zassert_equal(length, strlen(content), NULL);
 }
 
 ZTEST_SUITE(keyboard_protocol, NULL, NULL, NULL, NULL, NULL);

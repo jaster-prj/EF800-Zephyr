@@ -47,6 +47,7 @@ const struct ef800_port_uart_route *ef800_port_uart_for_connection(
 const struct ef800_port_uart_route *ef800_port_uart_for_id(
 	enum ef800_port_uart_id uart_id);
 
+
 int ef800_port_uart_registry_init(struct ef800_port_uart_registry *registry,
 					  enum ef800_port_uart_id console_uart);
 void ef800_port_uart_startup_complete(

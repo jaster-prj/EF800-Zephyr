@@ -32,6 +32,14 @@
   ownership checks and MainApplication connection-mode selection UI.
 - MainApplication startup reconciliation for metadata-backed assignments and
   console fallback; bootloader uses the shared metadata read/write contract.
+- Elta3 and FTS3XX protocol modules with exact command framing, response
+  parsing, fixed-point measurements, serial defaults, record formatting, and
+  Workspace append support.
+- MainApplication assigned Elta3/FTS3XX UART setup using the persisted
+  connection mode and measurement workflow.
+- MainApplication Measurement workflow for assigned Elta3/FTS3XX devices:
+  trigger, code/staff-height entry, save, discard, and fixed-measurement
+  repetition through Workspace.
 
 ## Current Checkpoint
 
@@ -52,7 +60,8 @@ SDK `1.0.1`:
 - MainApplication builds at `0x08030000` (`108824` bytes).
 - Keyboard-controller application builds (`20348` bytes).
 - Native keyboard, protocol, RTC, persistence, Position, port-assignment, and
-  boot-metadata suite passes all sixteen tests.
+  boot-metadata, measurement protocol, and record suite passes all nineteen
+  tests.
 
 The backup application currently uses about 82 percent of its 64 KiB
 partition. Treat additions to that recovery image as size-sensitive.
@@ -66,8 +75,9 @@ partition. Treat additions to that recovery image as size-sensitive.
 - T6963 LCD electrical timing.
 - USB switch polarity and USB VBUS behavior.
 - Production image signing and update package policy.
-- Final MainApplication port and external device protocol validation.
-- External device protocol startup and UART routing for assigned ports.
+- Final MainApplication port and external device protocol hardware validation.
+- Confirmed hardware UART routing and flow-control pin validation for assigned
+  ports.
 - Physical QSPI/FAT validation of the Workspace and Position services.
 - Position input and persistence on hardware requires validated Workspace
   storage.

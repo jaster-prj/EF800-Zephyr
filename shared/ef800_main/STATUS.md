@@ -30,6 +30,9 @@ Initialized by this increment:
   versioned/checksummed port-assignment persistence.
 - Fixed Port 5 BlueNRG assignment, persisted connection modes, UART ownership,
   metadata reconciliation, console fallback, and bounded assignment UI.
+- Elta3 and FTS3XX wire parsers, command framing, fixed-point measurement
+  records, Workspace append, assigned-UART serial configuration, and the
+  MainApplication measurement workflow.
 - MainApplication Settings port-assignment UI with connection-mode selection,
   fixed-port protection, removal, and storage errors shown without blocking the
   main loop.
@@ -42,8 +45,8 @@ Initialized by this increment:
 
 Still not ported:
 
-- Elta3/FTS3XX device protocols, assigned-port routing, and USB application
-  behavior.
+- Elta3/FTS3XX hardware protocol validation and device-specific configuration
+  persistence.
 - Workspace/Position operation against the physical QSPI/FAT volume.
 - Production validation of the fitted QSPI part and existing FAT contents.
 - DS3231 alarm/update workflows and board-specific alarm/interrupt wiring.
