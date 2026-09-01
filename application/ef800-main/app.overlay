@@ -9,6 +9,8 @@
 	};
 
 	zephyr,user {
+		/* USB VBUS detection controls the QSPI-to-MSC ownership handoff. */
+		usb-vbus-gpios = <&gpioa 9 GPIO_ACTIVE_HIGH>;
 		/* T6963 legacy parallel data bus, PA0..PA7. */
 		data-gpios = <&gpioa 0 0>, <&gpioa 1 0>, <&gpioa 2 0>,
 				     <&gpioa 3 0>, <&gpioa 4 0>, <&gpioa 5 0>,

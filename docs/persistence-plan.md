@@ -106,9 +106,10 @@ Before enabling `CONFIG_EF800_MAIN_STORAGE`:
 
 ## Phase 5: Port and Device Persistence
 
-Status: typed port assignments implemented in this increment; device
-configuration persistence remains deferred until protocol ownership and UART
-routing are available.
+Status: typed port assignments, five-port metadata, connection-aware routing,
+and cross-image console selection are implemented and verified in the current
+increment. Hardware pin ownership and device protocols remain unfinished; see
+`docs/migration-checkpoint.md`.
 
 - Define typed port-assignment records with explicit version and checksum.
 - Validate builder-ID lookup, port IDs, and capability compatibility.

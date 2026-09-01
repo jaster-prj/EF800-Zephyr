@@ -25,6 +25,9 @@ int ef800_main_foundation_init(void);
 
 /* The service is deliberately unavailable when storage support is disabled. */
 bool ef800_storage_is_mounted(void);
+int ef800_storage_mount(void);
+int ef800_storage_unmount(void);
+bool ef800_main_usb_msd_requested(void);
 const char *ef800_storage_configuration_dir(void);
 const char *ef800_storage_data_dir(void);
 

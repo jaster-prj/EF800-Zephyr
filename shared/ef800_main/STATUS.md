@@ -26,17 +26,23 @@ Initialized by this increment:
   native fake storage, Workspace create/select/restore/list, and append.
 - MainApplication Workspace menu and Position entry dialog. Position records use
   fixed-point millimetres and append through the selected Workspace.
-- Four logical port descriptors, capability validation, and versioned/checksummed
-  port-assignment persistence.
-- MainApplication Settings port-assignment UI with removal and storage errors
-  shown without blocking the main loop.
+- Five logical port descriptors with active connection validation and
+  versioned/checksummed port-assignment persistence.
+- Fixed Port 5 BlueNRG assignment, persisted connection modes, UART ownership,
+  metadata reconciliation, console fallback, and bounded assignment UI.
+- MainApplication Settings port-assignment UI with connection-mode selection,
+  fixed-port protection, removal, and storage errors shown without blocking the
+  main loop.
+- The routing increment is verified in the current working tree. See
+  `docs/migration-checkpoint.md` for the remaining hardware and QSPI/USB
+  ownership gates.
 - Shell commands on the console UART:
   - `rtc get`
   - `rtc set YYYY-MM-DDTHH:MM:SS offset_hours_or_HH:MM dst`
 
 Still not ported:
 
-- Elta3/FTS3XX device protocols, assigned-port UART routing, and USB application
+- Elta3/FTS3XX device protocols, assigned-port routing, and USB application
   behavior.
 - Workspace/Position operation against the physical QSPI/FAT volume.
 - Production validation of the fitted QSPI part and existing FAT contents.

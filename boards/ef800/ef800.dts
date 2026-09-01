@@ -110,6 +110,19 @@
 		};
 };
 
+&pinctrl {
+	uart4_tx_pc10: uart4_tx_pc10 {
+		pinmux = <STM32_PINMUX('C', 10, AF8)>;
+		bias-pull-up;
+		drive-push-pull;
+	};
+
+	uart4_rx_pc11: uart4_rx_pc11 {
+		pinmux = <STM32_PINMUX('C', 11, AF8)>;
+		bias-pull-up;
+	};
+};
+
 &lpuart1 {
 		pinctrl-0 = <&lpuart1_tx_pg7 &lpuart1_rx_pc0>;
 		pinctrl-names = "default";
@@ -129,6 +142,14 @@
 		pinctrl-names = "default";
 		current-speed = <115200>;
 		status = "okay";
+};
+
+/* UART4 is Port 1's external serial connection, never the Zephyr console. */
+&uart4 {
+	pinctrl-0 = <&uart4_tx_pc10 &uart4_rx_pc11>;
+	pinctrl-names = "default";
+	current-speed = <9600>;
+	status = "okay";
 };
 
 &quadspi {

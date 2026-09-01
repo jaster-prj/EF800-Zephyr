@@ -26,6 +26,8 @@
 #endif
 
 #include "ef800_update.h"
+#include "ef800_metadata.h"
+#include "ef800_console.h"
 
 LOG_MODULE_REGISTER(ef800_bootloader, LOG_LEVEL_INF);
 
@@ -81,67 +83,6 @@ static bool partition_is_valid(const struct flash_area *area, uintptr_t address)
 }
 
 #if CONFIG_EF800_BOOT_METADATA
-static int metadata_read(struct ef800_boot_metadata *metadata, bool *valid)
-{
-	const struct flash_area *area;
-	int rc;
-
-	*valid = false;
-	rc = flash_area_open(PARTITION_ID(metadata_partition), &area);
-	if (rc < 0) {
-		return rc;
-	}
-	if (!flash_area_device_is_ready(area) ||
-		area->fa_size < sizeof(*metadata)) {
-		return -ENODEV;
-	}
-
-	rc = flash_area_read(area, 0, metadata, sizeof(*metadata));
-	if (rc == 0) {
-		*valid = ef800_boot_metadata_valid(metadata);
-	}
-
-	return rc;
-}
-
-static int metadata_write(struct ef800_boot_metadata *metadata)
-{
-	const struct flash_area *area;
-	struct ef800_boot_metadata verify __aligned(8);
-	int rc;
-
-	metadata->sequence++;
-	metadata->size = sizeof(*metadata);
-	metadata->crc32 = ef800_boot_metadata_crc(metadata);
-
-	rc = flash_area_open(PARTITION_ID(metadata_partition), &area);
-	if (rc < 0) {
-		return rc;
-	}
-	if (!flash_area_device_is_ready(area) ||
-		area->fa_size < sizeof(*metadata)) {
-		return -ENODEV;
-	}
-
-	rc = flash_area_erase(area, 0, area->fa_size);
-	if (rc < 0) {
-		return rc;
-	}
-
-	rc = flash_area_write(area, 0, metadata, sizeof(*metadata));
-	if (rc < 0) {
-		return rc;
-	}
-
-	rc = flash_area_read(area, 0, &verify, sizeof(verify));
-	if (rc < 0 || memcmp(&verify, metadata, sizeof(verify)) != 0 ||
-		!ef800_boot_metadata_valid(&verify)) {
-		return rc < 0 ? rc : -EIO;
-	}
-
-	return 0;
-}
-
 static bool reset_was_watchdog(void)
 {
 #if CONFIG_HWINFO
@@ -426,6 +367,8 @@ int main(void)
 #endif
 	int rc;
 
+	(void)ef800_console_init(false);
+
 	rc = flash_area_open(MAIN_PARTITION_ID, &main_area);
 	if (rc < 0 || !flash_area_device_is_ready(main_area)) {
 		LOG_ERR("main partition unavailable: %d", rc);
@@ -438,7 +381,7 @@ int main(void)
 	}
 
 #if CONFIG_EF800_BOOT_METADATA
-	rc = metadata_read(&metadata, &metadata_valid);
+	rc = ef800_metadata_read_current(&metadata, &metadata_valid);
 	if (rc < 0 || !metadata_valid) {
 		LOG_WRN("boot metadata unavailable or invalid: %d", rc);
 		ef800_boot_metadata_init(&metadata);
@@ -488,7 +431,7 @@ int main(void)
 		metadata.last_target = EF800_BOOT_TARGET_BACKUP;
 		metadata_dirty = true;
 		if (metadata_dirty) {
-			rc = metadata_write(&metadata);
+			rc = ef800_metadata_write_current(&metadata);
 			if (rc < 0) {
 				LOG_ERR("boot metadata write failed: %d", rc);
 			}
@@ -509,7 +452,7 @@ int main(void)
 			metadata_dirty = true;
 		}
 		if (metadata_dirty) {
-			rc = metadata_write(&metadata);
+			rc = ef800_metadata_write_current(&metadata);
 			if (rc < 0) {
 				LOG_ERR("boot metadata write failed: %d", rc);
 			}
@@ -526,7 +469,7 @@ int main(void)
 			metadata_dirty = true;
 		}
 		if (metadata_dirty) {
-			rc = metadata_write(&metadata);
+			rc = ef800_metadata_write_current(&metadata);
 			if (rc < 0) {
 				LOG_ERR("boot metadata write failed: %d", rc);
 			}

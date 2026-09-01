@@ -9,7 +9,9 @@
 #include "ef800_persistence_fake.h"
 #include "ef800_position.h"
 #include "ef800_ports.h"
+#include "ef800_port_uart.h"
 #include "ef800_workspace.h"
+#include "ef800_update.h"
 
 ZTEST(keyboard_protocol, test_raw_key_map)
 {
@@ -347,9 +349,11 @@ ZTEST(keyboard_protocol, test_position_append_to_workspace)
 
 ZTEST(keyboard_protocol, test_port_descriptors_and_compatibility)
 {
-	const struct ef800_port_descriptor *parallel = ef800_port_get(1U);
+	const struct ef800_port_descriptor *rs232 = ef800_port_get(1U);
 	const struct ef800_port_descriptor *serial = ef800_port_get(2U);
+	const struct ef800_port_descriptor *multifunction = ef800_port_get(3U);
 	const struct ef800_port_descriptor *usb = ef800_port_get(4U);
+	const struct ef800_port_descriptor *bluenrg_port = ef800_port_get(5U);
 	const struct ef800_port_device_descriptor *debug =
 		ef800_port_device_get(EF800_PORT_BUILDER_DEBUG);
 	const struct ef800_port_device_descriptor *elta3 =
@@ -359,15 +363,23 @@ ZTEST(keyboard_protocol, test_port_descriptors_and_compatibility)
 
 	zassert_equal(ef800_port_count(), EF800_PORT_COUNT, NULL);
 	zassert_equal(ef800_port_device_count(), EF800_PORT_DEVICE_COUNT, NULL);
-	zassert_not_null(parallel, NULL);
+	zassert_not_null(rs232, NULL);
 	zassert_not_null(serial, NULL);
+	zassert_not_null(multifunction, NULL);
 	zassert_not_null(usb, NULL);
-	zassert_true((parallel->capabilities & EF800_PORT_CAP_PARALLEL) != 0U, NULL);
-	zassert_true(ef800_port_device_is_compatible(parallel, debug), NULL);
+	zassert_not_null(bluenrg_port, NULL);
+	zassert_false((rs232->capabilities & EF800_PORT_CAP_PARALLEL) != 0U, NULL);
+	zassert_true((multifunction->capabilities & EF800_PORT_CAP_PARALLEL) != 0U, NULL);
+	zassert_true(ef800_port_device_is_compatible(rs232, debug), NULL);
 	zassert_true(ef800_port_device_is_compatible(serial, elta3), NULL);
 	zassert_false(ef800_port_device_is_compatible(serial, msd), NULL);
 	zassert_true(ef800_port_device_is_compatible(usb, debug), NULL);
 	zassert_true(ef800_port_device_is_compatible(usb, msd), NULL);
+	zassert_true(bluenrg_port->fixed, NULL);
+	zassert_true(ef800_port_device_supports_connection(
+		EF800_PORT_BUILDER_BLUENRG, EF800_PORT_CONNECTION_SPI), NULL);
+	zassert_false(ef800_port_device_supports_connection(
+		EF800_PORT_BUILDER_BLUENRG, EF800_PORT_CONNECTION_SERIAL), NULL);
 	zassert_is_null(ef800_port_get(0U), NULL);
 	zassert_is_null(ef800_port_device_get(99U), NULL);
 }
@@ -377,6 +389,7 @@ ZTEST(keyboard_protocol, test_port_assignment_record_validation)
 	struct ef800_port_assignment_state state = {
 		.port_id = 1U,
 		.builder_id = EF800_PORT_BUILDER_DEBUG,
+		.connection = EF800_PORT_CONNECTION_SERIAL,
 		.assigned = true,
 	};
 	struct ef800_port_assignment_state decoded;
@@ -390,6 +403,7 @@ ZTEST(keyboard_protocol, test_port_assignment_record_validation)
 	zassert_ok(ef800_port_assignment_decode(record, length, &decoded), NULL);
 	zassert_equal(decoded.port_id, state.port_id, NULL);
 	zassert_equal(decoded.builder_id, state.builder_id, NULL);
+	zassert_equal(decoded.connection, state.connection, NULL);
 	zassert_true(decoded.assigned, NULL);
 
 	memcpy(invalid, record, sizeof(invalid));
@@ -452,10 +466,16 @@ ZTEST(keyboard_protocol, test_port_assignment_persistence)
 	zassert_ok(ef800_port_assignment_load(&restored, 1U), NULL);
 	zassert_equal(ef800_port_assignment_get_builder(&restored, 1U),
 			      EF800_PORT_BUILDER_DEBUG, NULL);
+	zassert_equal(ef800_port_assignment_get_connection(&restored, 1U),
+			      EF800_PORT_CONNECTION_SERIAL, NULL);
 	zassert_ok(ef800_port_assignment_remove(&restored, 1U), NULL);
 	zassert_false(ef800_port_assignment_is_assigned(&restored, 1U), NULL);
 	zassert_ok(ef800_port_assignment_remove(&restored, 1U), NULL);
 	zassert_equal(ef800_port_assignment_load(&restored, 4U), 0, NULL);
+	zassert_true(ef800_port_assignment_is_assigned(&restored, 5U), NULL);
+	zassert_equal(ef800_port_assignment_get_builder(&restored, 5U),
+			      EF800_PORT_BUILDER_BLUENRG, NULL);
+	zassert_equal(ef800_port_assignment_remove(&restored, 5U), -EPERM, NULL);
 }
 
 ZTEST(keyboard_protocol, test_disabled_port_assignment_storage)
@@ -471,6 +491,140 @@ ZTEST(keyboard_protocol, test_disabled_port_assignment_storage)
 	zassert_false(ef800_port_assignment_is_assigned(&service, 1U), NULL);
 	zassert_equal(ef800_port_assignment_load(&service, 1U), -ENOTSUP, NULL);
 	zassert_false(ef800_port_assignment_is_assigned(&service, 1U), NULL);
+}
+
+ZTEST(keyboard_protocol, test_port_uart_routes_and_ownership)
+{
+	const struct ef800_port_uart_route *port1 =
+		ef800_port_uart_for_port(1U);
+	const struct ef800_port_uart_route *port2 =
+		ef800_port_uart_for_port(2U);
+	const struct ef800_port_uart_route *port3 =
+		ef800_port_uart_for_port(3U);
+	struct ef800_port_uart_registry registry;
+
+	zassert_not_null(port1, NULL);
+	zassert_not_null(port2, NULL);
+	zassert_not_null(port3, NULL);
+	zassert_equal(port1->uart_id, EF800_PORT_UART3, NULL);
+	zassert_str_equal(port1->tx_pins, "PD8");
+	zassert_str_equal(port1->rx_pins, "PD9");
+	zassert_equal(port2->uart_id, EF800_PORT_UART1, NULL);
+	zassert_false(port2->has_rts, NULL);
+	zassert_false(port2->has_cts, NULL);
+	zassert_equal(port3->uart_id, EF800_PORT_UART4, NULL);
+	zassert_false(port3->has_rts, NULL);
+	zassert_false(port3->has_cts, NULL);
+	zassert_not_null(ef800_port_uart_for_connection(2U,
+								 EF800_PORT_CONNECTION_SERIAL_FLOW_CONTROL), NULL);
+	zassert_true(ef800_port_uart_for_connection(2U,
+								 EF800_PORT_CONNECTION_SERIAL_FLOW_CONTROL)->has_rts,
+			     NULL);
+	zassert_equal(ef800_port_connection_count(2U), 2U, NULL);
+	zassert_equal(ef800_port_connection_count(3U), 5U, NULL);
+	zassert_true(ef800_port_connection_at(3U, 3U)->capability ==
+			     EF800_PORT_CONNECTION_I2C, NULL);
+	zassert_is_null(ef800_port_uart_for_port(4U), NULL);
+	zassert_is_null(ef800_port_uart_for_id(EF800_PORT_UART_NONE), NULL);
+
+	zassert_ok(ef800_port_uart_registry_init(&registry, EF800_PORT_UART_NONE), NULL);
+	zassert_ok(ef800_port_uart_can_claim(&registry, 1U,
+						 EF800_PORT_BUILDER_DEBUG,
+						 EF800_PORT_CONNECTION_SERIAL), NULL);
+	zassert_ok(ef800_port_uart_can_claim(&registry, 2U,
+							 EF800_PORT_BUILDER_ELTA3,
+							 EF800_PORT_CONNECTION_SERIAL), NULL);
+	zassert_ok(ef800_port_uart_can_claim(&registry, 2U,
+						 EF800_PORT_BUILDER_ELTA3,
+						 EF800_PORT_CONNECTION_SERIAL_FLOW_CONTROL), NULL);
+	zassert_ok(ef800_port_uart_claim(&registry, 2U,
+						 EF800_PORT_BUILDER_ELTA3,
+						 EF800_PORT_CONNECTION_SERIAL_FLOW_CONTROL), NULL);
+	zassert_true(ef800_port_uart_is_claimed(&registry, 2U), NULL);
+	zassert_equal(ef800_port_uart_can_claim(&registry, 3U,
+						       EF800_PORT_BUILDER_FTS3XX,
+						       EF800_PORT_CONNECTION_SERIAL), 0, NULL);
+	zassert_equal(ef800_port_uart_can_claim(&registry, 2U,
+							       EF800_PORT_BUILDER_MSD,
+							       EF800_PORT_CONNECTION_SERIAL), -EINVAL, NULL);
+	{
+		struct ef800_port_uart_registry console_registry;
+
+		zassert_ok(ef800_port_uart_registry_init(&console_registry,
+								 EF800_PORT_UART1), NULL);
+		zassert_equal(ef800_port_uart_can_claim(&console_registry, 2U,
+								 EF800_PORT_BUILDER_ELTA3,
+								 EF800_PORT_CONNECTION_SERIAL), -EBUSY, NULL);
+	}
+	zassert_equal(ef800_port_uart_release(&registry, 2U,
+						   EF800_PORT_BUILDER_DEBUG,
+						   EF800_PORT_CONNECTION_SERIAL_FLOW_CONTROL), -EINVAL, NULL);
+	zassert_ok(ef800_port_uart_release(&registry, 2U,
+						 EF800_PORT_BUILDER_ELTA3,
+						 EF800_PORT_CONNECTION_SERIAL_FLOW_CONTROL), NULL);
+	zassert_false(ef800_port_uart_is_claimed(&registry, 2U), NULL);
+	zassert_ok(ef800_port_uart_claim(&registry, 4U,
+						 EF800_PORT_BUILDER_MSD,
+						 EF800_PORT_CONNECTION_USB_MSD), NULL);
+	zassert_false(ef800_port_uart_is_claimed(&registry, 4U), NULL);
+}
+
+ZTEST(keyboard_protocol, test_boot_metadata_assignments_and_console_fallback)
+{
+	struct ef800_boot_metadata metadata;
+	struct ef800_boot_metadata decoded;
+	uint8_t encoded[EF800_BOOT_METADATA_SIZE];
+
+	ef800_boot_metadata_init(&metadata);
+	zassert_equal(sizeof(metadata), EF800_BOOT_METADATA_SIZE, NULL);
+	zassert_true(ef800_boot_metadata_valid(&metadata), NULL);
+	zassert_equal(ef800_port_assignment_builder(metadata.port_assignments, 5U),
+			      EF800_PORT_BUILDER_BLUENRG, NULL);
+	zassert_equal(ef800_port_assignment_connection(metadata.port_assignments, 5U),
+			      EF800_PORT_CONNECTION_SPI, NULL);
+	zassert_equal(ef800_console_port_select(&metadata, false),
+			      EF800_CONSOLE_FALLBACK_PORT, NULL);
+
+	zassert_ok(ef800_port_assignment_set_record(&metadata.port_assignments, 1U,
+								 EF800_PORT_BUILDER_DEBUG,
+								 EF800_PORT_CONNECTION_SERIAL), NULL);
+	zassert_ok(ef800_port_assignment_set_record(&metadata.port_assignments, 2U,
+								 EF800_PORT_BUILDER_ELTA3,
+								 EF800_PORT_CONNECTION_SERIAL_FLOW_CONTROL), NULL);
+	zassert_ok(ef800_port_assignment_set_record(&metadata.port_assignments, 3U,
+								 EF800_PORT_BUILDER_FTS3XX,
+								 EF800_PORT_CONNECTION_SERIAL), NULL);
+	zassert_ok(ef800_port_assignment_set_record(&metadata.port_assignments, 4U,
+								 EF800_PORT_BUILDER_MSD,
+								 EF800_PORT_CONNECTION_USB_MSD), NULL);
+	zassert_true(ef800_port_assignments_valid(metadata.port_assignments), NULL);
+	zassert_equal(ef800_port_assignment_builder(metadata.port_assignments, 2U),
+			      EF800_PORT_BUILDER_ELTA3, NULL);
+	zassert_equal(ef800_port_assignment_connection(metadata.port_assignments, 2U),
+			      EF800_PORT_CONNECTION_SERIAL_FLOW_CONTROL, NULL);
+	zassert_equal(ef800_console_port_select(&metadata, false),
+			      EF800_CONSOLE_SAFE_PORT, NULL);
+	zassert_ok(ef800_boot_metadata_set_console(&metadata, 1U), NULL);
+	zassert_equal(ef800_console_port_select(&metadata, false), 1U, NULL);
+	metadata.crc32 = ef800_boot_metadata_crc(&metadata);
+	zassert_true(ef800_boot_metadata_valid(&metadata), NULL);
+	zassert_ok(ef800_boot_metadata_encode(&metadata, encoded, sizeof(encoded)), NULL);
+	zassert_equal(encoded[0], 0x42U, NULL);
+	zassert_equal(encoded[1], 0x38U, NULL);
+	zassert_equal(encoded[4], EF800_BOOT_METADATA_VERSION, NULL);
+	zassert_ok(ef800_boot_metadata_decode(encoded, sizeof(encoded), &decoded), NULL);
+	zassert_mem_equal(&decoded, &metadata, sizeof(metadata), NULL);
+	zassert_ok(ef800_boot_metadata_set_console(&metadata, 2U), NULL);
+	metadata.crc32 = ef800_boot_metadata_crc(&metadata);
+	zassert_false(ef800_boot_metadata_valid(&metadata), NULL);
+	zassert_ok(ef800_boot_metadata_set_console(&metadata, 1U), NULL);
+	metadata.crc32 = ef800_boot_metadata_crc(&metadata);
+	zassert_true(ef800_boot_metadata_valid(&metadata), NULL);
+	zassert_equal(ef800_port_assignment_set_record(&metadata.port_assignments, 3U,
+								 EF800_PORT_BUILDER_ELTA3,
+								 EF800_PORT_CONNECTION_PARALLEL), -EINVAL, NULL);
+	metadata.port_assignments |= 0x80ULL;
+	zassert_false(ef800_boot_metadata_valid(&metadata), NULL);
 }
 
 ZTEST_SUITE(keyboard_protocol, NULL, NULL, NULL, NULL, NULL);

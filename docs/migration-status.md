@@ -21,23 +21,38 @@
 - Position record formatting and Workspace append behavior using fixed-point
   millimetres.
 - MainApplication Position entry dialog gated on a selected Workspace.
-- Four logical port descriptors with capability-filtered device assignment.
+- Five logical port descriptors with capability-filtered device assignment.
 - Portable, versioned, checksummed port-assignment persistence using the
   backend-neutral storage API.
 - MainApplication Settings port-assignment UI with assignment removal; device
   protocol startup remains disabled until those protocols are ported.
+- Fixed 40-byte little-endian boot metadata encoding with CRC validation,
+  persisted connection modes, and fixed Port 5 BlueNRG assignment.
+- Five-port assignment validation for active connection modes, including UART
+  ownership checks and MainApplication connection-mode selection UI.
+- MainApplication startup reconciliation for metadata-backed assignments and
+  console fallback; bootloader uses the shared metadata read/write contract.
+
+## Current Checkpoint
+
+The routing increment is implemented and verified in the current working tree,
+but remains uncommitted alongside the earlier provisional changes. The
+authoritative software topology is five logical ports: UART3 RS232, UART1 with
+optional flow control, UART4 plus alternate Port 3 modes, USB CDC/MSD, and
+fixed BlueNRG/SPI1. Exact alternate pin ownership still requires schematic
+confirmation before hardware use.
 
 ## Software verification
 
 Verified with the reusable `EF800_Devcontainer`, Zephyr `v4.4.1`, and Zephyr
 SDK `1.0.1`:
 
-- Second-level bootloader builds at `0x08000000` (`37264` bytes).
-- Backup application builds at `0x08010000` (`53500` bytes).
-- MainApplication builds at `0x08030000` (`93664` bytes).
+- Second-level bootloader builds at `0x08000000` (`35360` bytes).
+- Backup application builds at `0x08010000` (`53644` bytes).
+- MainApplication builds at `0x08030000` (`108824` bytes).
 - Keyboard-controller application builds (`20348` bytes).
-- Native keyboard, protocol, RTC, persistence, Position, and port-assignment
-  suite passes all fourteen tests.
+- Native keyboard, protocol, RTC, persistence, Position, port-assignment, and
+  boot-metadata suite passes all sixteen tests.
 
 The backup application currently uses about 82 percent of its 64 KiB
 partition. Treat additions to that recovery image as size-sensitive.

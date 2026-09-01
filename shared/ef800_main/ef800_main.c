@@ -16,8 +16,11 @@
 #include <zephyr/logging/log.h>
 #include <zephyr/sys/clock.h>
 #include <zephyr/sys/timeutil.h>
+#include <zephyr/storage/flash_map.h>
 
 #include "ef800_mcp23017.h"
+#include "ef800_ports.h"
+#include "ef800_update.h"
 
 #if defined(CONFIG_EF800_MAIN_STORAGE) && CONFIG_EF800_MAIN_STORAGE
 uint32_t get_fattime(void)
@@ -84,7 +87,14 @@ static bool status_led_initialized;
 static bool mcp23017_detected;
 static bool ds3231_ready;
 static bool storage_mounted;
+static bool usb_vbus_initialized;
 static struct ef800_time_settings time_settings;
+
+#define EF800_MAIN_USER_NODE DT_PATH(zephyr_user)
+#if DT_NODE_HAS_PROP(EF800_MAIN_USER_NODE, usb_vbus_gpios)
+static const struct gpio_dt_spec usb_vbus =
+	GPIO_DT_SPEC_GET(EF800_MAIN_USER_NODE, usb_vbus_gpios);
+#endif
 
 #define EF800_TIME_SETTINGS_FILE "time_settings"
 
@@ -299,6 +309,39 @@ bool ef800_storage_is_mounted(void)
 	return storage_mounted;
 }
 
+static bool usb_vbus_present(void)
+{
+#if DT_NODE_HAS_PROP(EF800_MAIN_USER_NODE, usb_vbus_gpios)
+	if (!usb_vbus_initialized) {
+		if (!gpio_is_ready_dt(&usb_vbus) ||
+			gpio_pin_configure_dt(&usb_vbus, GPIO_INPUT) != 0) {
+			return false;
+		}
+		usb_vbus_initialized = true;
+	}
+	return gpio_pin_get_dt(&usb_vbus) > 0;
+#else
+	return false;
+#endif
+}
+
+static bool usb_msd_assignment_active(void)
+{
+	const struct flash_area *area;
+	struct ef800_boot_metadata metadata;
+	uint8_t buffer[EF800_BOOT_METADATA_SIZE];
+	int ret;
+
+	ret = flash_area_open(PARTITION_ID(metadata_partition), &area);
+	if (ret != 0 || flash_area_read(area, 0U, buffer, sizeof(buffer)) != 0 ||
+		ef800_boot_metadata_decode(buffer, sizeof(buffer), &metadata) != 0 ||
+		!ef800_boot_metadata_valid(&metadata)) {
+		return false;
+	}
+	return ef800_port_assignment_builder(metadata.port_assignments, 4U) ==
+		EF800_PORT_BUILDER_MSD;
+}
+
 const char *ef800_storage_configuration_dir(void)
 {
 	return EF800_STORAGE_CONFIGURATION_DIR;
@@ -501,16 +544,24 @@ static bool probe_ds3231(void)
 #endif
 }
 
-static bool init_storage(void)
+int ef800_storage_mount(void)
 {
 #if defined(CONFIG_EF800_MAIN_STORAGE) && CONFIG_EF800_MAIN_STORAGE
 	int result;
 	int directory_result;
 
+	if (storage_mounted) {
+		return 0;
+	}
+	if (usb_msd_assignment_active() && usb_vbus_present()) {
+		LOG_INF("QSPI FAT mount skipped; USB MSD owns the disk");
+		return -EBUSY;
+	}
+
 	result = fs_mount(&storage_mount);
 	if (result != 0) {
 		LOG_WRN("QSPI FAT mount failed: %d (no format attempted)", result);
-		return false;
+		return result;
 	}
 
 	LOG_INF("QSPI FAT filesystem mounted at %s", storage_mount.mnt_point);
@@ -523,10 +574,34 @@ static bool init_storage(void)
 		LOG_WRN("Data directory unavailable: %d", directory_result);
 	}
 	storage_mounted = true;
-	return true;
+	return 0;
 #else
 	LOG_INF("QSPI FAT filesystem disabled by CONFIG_EF800_MAIN_STORAGE");
-	return false;
+	return -ENOTSUP;
+#endif
+}
+
+bool ef800_main_usb_msd_requested(void)
+{
+	return usb_vbus_present() && usb_msd_assignment_active();
+}
+
+int ef800_storage_unmount(void)
+{
+#if defined(CONFIG_EF800_MAIN_STORAGE) && CONFIG_EF800_MAIN_STORAGE
+	int ret;
+
+	if (!storage_mounted) {
+		return 0;
+	}
+	ret = fs_unmount(&storage_mount);
+	if (ret == 0) {
+		storage_mounted = false;
+	}
+	return ret;
+#else
+	/* No FAT owner exists in a storage-disabled bring-up image. */
+	return 0;
 #endif
 }
 
@@ -631,11 +706,17 @@ const struct ef800_time_settings *ef800_main_get_time_settings(void)
 int ef800_main_foundation_init(void)
 {
 	bool watchdog_task_started;
+	int storage_result;
 
 	watchdog_task_started = init_watchdog_task();
 	status_led_initialized = init_status_led();
 	mcp23017_detected = probe_mcp23017();
-	storage_mounted = init_storage();
+	storage_result = ef800_storage_mount();
+	storage_mounted = storage_result == 0;
+	if (storage_result != 0 && storage_result != -ENOTSUP &&
+		storage_result != -EBUSY) {
+		LOG_WRN("QSPI storage unavailable: %d", storage_result);
+	}
 	load_time_settings();
 	ds3231_ready = probe_ds3231();
 

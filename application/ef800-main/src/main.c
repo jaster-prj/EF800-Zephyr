@@ -21,6 +21,10 @@
 #include "ef800_persistence.h"
 #include "ef800_position.h"
 #include "ef800_ports.h"
+#include "ef800_port_uart.h"
+#include "ef800_console.h"
+#include "ef800_metadata.h"
+#include "ef800_main_usb_msc.h"
 #include "ef800_t6963.h"
 #include "ef800_workspace.h"
 #include "keyboard_host.h"
@@ -46,10 +50,14 @@ static struct ef800_max17043 fuel_gauge;
 static struct ef800_persistence persistence;
 static struct ef800_workspace workspace;
 static struct ef800_port_assignment_service port_assignments;
+static struct ef800_port_uart_registry port_uart_registry;
+static struct ef800_boot_metadata boot_metadata;
+static bool boot_metadata_valid;
 static bool lcd_ready;
 static bool fuel_gauge_ready;
 static uint8_t menu_selection;
 static uint8_t selected_port_index;
+static uint8_t selected_builder_id;
 
 enum application_menu {
 	APPLICATION_MENU_MAIN = 0,
@@ -61,6 +69,7 @@ enum application_menu {
 	APPLICATION_MENU_POSITION,
 	APPLICATION_MENU_PORTS,
 	APPLICATION_MENU_PORT_DEVICES,
+	APPLICATION_MENU_PORT_CONNECTIONS,
 };
 
 #define WORKSPACE_LIST_MAX 16U
@@ -136,6 +145,194 @@ static void display_workspace_list(void);
 static void display_position_editor(void);
 static void display_port_assignment_ports(void);
 static void display_port_assignment_devices(void);
+static void display_port_assignment_connections(void);
+static int port_uart_check_ready(uint8_t port_id);
+static int claim_loaded_port_assignments(void);
+
+static int load_boot_metadata(void)
+{
+	int result = ef800_metadata_read_current(&boot_metadata,
+							&boot_metadata_valid);
+
+	if (result != 0 || !boot_metadata_valid) {
+		ef800_boot_metadata_init(&boot_metadata);
+		boot_metadata_valid = false;
+		return result;
+	}
+	return 0;
+}
+
+static int import_metadata_assignments(void)
+{
+	int result;
+
+	if (!boot_metadata_valid) {
+		return 0;
+	}
+	for (uint8_t port_id = 1U; port_id <= EF800_PORT_COUNT; ++port_id) {
+		result = ef800_port_assignment_import_with_connection(
+			&port_assignments, port_id,
+			ef800_port_assignment_builder(boot_metadata.port_assignments, port_id),
+			ef800_port_assignment_connection(boot_metadata.port_assignments,
+													  port_id));
+		if (result != 0) {
+			return result;
+		}
+	}
+	return 0;
+}
+
+static int sync_boot_metadata(void)
+{
+	uint64_t assignments = 0U;
+	uint8_t debug_port = 0U;
+	int result;
+
+	for (uint8_t port_id = 1U; port_id <= EF800_PORT_COUNT; ++port_id) {
+		uint8_t builder_id = ef800_port_assignment_get_builder(&port_assignments,
+									port_id);
+
+		result = ef800_port_assignment_set_record(&assignments, port_id,
+									 builder_id,
+									 ef800_port_assignment_get_connection(
+										 &port_assignments, port_id));
+		if (result != 0) {
+			return result;
+		}
+		if (debug_port == 0U && builder_id == EF800_PORT_BUILDER_DEBUG) {
+			debug_port = port_id;
+		}
+	}
+	boot_metadata.port_assignments = assignments;
+	result = ef800_boot_metadata_set_console(&boot_metadata, debug_port);
+	if (result != 0) {
+		return result;
+	}
+	result = ef800_metadata_write_current(&boot_metadata);
+	if (result == 0) {
+		boot_metadata_valid = true;
+		(void)ef800_console_init(false);
+	}
+	return result;
+}
+
+static enum ef800_port_uart_id port_uart_id_for_console(uint8_t port_id)
+{
+	switch (port_id) {
+	case 1U:
+		return EF800_PORT_UART3;
+	case 3U:
+		return EF800_PORT_UART4;
+	case 0U:
+	case 2U:
+	default:
+		return EF800_PORT_UART1;
+	}
+}
+
+static int reconcile_port_uart_state(void)
+{
+	struct ef800_boot_metadata desired = boot_metadata;
+	uint8_t debug_port = 0U;
+	uint8_t console_port;
+	int result;
+
+	for (uint8_t port_id = 1U; port_id <= EF800_PORT_COUNT; ++port_id) {
+		uint8_t builder_id = ef800_port_assignment_get_builder(
+			&port_assignments, port_id);
+
+		result = ef800_port_assignment_set_record(&desired.port_assignments,
+									    port_id, builder_id,
+									    ef800_port_assignment_get_connection(
+										 &port_assignments, port_id));
+		if (result != 0) {
+			return result;
+		}
+		if (debug_port == 0U && builder_id == EF800_PORT_BUILDER_DEBUG) {
+			debug_port = port_id;
+		}
+	}
+	result = ef800_boot_metadata_set_console(&desired, debug_port);
+	if (result != 0) {
+		return result;
+	}
+	console_port = ef800_console_port_select(&desired, false);
+	result = ef800_console_set_target(console_port);
+	if (result != 0 && console_port != EF800_CONSOLE_SAFE_PORT) {
+		console_port = EF800_CONSOLE_SAFE_PORT;
+		result = ef800_console_set_target(console_port);
+	}
+	if (result != 0) {
+		LOG_WRN("Console selection failed: %d", result);
+		return result;
+	}
+	result = ef800_port_uart_registry_init(&port_uart_registry,
+								 port_uart_id_for_console(console_port));
+	if (result != 0) {
+		return result;
+	}
+	result = claim_loaded_port_assignments();
+	if (result != 0) {
+		return result;
+	}
+	ef800_port_uart_startup_complete(&port_uart_registry);
+	if (!boot_metadata_valid ||
+		boot_metadata.port_assignments != desired.port_assignments ||
+		boot_metadata.console_target != desired.console_target) {
+		boot_metadata = desired;
+		result = ef800_metadata_write_current(&boot_metadata);
+		if (result == 0) {
+			boot_metadata_valid = true;
+		}
+	}
+	return result;
+}
+
+static int persist_port_assignment_metadata(void)
+{
+	int result = sync_boot_metadata();
+
+	if (result != 0) {
+		LOG_WRN("Console/port metadata update failed: %d", result);
+	}
+	return result;
+}
+
+static int claim_loaded_port_assignments(void)
+{
+	int first_error = 0;
+
+	for (size_t index = 0U; index < ef800_port_count(); ++index) {
+		const struct ef800_port_descriptor *port = ef800_port_at(index);
+		uint8_t builder_id = ef800_port_assignment_get_builder(
+			&port_assignments, port->id);
+		int result;
+
+		if (builder_id == EF800_PORT_BUILDER_NONE) {
+			continue;
+		}
+		result = port_uart_check_ready(port->id);
+		if (result != 0) {
+			LOG_WRN("Port %u UART is not ready: %d", port->id, result);
+			if (first_error == 0) {
+				first_error = result;
+			}
+			continue;
+		}
+		result = ef800_port_uart_claim(&port_uart_registry, port->id,
+						       builder_id,
+						       ef800_port_assignment_get_connection(
+							&port_assignments, port->id));
+		if (result != 0) {
+			LOG_WRN("Port %u assignment cannot claim UART: %d", port->id,
+				result);
+			if (first_error == 0) {
+				first_error = result;
+			}
+		}
+	}
+	return first_error;
+}
 
 static const struct gpio_dt_spec keyboard_reset =
 	GPIO_DT_SPEC_GET_OR(EF800_USER_NODE, keyboard_reset_gpios, {0});
@@ -143,6 +340,34 @@ static const struct gpio_dt_spec usb_select =
 	GPIO_DT_SPEC_GET_OR(EF800_USER_NODE, usb_select_gpios, {0});
 static const struct gpio_dt_spec power_down =
 	GPIO_DT_SPEC_GET_OR(EF800_USER_NODE, power_down_gpios, {0});
+
+static const struct device *port_uart_device(
+	enum ef800_port_uart_id uart_id)
+{
+	switch (uart_id) {
+	case EF800_PORT_UART3:
+		return DEVICE_DT_GET(DT_NODELABEL(usart3));
+	case EF800_PORT_UART1:
+		return DEVICE_DT_GET(DT_NODELABEL(usart1));
+	case EF800_PORT_UART4:
+		return DEVICE_DT_GET(DT_NODELABEL(uart4));
+	default:
+		return NULL;
+	}
+}
+
+static int port_uart_check_ready(uint8_t port_id)
+{
+	const struct ef800_port_uart_route *route =
+		ef800_port_uart_for_port(port_id);
+	const struct device *device;
+
+	if (route == NULL) {
+		return 0;
+	}
+	device = port_uart_device(route->uart_id);
+	return device != NULL && device_is_ready(device) ? 0 : -ENODEV;
+}
 
 #if DT_HAS_COMPAT_STATUS_OKAY(maxim_max17043)
 static const struct i2c_dt_spec fuel_gauge_i2c =
@@ -255,21 +480,49 @@ static void display_workspace_menu(void)
 static void display_port_assignment_ports(void)
 {
 	char line[STATUS_LINE_SIZE];
+	size_t first = menu_selection >= 3U ? menu_selection - 3U : 0U;
 
 	display_line(0U, "Port assignment");
-	display_line(1U, "Select a logical port");
-	for (size_t index = 0U; index < EF800_PORT_COUNT; ++index) {
+	snprintk(line, sizeof(line), "Ports %u-%u of %u", (unsigned)(first + 1U),
+		(unsigned)MIN(first + 4U, EF800_PORT_COUNT), (unsigned)EF800_PORT_COUNT);
+	display_line(1U, line);
+	for (size_t row = 0U; row < 4U; ++row) {
+		size_t index = first + row;
 		const struct ef800_port_descriptor *port = ef800_port_at(index);
 		const struct ef800_port_device_descriptor *device = NULL;
+		const struct ef800_port_connection_descriptor *connection = NULL;
 
+		if (port == NULL) {
+			display_line((uint8_t)(3U + row), "");
+			continue;
+		}
 		if (ef800_port_assignment_is_assigned(&port_assignments, port->id)) {
 			device = ef800_port_device_get(
 				ef800_port_assignment_get_builder(&port_assignments, port->id));
+			for (size_t connection_index = 0U;
+				 connection_index < ef800_port_connection_count(port->id);
+				 ++connection_index) {
+				const struct ef800_port_connection_descriptor *candidate =
+					ef800_port_connection_at(port->id, connection_index);
+				if (candidate != NULL && candidate->capability ==
+					ef800_port_assignment_get_connection(&port_assignments,
+																	 port->id)) {
+					connection = candidate;
+					break;
+				}
+			}
 		}
-		snprintk(line, sizeof(line), "%c %c %s: %s",
+		snprintk(line, sizeof(line), "%c %c %s: %s%s%s%s",
 			index == menu_selection ? '>' : ' ', port->shortcut, port->title,
-			device == NULL ? "none" : device->title);
-		display_line((uint8_t)(3U + index), line);
+			device == NULL ? "none" : device->title,
+			connection == NULL ? "" : " / ",
+			connection == NULL ? "" : connection->name,
+			device != NULL && ef800_port_uart_can_claim(
+				&port_uart_registry, port->id, device->builder_id,
+				ef800_port_assignment_get_connection(&port_assignments,
+								     port->id)) != 0 ?
+				" (UART unavailable)" : "");
+		display_line((uint8_t)(3U + row), line);
 	}
 	display_line(7U, "ENTER edit  ESC back");
 }
@@ -295,7 +548,7 @@ static size_t port_assignment_device_count(void)
 	const struct ef800_port_descriptor *port =
 		ef800_port_at(selected_port_index);
 
-	return compatible_device_count(port) + 1U;
+	return compatible_device_count(port) + (port != NULL && !port->fixed ? 1U : 0U);
 }
 
 static const struct ef800_port_device_descriptor *device_at_selection(
@@ -337,7 +590,8 @@ static void display_port_assignment_devices(void)
 	if (!ef800_port_assignment_is_assigned(&port_assignments, port->id)) {
 		current = NULL;
 	}
-	snprintk(line, sizeof(line), "Current: %s", current == NULL ? "none" : current->title);
+	snprintk(line, sizeof(line), "Current: %s%s", current == NULL ? "none" : current->title,
+		port->fixed ? " (fixed)" : "");
 	display_line(2U, line);
 	for (size_t index = 0U; index < ef800_port_device_count(); ++index) {
 		const struct ef800_port_device_descriptor *device =
@@ -351,9 +605,94 @@ static void display_port_assignment_devices(void)
 		display_line((uint8_t)row++, line);
 		++device_index;
 	}
-	snprintk(line, sizeof(line), "%c Remove assignment [r]",
-		menu_selection == device_index ? '>' : ' ');
-	display_line((uint8_t)row, line);
+	if (!port->fixed) {
+		snprintk(line, sizeof(line), "%c Remove assignment [r]",
+			menu_selection == device_index ? '>' : ' ');
+		display_line((uint8_t)row, line);
+	} else {
+		display_line((uint8_t)row, "Fixed assignment");
+	}
+	display_line(7U, "ENTER select  ESC back");
+}
+
+static size_t port_assignment_connection_count(void)
+{
+	const struct ef800_port_descriptor *port = ef800_port_at(selected_port_index);
+	size_t count = 0U;
+
+	if (port == NULL) {
+		return 0U;
+	}
+	for (size_t index = 0U; index < ef800_port_connection_count(port->id); ++index) {
+		const struct ef800_port_connection_descriptor *connection =
+			ef800_port_connection_at(port->id, index);
+		if (connection != NULL && ef800_port_device_supports_connection(
+			selected_builder_id, connection->capability)) {
+			++count;
+		}
+	}
+	return count;
+}
+
+static const struct ef800_port_connection_descriptor *connection_at_selection(
+	size_t selection)
+{
+	const struct ef800_port_descriptor *port = ef800_port_at(selected_port_index);
+	size_t compatible_index = 0U;
+
+	if (port == NULL) {
+		return NULL;
+	}
+	for (size_t index = 0U; index < ef800_port_connection_count(port->id); ++index) {
+		const struct ef800_port_connection_descriptor *connection =
+			ef800_port_connection_at(port->id, index);
+		if (connection != NULL && ef800_port_device_supports_connection(
+			selected_builder_id, connection->capability) &&
+			compatible_index++ == selection) {
+			return connection;
+		}
+	}
+	return NULL;
+}
+
+static void display_port_assignment_connections(void)
+{
+	const struct ef800_port_descriptor *port = ef800_port_at(selected_port_index);
+	char line[STATUS_LINE_SIZE];
+	size_t row = 3U;
+	size_t connection_index = 0U;
+	size_t first;
+	size_t count;
+
+	if (port == NULL) {
+		return;
+	}
+	display_line(0U, "Port connection");
+	snprintk(line, sizeof(line), "Port %u: %s", port->id, port->title);
+	display_line(1U, line);
+	snprintk(line, sizeof(line), "Device: %s",
+		ef800_port_device_get(selected_builder_id)->title);
+	display_line(2U, line);
+	count = port_assignment_connection_count();
+	first = menu_selection >= 3U ? menu_selection - 3U : 0U;
+	for (size_t index = 0U; index < ef800_port_connection_count(port->id); ++index) {
+		const struct ef800_port_connection_descriptor *connection =
+			ef800_port_connection_at(port->id, index);
+		if (connection == NULL || !ef800_port_device_supports_connection(
+			selected_builder_id, connection->capability)) {
+			continue;
+		}
+		if (connection_index >= first && row < 7U) {
+			snprintk(line, sizeof(line), "%c %s",
+				connection_index == menu_selection ? '>' : ' ', connection->name);
+			display_line((uint8_t)row++, line);
+		}
+		++connection_index;
+	}
+	snprintk(line, sizeof(line), "Connections %u-%u of %u",
+		(unsigned)(first + 1U), (unsigned)MIN(first + 4U, count),
+		(unsigned)count);
+	display_line(1U, line);
 	display_line(7U, "ENTER select  ESC back");
 }
 
@@ -371,6 +710,9 @@ static void display_active_menu(void)
 		break;
 	case APPLICATION_MENU_PORT_DEVICES:
 		display_port_assignment_devices();
+		break;
+	case APPLICATION_MENU_PORT_CONNECTIONS:
+		display_port_assignment_connections();
 		break;
 	case APPLICATION_MENU_WORKSPACE_SELECT:
 	case APPLICATION_MENU_WORKSPACE_LIST:
@@ -397,6 +739,8 @@ static size_t active_menu_count(void)
 		return EF800_PORT_COUNT;
 	case APPLICATION_MENU_PORT_DEVICES:
 		return port_assignment_device_count();
+	case APPLICATION_MENU_PORT_CONNECTIONS:
+		return port_assignment_connection_count();
 	case APPLICATION_MENU_MAIN:
 	default:
 		return ARRAY_SIZE(menu_items);
@@ -446,6 +790,10 @@ static void return_from_child_menu(void)
 		active_menu = APPLICATION_MENU_PORTS;
 		menu_selection = selected_port_index;
 		display_port_assignment_ports();
+	} else if (active_menu == APPLICATION_MENU_PORT_CONNECTIONS) {
+		active_menu = APPLICATION_MENU_PORT_DEVICES;
+		menu_selection = 0U;
+		display_port_assignment_devices();
 	} else {
 		return_to_workspace_menu();
 	}
@@ -710,13 +1058,12 @@ static void activate_port_assignment_entry(void)
 	const struct ef800_port_descriptor *port =
 		ef800_port_at(selected_port_index);
 	const struct ef800_port_device_descriptor *device;
-	int result;
 
 	if (port == NULL) {
 		return;
 	}
-	if (menu_selection == port_assignment_device_count() - 1U) {
-		result = ef800_port_assignment_remove(&port_assignments, port->id);
+	if (!port->fixed && menu_selection == port_assignment_device_count() - 1U) {
+		int result = ef800_port_assignment_remove(&port_assignments, port->id);
 		display_port_assignment_result("Assignment removed", result);
 		if (result == 0) {
 			active_menu = APPLICATION_MENU_PORTS;
@@ -730,17 +1077,67 @@ static void activate_port_assignment_entry(void)
 		display_port_assignment_result("Invalid device selection", -EINVAL);
 		return;
 	}
-	result = ef800_port_assignment_set(&port_assignments, port->id,
-						   device->builder_id);
+	selected_builder_id = device->builder_id;
+	menu_selection = 0U;
+	active_menu = APPLICATION_MENU_PORT_CONNECTIONS;
+	display_port_assignment_connections();
+}
+
+static void commit_port_assignment_connection(void)
+{
+	const struct ef800_port_descriptor *port = ef800_port_at(selected_port_index);
+	const struct ef800_port_connection_descriptor *connection =
+		connection_at_selection(menu_selection);
+	uint8_t old_builder_id;
+	uint32_t old_connection;
+	int result;
+
+	if (port == NULL || connection == NULL) {
+		display_port_assignment_result("Invalid connection selection", -EINVAL);
+		return;
+	}
+	old_builder_id = ef800_port_assignment_get_builder(&port_assignments, port->id);
+	old_connection = ef800_port_assignment_get_connection(&port_assignments, port->id);
+	if (old_builder_id != EF800_PORT_BUILDER_NONE) {
+		result = ef800_port_uart_release(&port_uart_registry, port->id,
+							 old_builder_id, old_connection);
+		if (result != 0) {
+			display_port_assignment_result("UART release failed", result);
+			return;
+		}
+	}
+	result = ef800_port_uart_claim(&port_uart_registry, port->id,
+						       selected_builder_id, connection->capability);
+	if (result != 0) {
+		if (old_builder_id != EF800_PORT_BUILDER_NONE) {
+			(void)ef800_port_uart_claim(&port_uart_registry, port->id,
+							     old_builder_id, old_connection);
+		}
+		display_port_assignment_result("Connection unavailable", result);
+		return;
+	}
+	result = ef800_port_assignment_set_with_connection(&port_assignments,
+												  port->id,
+												  selected_builder_id,
+												  connection->capability);
+	if (result == 0) {
+		result = persist_port_assignment_metadata();
+	}
 	if (result == 0) {
 		char line[STATUS_LINE_SIZE];
-		snprintk(line, sizeof(line), "Assigned %s to port %u", device->title,
-			port->id);
+		snprintk(line, sizeof(line), "Assigned %s to port %u",
+			ef800_port_device_get(selected_builder_id)->title, port->id);
 		display_port_assignment_result(line, 0);
 		active_menu = APPLICATION_MENU_PORTS;
 		menu_selection = selected_port_index;
 		display_port_assignment_ports();
 	} else {
+		(void)ef800_port_uart_release(&port_uart_registry, port->id,
+						       selected_builder_id, connection->capability);
+		if (old_builder_id != EF800_PORT_BUILDER_NONE) {
+			(void)ef800_port_uart_claim(&port_uart_registry, port->id,
+							     old_builder_id, old_connection);
+		}
 		display_port_assignment_result("Assignment failed", result);
 	}
 }
@@ -793,6 +1190,10 @@ static void activate_menu_entry(void)
 	}
 	if (active_menu == APPLICATION_MENU_PORT_DEVICES) {
 		activate_port_assignment_entry();
+		return;
+	}
+	if (active_menu == APPLICATION_MENU_PORT_CONNECTIONS) {
+		commit_port_assignment_connection();
 		return;
 	}
 	if (active_menu == APPLICATION_MENU_WORKSPACE) {
@@ -921,6 +1322,8 @@ static bool handle_application_key(uint8_t key)
 			activate_menu_entry();
 			return true;
 		}
+		return false;
+	} else if (active_menu == APPLICATION_MENU_PORT_CONNECTIONS) {
 		return false;
 	} else {
 		shortcuts = workspace_shortcuts;
@@ -1509,18 +1912,33 @@ int main(void)
 		result = ef800_port_assignment_init(&port_assignments, &persistence);
 		if (result != 0) {
 			LOG_ERR("Port assignment service initialization failed: %d", result);
-		}
-		result = ef800_workspace_init(&workspace, &persistence);
-		if (result != 0) {
-			LOG_ERR("Workspace service initialization failed: %d", result);
-		} else if (ef800_storage_is_mounted()) {
-			result = ef800_workspace_load_current(&workspace);
-			if (result != 0 && result != -ENOENT) {
-				LOG_WRN("Current Workspace unavailable: %d", result);
-			}
-			result = ef800_port_assignment_load_all(&port_assignments);
+		} else {
+			result = load_boot_metadata();
 			if (result != 0) {
-				LOG_WRN("Port assignments unavailable: %d", result);
+				LOG_WRN("Boot metadata read failed: %d", result);
+			}
+			if (boot_metadata_valid && !ef800_storage_is_mounted()) {
+				result = import_metadata_assignments();
+				if (result != 0) {
+					LOG_WRN("Boot metadata assignments unavailable: %d", result);
+				}
+			}
+			result = ef800_workspace_init(&workspace, &persistence);
+			if (result != 0) {
+				LOG_ERR("Workspace service initialization failed: %d", result);
+			} else if (ef800_storage_is_mounted()) {
+				result = ef800_workspace_load_current(&workspace);
+				if (result != 0 && result != -ENOENT) {
+					LOG_WRN("Current Workspace unavailable: %d", result);
+				}
+				result = ef800_port_assignment_load_all(&port_assignments);
+				if (result != 0) {
+					LOG_WRN("Port assignments unavailable: %d", result);
+				}
+			}
+			result = reconcile_port_uart_state();
+			if (result != 0) {
+				LOG_WRN("Port routing initialization incomplete: %d", result);
 			}
 		}
 	}
