@@ -24,8 +24,8 @@
 - Five logical port descriptors with capability-filtered device assignment.
 - Portable, versioned, checksummed port-assignment persistence using the
   backend-neutral storage API.
-- MainApplication Settings port-assignment UI with assignment removal; device
-  protocol startup remains disabled until those protocols are ported.
+- MainApplication Settings port-assignment UI with connection-mode selection,
+  assignment removal, and device routing startup.
 - Fixed 40-byte little-endian boot metadata encoding with CRC validation,
   persisted connection modes, and fixed Port 5 BlueNRG assignment.
 - Five-port assignment validation for active connection modes, including UART
@@ -44,11 +44,12 @@
 ## Current Checkpoint
 
 The routing increment is implemented and verified in the current working tree,
-but remains uncommitted alongside the earlier provisional changes. The
+and the implementation is committed in `bffe7a6` and `21e68af`. The
 authoritative software topology is five logical ports: UART3 RS232, UART1 with
 optional flow control, UART4 plus alternate Port 3 modes, USB CDC/MSD, and
 fixed BlueNRG/SPI1. Exact alternate pin ownership still requires schematic
-confirmation before hardware use.
+confirmation before hardware use. The current worktree contains only local
+documentation corrections.
 
 ## Software verification
 
@@ -57,7 +58,7 @@ SDK `1.0.1`:
 
 - Second-level bootloader builds at `0x08000000` (`35360` bytes).
 - Backup application builds at `0x08010000` (`53644` bytes).
-- MainApplication builds at `0x08030000` (`108824` bytes).
+- MainApplication builds at `0x08030000` (`113180` bytes).
 - Keyboard-controller application builds (`20348` bytes).
 - Native keyboard, protocol, RTC, persistence, Position, port-assignment, and
   boot-metadata, measurement protocol, and record suite passes all nineteen

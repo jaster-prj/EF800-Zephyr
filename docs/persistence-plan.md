@@ -107,10 +107,10 @@ Before enabling `CONFIG_EF800_MAIN_STORAGE`:
 ## Phase 5: Port and Device Persistence
 
 Status: typed port assignments, five-port metadata, connection-aware routing,
-cross-image console selection, Elta3/FTS3XX protocol and record handling, and
-the MainApplication measurement workflow are implemented and verified. Hardware
-pin ownership and device-specific configuration persistence remain unfinished;
-see `docs/migration-checkpoint.md`.
+cross-image console selection, Elta3/FTS3XX protocol and record handling,
+assigned-port UART setup, and the MainApplication measurement workflow are
+implemented and verified. Hardware pin ownership and device-specific
+configuration persistence remain unfinished; see `docs/migration-checkpoint.md`.
 
 - Define typed port-assignment records with explicit version and checksum.
 - Validate builder-ID lookup, port IDs, and capability compatibility.

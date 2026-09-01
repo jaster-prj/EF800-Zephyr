@@ -2,21 +2,18 @@
 
 ## Checkpoint State
 
-This file records the routing increment and its remaining hardware gates. The
-current working tree is buildable and verified, but the increment remains
-uncommitted alongside the earlier provisional changes.
+This file records the routing/protocol increment and its remaining hardware
+gates. The implementation is buildable, verified, and committed; the current
+worktree contains local documentation corrections only.
 
-- Repository HEAD at checkpoint: `d6c3f34` (`Implement 5th iteration`).
-- The working tree contains extensive uncommitted routing, metadata, USB, and
-  port-model changes. The shared metadata/port contract and MainApplication
-  routing paths now build and pass the native suite.
-- The last committed baseline before this routing work was commit `9dd1490`.
-  The current tree verifies sixteen native tests, all four firmware images, and
-  the image checker.
+- Repository HEAD: `21e68af` (`Added Elta3 and FTS3XX implementation`).
+- Routing and metadata implementation: `bffe7a6` (`Add next iteration of
+  migration`). Protocol and measurement implementation: `21e68af`.
+- The current tree verifies nineteen native tests, all four firmware images,
+  and the image checker.
 - Previous baseline image sizes were bootloader `37264`, backup `53500`, main
   `93664`, and keyboard `20348` bytes. Current verified sizes are bootloader
-  `35360`, backup `53644`, main `108824`, and keyboard `20348` bytes.
-- No commit has been created for this increment.
+  `35360`, backup `53644`, main `113180`, and keyboard `20348` bytes.
 
 ## Authoritative Hardware Topology
 
@@ -57,18 +54,18 @@ implementation:
 - Bootloader update storage remains disabled until the QSPI hardware gates are
   satisfied.
 
-## Current Provisional Files
+## Current Implementation Areas
 
-The uncommitted increment currently touches or adds these areas:
+The committed increment touches these areas:
 
-- `shared/ef800_ports/`: port descriptors, connection descriptors, UART route
+ - `shared/ef800_ports/`: port descriptors, connection descriptors, UART route
   registry, debug router, console helper, custom log backend, and provisional
   MainApplication USB MSC support.
-- `shared/ef800_update/`: console target, explicit serialized port metadata,
+ - `shared/ef800_update/`: console target, explicit serialized port metadata,
   and common metadata flash helpers.
 - `shared/ef800_main/`: provisional QSPI mount/unmount and USB VBUS/MSD checks.
-- `application/ef800-main/src/main.c`: provisional metadata import/sync,
-  connection-aware UART claims, and assignment UI integration.
+ - `application/ef800-main/src/main.c`: metadata import/sync, connection-aware
+   UART claims, assignment UI, and measurement workflow.
 - `application/ef800-main/Kconfig`, `prj.conf`, and `app.overlay`: provisional
   MainApplication USB MSC option and VBUS input.
 - `application/ef800-backup/`: unconditional MSC-only behavior; its recovery
@@ -76,7 +73,10 @@ The uncommitted increment currently touches or adds these areas:
 - `application/ef800-bootloader/`: shared metadata and console startup support;
   preserve fixed partition and update behavior.
 - `boards/ef800/ef800.dts`: provisional UART and QSPI pinctrl definitions.
-- `tests/keyboard_protocol/`: provisional connection and UART-route tests.
+ - `shared/ef800_measurement/`: Elta3/FTS3XX protocol, transport, and record
+   handling.
+ - `tests/keyboard_protocol/`: connection, UART-route, metadata, protocol, and
+   record tests.
 
 ## Resolved In Current Increment
 
@@ -117,8 +117,8 @@ The uncommitted increment currently touches or adds these areas:
    wiring against the schematic before changing board resources.
 2. Add confirmed DeviceTree/pinctrl states for active Port 2/3 modes and the
    fixed BlueNRG device without reserving inactive alternate resources.
-3. Port and test the Elta3 and FTS3XX serial protocols, including exact framing,
-   parsing, measurement records, and assigned-port startup.
+3. Validate the Elta3 and FTS3XX serial protocols on hardware, then add
+   device-specific configuration persistence.
 4. Resolve the USB CDC implementation and finalize MainApplication FAT/MSC
    ownership transitions; keep all storage options hardware-gated.
 5. Add validated Mbed persistence migration readers if deployed settings must
@@ -128,10 +128,10 @@ The uncommitted increment currently touches or adds these areas:
 7. Re-run the native suite, all four firmware builds, image checker, and update
    package checks before changing this checkpoint to a release baseline.
 
-The protocol foundation and MainApplication measurement workflow in step 3 are
-now implemented and verified. The remaining work is device-specific
-configuration persistence, hardware validation of the selected UART routes and
-framing, and the QSPI/USB and alternate-port gates above.
+The protocol foundation, assigned-port UART setup, and MainApplication
+measurement workflow are implemented and verified. The remaining work is
+device-specific configuration persistence, hardware validation of the selected
+UART routes and framing, and the QSPI/USB and alternate-port gates above.
 
 ## Required Verification Commands
 
