@@ -69,10 +69,20 @@ production Mbed file dump are still open validation tasks.
 - Save internal flash, option bytes, and available QSPI contents before
   changing one recoverable target.
 - Build all four images and verify their fixed addresses and sizes.
-- Flash the bootloader at `0x08000000`, BackupApplication at `0x08010000`, and
-  MainApplication at `0x08030000`; flash the keyboard controller separately.
+- For initial QSPI diagnosis, build and verify the temporary `ef800-hwdebug`
+  image and flash it at `0x08000000` on one recoverable target. It provides USB
+  CDC and read-only JEDEC/SFDP/raw-read commands without replacing the normal
+  image set permanently.
+- After the debug gate passes, flash the normal bootloader at `0x08000000`,
+  BackupApplication at `0x08010000`, and MainApplication at `0x08030000`; flash
+  the keyboard controller separately.
 - Keep the USB host disconnected because BackupApplication currently exposes
   the unverified QSPI disk through MSC.
+
+The first connected STM32L496 engineering target was handled separately from
+the normal first-flash procedure: its legacy captures were checked, its option
+bytes were recorded, and its complete 1 MiB internal flash was explicitly
+erased. The target remains blank. See `docs/stm32l496-target-snapshot.md`.
 
 ### Phase 2: Hardware bring-up before more hardware-dependent features
 
@@ -93,7 +103,7 @@ production Mbed file dump are still open validation tasks.
 Before enabling `CONFIG_EF800_MAIN_STORAGE`, `CONFIG_EF800_BOOT_STORAGE`, or
 MainApplication USB sharing:
 
-- Identify the fitted NOR by schematic, JEDEC ID, or SFDP.
+- Confirm the identified `IS25LP032D-JTLE-TR` against JEDEC ID or SFDP.
 - Confirm capacity, erase geometry, program size, and maximum frequency.
 - Confirm that the existing FAT volume is readable.
 - Verify `.configuration` and `data` directory behavior.

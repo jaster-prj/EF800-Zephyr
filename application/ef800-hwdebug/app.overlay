@@ -1,0 +1,132 @@
+/* SPDX-License-Identifier: Apache-2.0 */
+
+/ {
+	chosen {
+		zephyr,code-partition = &boot_partition;
+		zephyr,console = &cdc_acm_uart0;
+		zephyr,shell-uart = &cdc_acm_uart0;
+	};
+};
+
+/* The board USB controller is shared with the temporary CDC console. */
+zephyr_udc0: &usbotg_fs {
+	cdc_acm_uart0: cdc_acm_uart0 {
+		compatible = "zephyr,cdc-acm-uart";
+		status = "okay";
+	};
+};
+
+/* Never instantiate the QSPI disk or a filesystem in this image. */
+&qspi_disk {
+	status = "disabled";
+};
+
+/*
+ * Use single-line SPI commands for the first probe. This prevents the
+ * standard STM32 QSPI driver from changing the flash Quad Enable bit during
+ * initialization. reset-cmd only recovers the command state; it does not
+ * erase or program the memory array.
+ */
+&qspi_nor {
+	size = <DT_SIZE_M(32)>; /* IS25LP032D: 32 Mbit = 4 MiB */
+	qspi-max-frequency = <8000000>;
+	cs-high-time = <2>;
+	reset-cmd;
+	reset-cmd-wait = <10>;
+	/delete-property/ spi-bus-width;
+	/delete-property/ writeoc;
+};
+
+&qspi_storage_partition {
+	reg = <0x00000000 DT_SIZE_M(4)>;
+};
+
+#include <zephyr/dt-bindings/pinctrl/stm32-pinctrl.h>
+
+&pinctrl {
+	usart1_tx_pb6: usart1_tx_pb6 {
+		pinmux = <STM32_PINMUX('B', 6, AF7)>;
+		bias-pull-up;
+		drive-push-pull;
+	};
+
+	usart1_rx_pb7: usart1_rx_pb7 {
+		pinmux = <STM32_PINMUX('B', 7, AF7)>;
+		bias-pull-up;
+	};
+
+	usart3_tx_pd8: usart3_tx_pd8 {
+		pinmux = <STM32_PINMUX('D', 8, AF7)>;
+		bias-pull-up;
+		drive-push-pull;
+	};
+
+	usart3_rx_pd9: usart3_rx_pd9 {
+		pinmux = <STM32_PINMUX('D', 9, AF7)>;
+		bias-pull-up;
+	};
+
+	lpuart1_tx_pg7: lpuart1_tx_pg7 {
+		pinmux = <STM32_PINMUX('G', 7, AF8)>;
+		bias-pull-up;
+		drive-push-pull;
+	};
+
+	lpuart1_rx_pc0: lpuart1_rx_pc0 {
+		pinmux = <STM32_PINMUX('C', 0, AF8)>;
+		bias-pull-up;
+	};
+
+	i2c1_sda_pg13: i2c1_sda_pg13 {
+		pinmux = <STM32_PINMUX('G', 13, AF4)>;
+		bias-pull-up;
+	};
+
+	i2c1_scl_pg14: i2c1_scl_pg14 {
+		pinmux = <STM32_PINMUX('G', 14, AF4)>;
+		bias-pull-up;
+	};
+
+	usb_otg_fs_dm_pa11: usb_otg_fs_dm_pa11 {
+		pinmux = <STM32_PINMUX('A', 11, AF10)>;
+	};
+
+	usb_otg_fs_dp_pa12: usb_otg_fs_dp_pa12 {
+		pinmux = <STM32_PINMUX('A', 12, AF10)>;
+	};
+
+	quadspi_clk_pf10: quadspi_clk_pf10 {
+		pinmux = <STM32_PINMUX('F', 10, AF10)>;
+	};
+
+	quadspi_bk1_ncs_pe11: quadspi_bk1_ncs_pe11 {
+		pinmux = <STM32_PINMUX('E', 11, AF10)>;
+		bias-pull-up;
+	};
+
+	quadspi_bk1_io0_pf8: quadspi_bk1_io0_pf8 {
+		pinmux = <STM32_PINMUX('F', 8, AF10)>;
+	};
+
+	quadspi_bk1_io1_pf9: quadspi_bk1_io1_pf9 {
+		pinmux = <STM32_PINMUX('F', 9, AF10)>;
+	};
+
+	quadspi_bk1_io2_pf7: quadspi_bk1_io2_pf7 {
+		pinmux = <STM32_PINMUX('F', 7, AF10)>;
+		bias-pull-up;
+	};
+
+	quadspi_bk1_io3_pf6: quadspi_bk1_io3_pf6 {
+		pinmux = <STM32_PINMUX('F', 6, AF10)>;
+		bias-pull-up;
+	};
+};
+
+&quadspi {
+	pinctrl-0 = <&quadspi_clk_pf10 &quadspi_bk1_ncs_pe11
+			 &quadspi_bk1_io0_pf8 &quadspi_bk1_io1_pf9
+			 &quadspi_bk1_io2_pf7 &quadspi_bk1_io3_pf6>;
+	pinctrl-names = "default";
+	status = "okay";
+};

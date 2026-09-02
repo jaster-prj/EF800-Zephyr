@@ -15,6 +15,9 @@ is buildable and verified. Completed software work is summarized in
   size-sensitive.
 - These figures are the last recorded software verification and must be rerun
   before a release baseline.
+- A temporary `ef800-hwdebug` image is available at `0x08000000` for controlled
+  USB CDC and read-only QSPI bring-up. It is not part of the normal four-image
+  release set.
 
 ## Authoritative Hardware Topology
 
@@ -80,6 +83,11 @@ native-testable feature development continues in parallel. Do not deploy the
 current images broadly and do not postpone all target testing until feature
 work is complete.
 
+The first connected L496 engineering target has now been explicitly erased and
+verified blank. Its option-byte snapshot is recorded in
+`docs/stm32l496-target-snapshot.md`; no firmware was restored afterward. The
+legacy recovery captures remain available under `Backup/`.
+
 ## Open Hardware And Product Problems
 
 - Port 1 and Port 3 use alternate UART pin/peripheral configurations. The board
@@ -103,6 +111,10 @@ work is complete.
 - Legacy migration has only been exercised with synthetic native fixtures. A
   production device dump is required to confirm the deployed Mbed enum and
   padding representation before relying on automatic migration.
+- The recorded target uses `IWDG_SW=0` (hardware independent watchdog),
+  `IWDG_STOP=1`, `IWDG_STDBY=1`, and `WWDG_SW=1` (software window watchdog).
+  Every image used on this target must be checked against that watchdog state
+  before flashing.
 
 Additional hardware validation is required for the oscillator, QSPI device and
 pin controller, MCP23017, T6963, USB VBUS/switch, MAX17043, DS3231, keyboard
@@ -113,20 +125,25 @@ Workspace/Position storage.
 
 1. Confirm the UART, alternate Port 3, BlueNRG/SPI1, oscillator, QSPI, USB,
    MCP23017, LCD, and keyboard wiring against the schematic.
-2. Save the existing target contents and flash one recoverable target with the
-   current images at the fixed addresses above.
-3. Validate boot handoff, watchdog fallback, console capture, keyboard, LCD,
-   RTC, battery, MCP23017, LED, and confirmed UART paths. Keep the USB host
-   disconnected.
-4. Add confirmed DeviceTree/pinctrl states for active Port 2/3 modes and the
+2. Save the existing target contents and flash `ef800-hwdebug` at
+   `0x08000000` on one recoverable target. Use its USB CDC and read-only QSPI
+   commands to identify and validate the external flash before flashing the
+   normal image set.
+3. Validate QSPI JEDEC ID, SFDP, configured geometry, stable reads, and the
+   electrical levels of `NCS#`, `IO2/WP#`, and `IO3/HOLD#/RESET#`. Keep the USB
+   host disconnected from any normal BackupApplication MSC image.
+4. Restore the normal image set and validate boot handoff, watchdog fallback,
+   console capture, keyboard, LCD, RTC, battery, MCP23017, LED, and confirmed
+   UART paths.
+5. Add confirmed DeviceTree/pinctrl states for active Port 2/3 modes and the
    fixed BlueNRG device without reserving inactive alternate resources.
-5. Validate Elta3 and FTS3XX serial protocols and migrated serial configuration
+6. Validate Elta3 and FTS3XX serial protocols and migrated serial configuration
    on hardware.
-6. Resolve USB CDC, MainApplication FAT/MSC ownership, and QSPI/FAT behavior.
+7. Resolve USB CDC, MainApplication FAT/MSC ownership, and QSPI/FAT behavior.
    Keep storage options hardware-gated until then.
-7. Capture deployed Mbed persistence fixtures and validate compatibility against
+8. Capture deployed Mbed persistence fixtures and validate compatibility against
    the production toolchain output.
-8. Define image signing and update-package policy, then rerun the native suite,
+9. Define image signing and update-package policy, then rerun the native suite,
    all four firmware builds, image checker, and update-package checks before
    declaring a release baseline.
 

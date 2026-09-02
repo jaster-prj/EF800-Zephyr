@@ -56,6 +56,11 @@ hardware validation described below.
   before conversion verification.
 - Preflight validation and read-back verification for migration, including
   duplicate DebugDevice rejection and preservation of malformed source data.
+- Temporary read-only `ef800-hwdebug` image with a USB CDC command console and
+  raw QSPI JEDEC, SFDP, geometry, and memory-read diagnostics at `0x08000000`.
+- STM32L496 engineering-target snapshot captured with STM32CubeProgrammer,
+  including option bytes and recovery-image hashes; the target was explicitly
+  mass-erased and verified blank. See `docs/stm32l496-target-snapshot.md`.
 
 ## Current Checkpoint
 
@@ -66,13 +71,22 @@ field-deployment checkpoint.
 
 The intended software topology is five logical ports: UART3 RS232, UART1 with
 optional flow control, UART4 plus alternate Port 3 modes, USB CDC/MSD, and fixed
-BlueNRG/SPI1. Exact alternate pin ownership, the oscillator, QSPI wiring, and
-several peripheral connections still require schematic and target
-confirmation. Legacy migration is validated against synthetic fixtures and the
-observed Mbed ABI layout, but not yet against a production device dump.
+BlueNRG/SPI1. The fitted QSPI device and direct wiring are now identified as
+ISSI `IS25LP032D-JTLE-TR`, 32 Mbit / 4 MiB, 3.3 V, on QSPI Bank 1. Its JEDEC
+ID, SFDP contents, erase geometry, and read stability still require target
+confirmation. Exact alternate pin ownership, the oscillator, and several
+peripheral connections also require schematic and target confirmation. Legacy
+migration is validated against synthetic fixtures and the observed Mbed ABI
+layout, but not yet against a production device dump.
 
 The current images are suitable for a controlled bring-up on one recoverable
 engineering target. They are not yet suitable for production flashing.
+
+The recorded engineering target is currently blank. Its final Under Reset
+option-byte read reports `RDP=0xAA` (Level 0), `FLASH_OPTR=0xFBEEF8AA`, and a
+hardware-selected IWDG. The target must remain unflashed until the current
+images account for the observed watchdog configuration and the remaining
+hardware gates are closed.
 
 ## Flash decision and safety boundary
 
@@ -84,11 +98,14 @@ validated by the native tests.
 
 The current default configurations deliberately keep MainApplication QSPI/FAT
 storage and bootloader update storage disabled. BackupApplication does enable
-USB MSC and exposes the QSPI disk, but the QSPI part and geometry are still
-placeholders. Therefore:
+USB MSC and exposes the QSPI disk, so its behavior remains hardware-gated until
+the identified part and existing volume have been read and validated.
+Therefore:
 
 - Save the target's internal flash, option bytes, and available QSPI contents
   before changing it.
+- The recorded target's legacy firmware captures are retained under `Backup/`,
+  while the target itself is now blank after an explicit full-chip erase.
 - Build and verify all four images before flashing.
 - Flash only at the fixed addresses documented in `docs/flash-layout.md`.
 - Keep the USB host disconnected until the QSPI part, capacity, erase geometry,
@@ -128,8 +145,14 @@ large software porting phase.
 
 - Confirm the exact L496 and L431 parts, board oscillator, power rails, reset,
   SWD access, and schematic pin ownership.
-- Save the original internal flash, option bytes, and QSPI contents where
-  possible before flashing.
+- Confirm the exact L496 package and board identity; SWD identified the target
+  as STM32L496xx/STM32L4A6xx, device ID `0x461`, revision `2.0`.
+- For future targets, save the original internal flash, option bytes, and QSPI
+  contents where possible before flashing. The recorded engineering target has
+  already been erased and is not a production preservation reference.
+- Validate bootloader and hardware-debug behavior with the observed mixed
+  watchdog selection: IWDG hardware mode, WWDG software mode, and both IWDG
+  low-power activity bits enabled.
 - Validate the bootloader vector checks, main handoff, watchdog accounting, and
   controlled backup fallback.
 - Validate keyboard-controller reset, matrix scanning, UART framing, virtual
@@ -142,9 +165,11 @@ large software porting phase.
 
 ### Board and peripheral completion
 
-- External QSPI NOR part, capacity, erase geometry, and maximum frequency.
+- External QSPI NOR JEDEC ID, SFDP, erase geometry, and maximum frequency.
 - Actual STM32L496 clock source and board oscillator wiring.
 - QSPI pinctrl support for the selected Zephyr revision.
+- External pull-ups on `NCS#`, `IO2/WP#`, and `IO3/HOLD#/RESET#` for robust
+  startup while the STM32 pins float during reset.
 - Port 1 and Port 3 alternate UART pin/peripheral states without reserving
   inactive alternate resources.
 - Port 2 RTS/CTS pin ownership and runtime UART ownership relative to USART1
@@ -157,8 +182,8 @@ large software porting phase.
 
 ### Storage, migration, and release gates
 
-- Identify the fitted QSPI NOR by schematic, JEDEC ID, or SFDP and update the
-  board description with verified values.
+- Confirm the identified `IS25LP032D-JTLE-TR` by JEDEC ID or SFDP and retain the
+  verified 32-Mbit / 4-MiB board description.
 - Validate FAT mounting and existing contents without formatting, including
   `.configuration` and `data` directory behavior.
 - Validate Workspace and Position persistence on the physical QSPI volume.

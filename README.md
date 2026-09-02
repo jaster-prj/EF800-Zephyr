@@ -57,6 +57,18 @@ Build the four firmware targets with:
 /opt/venv/bin/west build -p always -b ef800_keyboard application/application/ef800-keyboard -d application/build/ef800-keyboard
 ```
 
+For the temporary, read-only hardware-debug image, use the separate bootloader
+partition target:
+
+```sh
+/opt/venv/bin/west build -p always -b ef800 application/application/ef800-hwdebug -d application/build/ef800-hwdebug
+bash application/scripts/verify-hwdebug-image.sh
+```
+
+This image replaces the second-level bootloader at `0x08000000` and must only
+be used on a recoverable engineering target. It provides a USB CDC diagnostic
+console and read-only QSPI probing; see `docs/hardware-debug-qspi.md`.
+
 The same commands are collected in `.devcontainer/commands.txt`.
 
 The board definitions are currently kept in this mounted application repository
@@ -75,10 +87,17 @@ increment:
 0x08030000 - 0x080FFFFF  main application
 ```
 
-The 64 KiB gap at `0x08020000` is reserved until the hardware update format is
-finalized. The external QSPI flash capacity is deliberately configured in the
-board DeviceTree and must be set to the actual fitted part before production
-flashing.
+The current Zephyr contract reserves `0x08020000..0x0802FFFF` for boot
+metadata. The captured legacy `BackupApplication.bin` is 128 KiB and uses that
+range, so the reservation must not be treated as unused when restoring the
+legacy image. The external QSPI flash is configured as the identified
+`IS25LP032D-JTLE-TR` 32-Mbit / 4-MiB device. JEDEC ID, SFDP, signal integrity,
+erase geometry, and existing FAT contents still require hardware validation
+before production flashing.
+
+The connected STM32L496 engineering target was erased and verified blank after
+its option bytes were captured. See `docs/stm32l496-target-snapshot.md` for the
+raw option-byte values, recovery-image hashes, and erase record.
 
 See `docs/` for the migration contract and hardware assumptions.
 

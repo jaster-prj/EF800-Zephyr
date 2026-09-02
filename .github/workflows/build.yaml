@@ -72,6 +72,14 @@ jobs:
             application/application/ef800-bootloader \
             --build-dir application/build/ef800-bootloader
 
+      - name: Build hardware debug image
+        working-directory: ./zephyr_workspace
+        run: |
+          /opt/venv/bin/west build -p always -b ef800 \
+            application/application/ef800-hwdebug \
+            --build-dir application/build/ef800-hwdebug
+          bash application/scripts/verify-hwdebug-image.sh
+
       - name: Verify image contract
         working-directory: ./zephyr_workspace
         run: bash application/scripts/verify-images.sh

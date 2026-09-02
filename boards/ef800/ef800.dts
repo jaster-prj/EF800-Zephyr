@@ -29,7 +29,7 @@
 		};
 	};
 
-	/* The fitted part must be verified before production use. */
+	/* IS25LP032D-JTLE-TR: 32 Mbit / 4 MiB at 3.3 V. */
 	qspi_disk: qspi_disk {
 		compatible = "zephyr,flash-disk";
 		partition = <&qspi_storage_partition>;
@@ -163,8 +163,7 @@
 		qspi_nor: qspi-nor-flash@0 {
 			compatible = "st,stm32-qspi-nor";
 			reg = <0>;
-			/* Default placeholder: verify the fitted NOR device. */
-			size = <DT_SIZE_M(8)>;
+			size = <DT_SIZE_M(32)>;
 			qspi-max-frequency = <8000000>;
 			cs-high-time = <2>;
 			spi-bus-width = <4>;
@@ -178,7 +177,7 @@
 
 				qspi_storage_partition: partition@0 {
 					label = "qspi-storage";
-					reg = <0x00000000 DT_SIZE_M(8)>;
+					reg = <0x00000000 DT_SIZE_M(4)>;
 				};
 			};
 		};
