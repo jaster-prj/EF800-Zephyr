@@ -25,6 +25,15 @@
 #define CMD_KEYBOARD_DEBUG 0xEFU
 #define CMD_KEYBOARD_ID 0xF2U
 
+/*
+ * Fixed-length virtual-key requests accepted while debug mode is enabled:
+ * CMD_KEYBOARD_DEBUG, action, name length, name bytes. The request has no
+ * response; a valid request produces only the normal make/break scancode.
+ */
+#define KB_DEBUG_ACTION_PRESS 0x01U
+#define KB_DEBUG_ACTION_RELEASE 0x02U
+#define KB_DEBUG_KEY_NAME_MAX 16U
+
 /* Host-side flags used for command completion. */
 #define ECHO_FLAG (1UL << 0)
 #define KEYBOARD_ACTIVE (1UL << 1)

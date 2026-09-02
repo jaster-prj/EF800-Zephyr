@@ -9,10 +9,10 @@ current source and documentation changes are uncommitted.
 - Repository HEAD: `c3932be` (`Update plans`).
 - Routing and metadata implementation: `bffe7a6` (`Add next iteration of
   migration`). Protocol and measurement implementation: `21e68af`.
-- The current tree verifies twenty-four native tests, all four firmware images,
+- The current tree verifies twenty-six native tests, all four firmware images,
   and the image checker.
-- Current verified sizes are bootloader `35592`, backup `53644`, main `117724`,
-  and keyboard `20348` bytes.
+- Current verified sizes are bootloader `35592`, backup `53644`, main `119316`,
+  and keyboard `21820` bytes.
 
 ## Authoritative Hardware Topology
 

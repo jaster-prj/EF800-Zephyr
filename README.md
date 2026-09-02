@@ -81,3 +81,6 @@ board DeviceTree and must be set to the actual fitted part before production
 flashing.
 
 See `docs/` for the migration contract and hardware assumptions.
+
+For physical target testing with semantic virtual keyboard input, see
+`docs/hardware-debug-keyboard.md`.

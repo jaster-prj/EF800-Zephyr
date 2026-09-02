@@ -16,6 +16,7 @@
 
 #include "keyboard_protocol.h"
 #include "keyboard_translation.h"
+#include "keyboard_key_names.h"
 
 static void jump_to_system_bootloader(void);
 
@@ -26,6 +27,7 @@ static void jump_to_system_bootloader(void);
 #define KB_DEBOUNCE_MS 40U
 #define KB_DEBOUNCE_SCANS (KB_DEBOUNCE_MS / KB_SCAN_PERIOD_MS)
 #define KB_RX_QUEUE_SIZE 128U
+#define KB_KEY_NAME_BUFFER_SIZE (KB_DEBUG_KEY_NAME_MAX + 1U)
 
 #define KB_KEY_COUNT (KB_MATRIX_ROWS * KB_MATRIX_COLS + KB_SPECIAL_KEYS)
 
@@ -67,6 +69,7 @@ static bool keyboard_active = true;
 static bool keyboard_auto = true;
 static bool debug_enabled;
 static uint8_t typematic = 0x2BU;
+static uint64_t virtual_key_state;
 
 static struct {
 	bool valid;
@@ -80,11 +83,22 @@ enum command_mode {
 	COMMAND_IDLE,
 	COMMAND_TYPEMATIC,
 	COMMAND_DEBUG_SETTING,
-	COMMAND_DEBUG_DATA,
+	COMMAND_DEBUG_ACTION,
+	COMMAND_DEBUG_NAME_LENGTH,
+	COMMAND_DEBUG_NAME,
+	COMMAND_DEBUG_DISCARD,
 };
 
 static enum command_mode command_mode;
 static uint64_t command_timestamp_ms;
+static uint8_t debug_action;
+static uint8_t debug_name_length;
+static uint8_t debug_name_used;
+static uint8_t debug_discard_remaining;
+static char debug_name[KB_KEY_NAME_BUFFER_SIZE];
+
+static void set_repeat(const struct kb_wire_scancode *scancode,
+			       uint64_t now_ms);
 
 static const uint16_t typematic_period_ms[32] = {
 	33U, 37U, 42U, 46U, 48U, 54U, 59U, 63U,
@@ -147,6 +161,85 @@ static void clear_repeat(void)
 	repeat_key.next_ms = 0U;
 }
 
+static int raw_key_index(uint16_t raw)
+{
+	if ((raw & 0x0F00U) == 0U && (raw >> 4) < KB_MATRIX_ROWS &&
+		(raw & 0x0FU) < KB_MATRIX_COLS) {
+		return (int)((raw >> 4) * KB_MATRIX_COLS + (raw & 0x0FU));
+	}
+	if (raw >= KB_SPECIAL_RAW(0) && raw < KB_SPECIAL_RAW(KB_SPECIAL_KEYS)) {
+		return (int)(KB_MATRIX_ROWS * KB_MATRIX_COLS +
+			(raw - KB_SPECIAL_RAW(0)));
+	}
+	return -1;
+}
+
+static uint16_t raw_key_for_index(uint8_t index)
+{
+	if (index < KB_MATRIX_ROWS * KB_MATRIX_COLS) {
+		return KB_MATRIX_RAW(index / KB_MATRIX_COLS, index % KB_MATRIX_COLS);
+	}
+	return KB_SPECIAL_RAW(index - KB_MATRIX_ROWS * KB_MATRIX_COLS);
+}
+
+static void release_virtual_keys(void)
+{
+	uint8_t index;
+
+	clear_repeat();
+	for (index = 0U; index < KB_KEY_COUNT; ++index) {
+		uint16_t raw;
+		struct kb_wire_scancode scancode;
+
+		if ((virtual_key_state & (1ULL << index)) == 0U) {
+			continue;
+		}
+		raw = raw_key_for_index(index);
+		if (kb_scancode_for_raw(raw, &scancode) == 0) {
+			send_scancode(scancode.prefix, scancode.code, true);
+		}
+	}
+	virtual_key_state = 0U;
+}
+
+static void process_debug_key(void)
+{
+	uint16_t raw;
+	struct kb_wire_scancode scancode;
+	int index;
+
+	if (!debug_enabled ||
+		(debug_action != KB_DEBUG_ACTION_PRESS &&
+		 debug_action != KB_DEBUG_ACTION_RELEASE) ||
+		kb_key_name_to_raw(debug_name, debug_name_length, &raw) != 0 ||
+		kb_scancode_for_raw(raw, &scancode) != 0) {
+		return;
+	}
+
+	index = raw_key_index(raw);
+	if (index < 0) {
+		return;
+	}
+	if (debug_action == KB_DEBUG_ACTION_PRESS) {
+		if ((virtual_key_state & (1ULL << index)) != 0U) {
+			return;
+		}
+		send_scancode(scancode.prefix, scancode.code, false);
+		virtual_key_state |= 1ULL << index;
+		set_repeat(&scancode, k_uptime_get());
+	} else if (debug_action == KB_DEBUG_ACTION_RELEASE) {
+		if ((virtual_key_state & (1ULL << index)) == 0U) {
+			return;
+		}
+		if (repeat_key.valid && repeat_key.prefix == scancode.prefix &&
+			repeat_key.code == scancode.code) {
+			clear_repeat();
+		}
+		send_scancode(scancode.prefix, scancode.code, true);
+		virtual_key_state &= ~(1ULL << index);
+	}
+}
+
 static void set_repeat(const struct kb_wire_scancode *scancode,
 			       uint64_t now_ms)
 {
@@ -167,7 +260,8 @@ static void repeat_if_due(uint64_t now_ms)
 	uint8_t rate;
 	uint64_t period;
 
-	if (!keyboard_active || !repeat_key.valid || now_ms < repeat_key.next_ms) {
+	if ((!keyboard_active && !debug_enabled) || !repeat_key.valid ||
+		now_ms < repeat_key.next_ms) {
 		return;
 	}
 
@@ -287,8 +381,8 @@ static void command_complete(void)
 {
 	command_mode = COMMAND_IDLE;
 	command_timestamp_ms = 0U;
-	/* Data-bearing commands temporarily inhibit scanning only. */
-	keyboard_active = keyboard_auto;
+	/* Debug input owns the controller while it is enabled. */
+	keyboard_active = debug_enabled ? false : keyboard_auto;
 }
 
 static void process_command_byte(uint8_t byte, uint64_t now_ms)
@@ -296,7 +390,7 @@ static void process_command_byte(uint8_t byte, uint64_t now_ms)
 	if (command_mode != COMMAND_IDLE &&
 	    now_ms - command_timestamp_ms > 250U) {
 		command_mode = COMMAND_IDLE;
-		keyboard_active = keyboard_auto;
+		keyboard_active = debug_enabled ? false : keyboard_auto;
 	}
 
 	if (command_mode != COMMAND_IDLE) {
@@ -308,15 +402,45 @@ static void process_command_byte(uint8_t byte, uint64_t now_ms)
 			command_complete();
 			return;
 		case COMMAND_DEBUG_SETTING:
+			if (byte == 0U) {
+				/* Clear controller-side key state before leaving debug mode. */
+				release_virtual_keys();
+			}
 			debug_enabled = byte != 0U;
 			send_ack_data(CMD_KEYBOARD_SET_DEBUG, debug_enabled ? 1U : 0U);
 			command_complete();
 			return;
-		case COMMAND_DEBUG_DATA:
-			if (debug_enabled) {
-				uart_send(&byte, 1U);
+		case COMMAND_DEBUG_ACTION:
+			debug_action = byte;
+			command_mode = COMMAND_DEBUG_NAME_LENGTH;
+			return;
+		case COMMAND_DEBUG_NAME_LENGTH:
+			debug_name_length = byte;
+			debug_name_used = 0U;
+			if (debug_name_length == 0U ||
+				debug_name_length > KB_DEBUG_KEY_NAME_MAX) {
+				debug_discard_remaining = debug_name_length;
+				if (debug_discard_remaining == 0U) {
+					command_complete();
+				} else {
+					command_mode = COMMAND_DEBUG_DISCARD;
+				}
+			} else {
+				command_mode = COMMAND_DEBUG_NAME;
 			}
-			/* 0xEF carries a variable-length payload until the timeout. */
+			return;
+		case COMMAND_DEBUG_NAME:
+			debug_name[debug_name_used++] = (char)byte;
+			if (debug_name_used >= debug_name_length) {
+				debug_name[debug_name_used] = '\0';
+				process_debug_key();
+				command_complete();
+			}
+			return;
+		case COMMAND_DEBUG_DISCARD:
+			if (--debug_discard_remaining == 0U) {
+				command_complete();
+			}
 			return;
 		default:
 			command_mode = COMMAND_IDLE;
@@ -326,14 +450,16 @@ static void process_command_byte(uint8_t byte, uint64_t now_ms)
 
 	switch (byte) {
 	case CMD_KEYBOARD_ACTIVATE:
+		release_virtual_keys();
 		keyboard_auto = true;
-		keyboard_active = true;
+		keyboard_active = !debug_enabled;
 		memset(debounce_count, 0, sizeof(debounce_count));
 		send_ack(CMD_KEYBOARD_ACTIVATE);
 		break;
 	case CMD_KEYBOARD_DEACTIVATE:
 		keyboard_auto = false;
 		keyboard_active = false;
+		release_virtual_keys();
 		clear_repeat();
 		send_ack(CMD_KEYBOARD_DEACTIVATE);
 		break;
@@ -363,11 +489,12 @@ static void process_command_byte(uint8_t byte, uint64_t now_ms)
 		send_scancode(KB_SCANCODE_PREFIX_NONE, CMD_KEYBOARD_ECHO, false);
 		break;
 	case CMD_KEYBOARD_DEBUG:
+		/* Always consume the complete packet. Disabled debug requests are silent. */
 		if (debug_enabled) {
 			keyboard_active = false;
-			command_mode = COMMAND_DEBUG_DATA;
-			command_timestamp_ms = now_ms;
 		}
+		command_mode = COMMAND_DEBUG_ACTION;
+		command_timestamp_ms = now_ms;
 		break;
 	case CMD_KEYBOARD_ID: {
 			const uint8_t response[] = { CMD_RETURN, CMD_KEYBOARD_ID, 0xABU, 0x83U };
@@ -385,9 +512,7 @@ static void expire_command(uint64_t now_ms)
 	if (command_mode != COMMAND_IDLE &&
 	    now_ms - command_timestamp_ms > 250U) {
 		command_mode = COMMAND_IDLE;
-		if (!keyboard_active) {
-			keyboard_active = true;
-		}
+		keyboard_active = keyboard_auto;
 	}
 }
 

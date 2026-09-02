@@ -7,6 +7,8 @@
 - Legacy internal flash partitions.
 - Shared keyboard protocol constants and ASCII/event map.
 - Zephyr keyboard-controller scanner and UART command implementation.
+- Semantic debug-keyboard shell input with controller-side name-to-matrix and
+  matrix-to-scancode resolution, stateful virtual keys, and release-all cleanup.
 - Zephyr keyboard-host parser.
 - Bootloader and backup application foundations.
 - Native keyboard protocol tests.
@@ -68,11 +70,11 @@ SDK `1.0.1`:
 
 - Second-level bootloader builds at `0x08000000` (`35592` bytes).
 - Backup application builds at `0x08010000` (`53644` bytes).
-- MainApplication builds at `0x08030000` (`117724` bytes).
-- Keyboard-controller application builds (`20348` bytes).
+- MainApplication builds at `0x08030000` (`119316` bytes).
+- Keyboard-controller application builds (`21820` bytes).
 - Native keyboard, protocol, RTC, persistence, Position, port-assignment, and
   boot-metadata, measurement protocol, record, and Mbed migration suite passes
-  all twenty-four tests.
+  all twenty-six tests.
 
 The backup application currently uses about 82 percent of its 64 KiB
 partition. Treat additions to that recovery image as size-sensitive.
@@ -94,3 +96,5 @@ partition. Treat additions to that recovery image as size-sensitive.
   storage.
 - Compatibility validation against persistence files captured from a deployed
   Mbed image, including any toolchain-specific enum or padding variation.
+- Physical validation of the semantic debug-keyboard workflow, including UART
+  wiring, held modifiers, controller cleanup, and physical-keyboard resumption.

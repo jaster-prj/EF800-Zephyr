@@ -36,6 +36,7 @@ LOG_MODULE_REGISTER(ef800_main_app, LOG_LEVEL_INF);
 /* lpuart1 is the EF800 board's PG7/PC0 keyboard link. */
 #define KEYBOARD_UART_NODE DT_CHOSEN(zephyr_keyboard_uart)
 #define KEYBOARD_RX_QUEUE_SIZE 128U
+#define KEYBOARD_COMMAND_TIMEOUT_MS 1000U
 #define EF800_USER_NODE DT_PATH(zephyr_user)
 #define LCD_NODE EF800_USER_NODE
 #define LCD_COLUMNS 40U
@@ -45,6 +46,12 @@ static const struct device *const keyboard_uart =
 	DEVICE_DT_GET(KEYBOARD_UART_NODE);
 static struct ef800_keyboard_host keyboard_host;
 K_MSGQ_DEFINE(keyboard_rx_msgq, sizeof(uint8_t), KEYBOARD_RX_QUEUE_SIZE, 1);
+K_MUTEX_DEFINE(keyboard_command_mutex);
+K_SEM_DEFINE(keyboard_command_complete, 0, 1);
+static volatile bool keyboard_command_pending;
+static volatile uint8_t keyboard_pending_command;
+static bool keyboard_uart_initialized;
+static bool keyboard_debug_active;
 
 static struct ef800_mcp23017 mcp23017;
 static struct ef800_t6963 lcd;
@@ -513,6 +520,83 @@ static int configure_keyboard_uart(void)
 	};
 
 	return uart_configure(keyboard_uart, &config);
+}
+
+static void keyboard_uart_send(const uint8_t *data, size_t length)
+{
+	size_t index;
+
+	for (index = 0U; index < length; ++index) {
+		uart_poll_out(keyboard_uart, data[index]);
+	}
+}
+
+static int keyboard_send_command_locked(uint8_t command,
+					const uint8_t *payload, size_t payload_length)
+{
+	uint8_t status;
+	int result;
+
+	if (!keyboard_uart_initialized || !ef800_keyboard_host_is_ready(&keyboard_host)) {
+		return -ENODEV;
+	}
+
+	k_sem_reset(&keyboard_command_complete);
+	keyboard_pending_command = command;
+	keyboard_command_pending = true;
+	keyboard_uart_send(&command, 1U);
+	if (payload != NULL && payload_length != 0U) {
+		keyboard_uart_send(payload, payload_length);
+	}
+	result = k_sem_take(&keyboard_command_complete,
+		K_MSEC(KEYBOARD_COMMAND_TIMEOUT_MS));
+	keyboard_command_pending = false;
+	if (result != 0) {
+		return -ETIMEDOUT;
+	}
+	status = keyboard_host.last_command_status;
+	return status == CMD_ACK ? 0 : -EIO;
+}
+
+static int keyboard_send_command(uint8_t command,
+				 const uint8_t *payload, size_t payload_length)
+{
+	int result;
+
+	k_mutex_lock(&keyboard_command_mutex, K_FOREVER);
+	result = keyboard_send_command_locked(command, payload, payload_length);
+	k_mutex_unlock(&keyboard_command_mutex);
+	return result;
+}
+
+static int keyboard_send_virtual_key(uint8_t action, const char *name)
+{
+	uint8_t packet[3U + KB_DEBUG_KEY_NAME_MAX];
+	size_t length;
+	int result;
+
+	if (!keyboard_debug_active || name == NULL) {
+		return -EACCES;
+	}
+	length = strlen(name);
+	if (length == 0U || length > KB_DEBUG_KEY_NAME_MAX) {
+		return -EINVAL;
+	}
+
+	packet[0] = CMD_KEYBOARD_DEBUG;
+	packet[1] = action;
+	packet[2] = (uint8_t)length;
+	memcpy(&packet[3], name, length);
+
+	k_mutex_lock(&keyboard_command_mutex, K_FOREVER);
+	if (!keyboard_uart_initialized || !ef800_keyboard_host_is_ready(&keyboard_host)) {
+		result = -ENODEV;
+	} else {
+		keyboard_uart_send(packet, 3U + length);
+		result = 0;
+	}
+	k_mutex_unlock(&keyboard_command_mutex);
+	return result;
 }
 
 static void display_line(uint8_t row, const char *text)
@@ -2226,6 +2310,108 @@ static int cmd_rtc_set(const struct shell *shell, size_t argc, char **argv)
 	return 0;
 }
 
+static int cmd_keyboard_debug_start(const struct shell *shell,
+					    size_t argc, char **argv)
+{
+	uint8_t enabled = 1U;
+	int result;
+
+	ARG_UNUSED(argc);
+	ARG_UNUSED(argv);
+	if (keyboard_debug_active) {
+		shell_print(shell, "keyboard debug already active");
+		return 0;
+	}
+	result = keyboard_send_command(CMD_KEYBOARD_DEACTIVATE, NULL, 0U);
+	if (result != 0) {
+		shell_error(shell, "keyboard deactivate failed: %d", result);
+		return result;
+	}
+	result = keyboard_send_command(CMD_KEYBOARD_SET_DEBUG, &enabled, 1U);
+	if (result != 0) {
+		shell_error(shell, "keyboard debug enable failed: %d", result);
+		return result;
+	}
+	keyboard_debug_active = true;
+	shell_print(shell, "keyboard debug active");
+	return 0;
+}
+
+static int cmd_keyboard_debug_key(const struct shell *shell,
+					 size_t argc, char **argv, uint8_t action)
+{
+	int result;
+
+	if (argc != 2U) {
+		shell_error(shell, "usage: keyboard debug %s <key-name>",
+			action == KB_DEBUG_ACTION_PRESS ? "press" : "release");
+		return -EINVAL;
+	}
+	result = keyboard_send_virtual_key(action, argv[1]);
+	if (result != 0) {
+		shell_error(shell, "keyboard debug request failed: %d", result);
+	}
+	return result;
+}
+
+static int cmd_keyboard_debug_press(const struct shell *shell,
+					    size_t argc, char **argv)
+{
+	return cmd_keyboard_debug_key(shell, argc, argv, KB_DEBUG_ACTION_PRESS);
+}
+
+static int cmd_keyboard_debug_release(const struct shell *shell,
+					      size_t argc, char **argv)
+{
+	return cmd_keyboard_debug_key(shell, argc, argv, KB_DEBUG_ACTION_RELEASE);
+}
+
+static int cmd_keyboard_debug_stop(const struct shell *shell,
+					   size_t argc, char **argv)
+{
+	uint8_t disabled = 0U;
+	int result;
+
+	ARG_UNUSED(argc);
+	ARG_UNUSED(argv);
+	if (!keyboard_debug_active) {
+		shell_print(shell, "keyboard debug is not active");
+		return 0;
+	}
+	result = keyboard_send_command(CMD_KEYBOARD_SET_DEBUG, &disabled, 1U);
+	if (result != 0) {
+		shell_error(shell, "keyboard debug disable failed: %d", result);
+		return result;
+	}
+	result = keyboard_send_command(CMD_KEYBOARD_ACTIVATE, NULL, 0U);
+	if (result != 0) {
+		shell_error(shell, "keyboard activate failed: %d", result);
+		return result;
+	}
+	keyboard_debug_active = false;
+	shell_print(shell, "keyboard debug stopped");
+	return 0;
+}
+
+SHELL_STATIC_SUBCMD_SET_CREATE(keyboard_debug_commands,
+	SHELL_CMD_ARG(start, NULL, "Disable physical scanning and enable debug input",
+			cmd_keyboard_debug_start, 1, 0),
+	SHELL_CMD_ARG(press, NULL, "Press a named virtual key",
+			cmd_keyboard_debug_press, 2, 0),
+	SHELL_CMD_ARG(release, NULL, "Release a named virtual key",
+			cmd_keyboard_debug_release, 2, 0),
+	SHELL_CMD_ARG(stop, NULL, "Release held virtual keys and restore scanning",
+			cmd_keyboard_debug_stop, 1, 0),
+	SHELL_SUBCMD_SET_END
+);
+
+SHELL_STATIC_SUBCMD_SET_CREATE(keyboard_commands,
+	SHELL_CMD(debug, &keyboard_debug_commands, "Keyboard debug input", NULL),
+	SHELL_SUBCMD_SET_END
+);
+
+SHELL_CMD_REGISTER(keyboard, &keyboard_commands, "Keyboard commands", NULL);
+
 SHELL_STATIC_SUBCMD_SET_CREATE(rtc_commands,
 	SHELL_CMD_ARG(get, NULL, "Read local RTC time", cmd_rtc_get, 1, 0),
 	SHELL_CMD_ARG(set, NULL,
@@ -2334,6 +2520,10 @@ static void process_keyboard_byte(uint8_t byte, uint32_t now_ms)
 		LOG_DBG("Keyboard command 0x%02x status 0x%02x",
 			keyboard_host.last_command,
 			keyboard_host.last_command_status);
+		if (keyboard_command_pending &&
+			keyboard_host.last_command == keyboard_pending_command) {
+			k_sem_give(&keyboard_command_complete);
+		}
 		break;
 	case EF800_HOST_FEED_ECHO:
 		LOG_DBG("Keyboard echo indication received");
@@ -2504,6 +2694,7 @@ result = ef800_mcp23017_open(&mcp23017,
 	}
 
 	ef800_keyboard_host_init(&keyboard_host);
+	keyboard_uart_initialized = true;
 	uart_irq_callback_user_data_set(keyboard_uart, keyboard_uart_isr, NULL);
 	uart_irq_rx_enable(keyboard_uart);
 	if (wait_for_keyboard_startup()) {

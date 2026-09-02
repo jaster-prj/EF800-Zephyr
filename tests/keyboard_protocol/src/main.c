@@ -5,6 +5,7 @@
 #include "keyboard_host.h"
 #include "keyboard_protocol.h"
 #include "keyboard_translation.h"
+#include "keyboard_key_names.h"
 #include "ef800_time.h"
 #include "ef800_persistence.h"
 #include "ef800_persistence_fake.h"
@@ -36,6 +37,61 @@ ZTEST(keyboard_protocol, test_raw_key_map)
 	zassert_equal(scancode.prefix, KB_SCANCODE_PREFIX_E0, NULL);
 	zassert_equal(scancode.code, 0x5EU, NULL);
 	zassert_true(scancode.modifier, NULL);
+}
+
+ZTEST(keyboard_protocol, test_controller_key_names)
+{
+	uint16_t raw;
+
+	zassert_ok(kb_key_name_to_raw("a", 1U, &raw), NULL);
+	zassert_equal(raw, KB_MATRIX_RAW(2, 1), NULL);
+	zassert_ok(kb_key_name_to_raw("A", 1U, &raw), NULL);
+	zassert_equal(raw, KB_MATRIX_RAW(2, 1), NULL);
+	zassert_ok(kb_key_name_to_raw("SHIFT", 5U, &raw), NULL);
+	zassert_equal(raw, KB_SPECIAL_RAW(1), NULL);
+	zassert_ok(kb_key_name_to_raw("return", 6U, &raw), NULL);
+	zassert_equal(raw, KB_MATRIX_RAW(5, 2), NULL);
+	zassert_ok(kb_key_name_to_raw("Insert", 6U, &raw), NULL);
+	zassert_equal(raw, KB_MATRIX_RAW(5, 5), NULL);
+	zassert_equal(kb_key_name_to_raw("unknown", 7U, &raw), -1, NULL);
+	zassert_equal(kb_key_name_to_raw("a", 0U, &raw), -1, NULL);
+	zassert_equal(kb_key_name_to_raw("this-name-is-too-long", 21U, &raw), -1,
+		      NULL);
+}
+
+ZTEST(keyboard_protocol, test_controller_key_names_follow_host_input)
+{
+	struct ef800_keyboard_host host;
+	struct kb_wire_scancode scancode;
+	uint16_t raw;
+	uint8_t key;
+
+	ef800_keyboard_host_init(&host);
+
+	zassert_ok(kb_key_name_to_raw("shift", 5U, &raw), NULL);
+	zassert_ok(kb_scancode_for_raw(raw, &scancode), NULL);
+	zassert_equal(scancode.prefix, KB_SCANCODE_PREFIX_NONE, NULL);
+	zassert_equal(ef800_keyboard_host_feed(&host, scancode.code),
+		      EF800_HOST_FEED_NONE, NULL);
+
+	zassert_ok(kb_key_name_to_raw("A", 1U, &raw), NULL);
+	zassert_ok(kb_scancode_for_raw(raw, &scancode), NULL);
+	zassert_equal(ef800_keyboard_host_feed(&host, scancode.code),
+		      EF800_HOST_FEED_KEY, NULL);
+	zassert_ok(ef800_keyboard_host_get_key(&host, &key), NULL);
+	zassert_equal(key, 'A', NULL);
+
+	zassert_equal(ef800_keyboard_host_feed(&host, KB_SCANCODE_BREAK),
+		      EF800_HOST_FEED_NONE, NULL);
+	zassert_equal(ef800_keyboard_host_feed(&host, scancode.code),
+		      EF800_HOST_FEED_NONE, NULL);
+	/* Releasing A does not release the still-held Shift modifier. */
+	zassert_ok(kb_key_name_to_raw("shift", 5U, &raw), NULL);
+	zassert_ok(kb_scancode_for_raw(raw, &scancode), NULL);
+	zassert_equal(ef800_keyboard_host_feed(&host, KB_SCANCODE_BREAK),
+		      EF800_HOST_FEED_NONE, NULL);
+	zassert_equal(ef800_keyboard_host_feed(&host, scancode.code),
+		      EF800_HOST_FEED_NONE, NULL);
 }
 
 ZTEST(keyboard_protocol, test_translation_modifiers)

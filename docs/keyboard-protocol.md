@@ -21,6 +21,55 @@ The byte values and translated event map are shared in
 `shared/keyboard_protocol/` and are based on
 `mbedos/mbed-uart-keyboard` plus the controller source.
 
+## Debug virtual keyboard
+
+MainApplication provides a shell interface for hardware interaction tests. It
+is available on the MainApplication console, not on the keyboard-controller
+UART:
+
+```text
+keyboard debug start
+keyboard debug press <key-name>
+keyboard debug release <key-name>
+keyboard debug stop
+```
+
+The keyboard controller owns the key-name-to-matrix-to-scancode mapping.
+MainApplication sends the requested name without interpreting its matrix key
+or scancode. Names are case-insensitive. Common names are:
+
+```text
+a ... z       0 ... 9
+space         tab       enter       escape
+backspace     delete    insert
+shift         ctrl      alt         caps
+on            off       up          down       left       right
+comma         period    minus       plus
+```
+
+The aliases `return`, `esc`, `back`, and `control` are also accepted. A press
+is persistent: it sends one make sequence and remains held until its matching
+release or until debug mode is stopped. Stopping debug mode releases every
+virtual key still held before normal matrix scanning resumes.
+
+Internally, a debug key request uses `0xEF`, an action byte, a name length, and
+the name bytes:
+
+```text
+0xEF action name_length name_bytes
+```
+
+`action` is `0x01` for press and `0x02` for release. A valid request produces
+only the ordinary PS/2-like make or break bytes. It does not produce a new
+command response. Unknown names, invalid names, duplicate presses, unmatched
+releases, and incomplete requests are ignored without UART output.
+
+The debug session disables physical matrix scanning so physical and virtual
+events cannot be interleaved. The bootloader and BackupApplication do not
+consume this protocol or process keyboard-controller UART input.
+
+See `docs/hardware-debug-keyboard.md` for the physical target procedure.
+
 ## RTC entry workflow
 
 The MainApplication keyboard editor is opened with `z`. It collects these

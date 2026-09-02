@@ -8,6 +8,7 @@ project(ef800_keyboard)
 
 target_sources(app PRIVATE
 	src/main.c
+	src/keyboard_key_names.c
 	${CMAKE_CURRENT_LIST_DIR}/../../shared/keyboard_protocol/keyboard_translation.c
 )
 
