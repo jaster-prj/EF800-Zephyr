@@ -37,75 +37,61 @@ required only if deployed Mbed settings must survive the firmware migration.
 The migration reader must validate file length, record count, IDs, and bounds
 before accepting any record.
 
-## Phase 1: Backend and Workspace Foundation
+## Completed migration scope
 
-Status: implemented in this increment.
+The following persistence and Workspace work is complete in software and is
+covered by the native fake backend and firmware builds. It is not an active
+implementation plan item:
 
-- Define a backend-neutral persistence API for read, write, append, stat, list,
-  and remove operations.
-- Centralize path/name validation and reject absolute paths, empty components,
-  `.`/`..`, and unsupported characters.
-- Provide a Zephyr filesystem adapter that returns `-ENOTSUP` while the
-  MainApplication storage service is disabled.
-- Provide an in-memory fake backend for native tests.
-- Implement Workspace create, select, restore-current, current-file query, and
-  append operations on top of the backend.
-- Keep creation non-destructive: creating an existing workspace returns
-  `-EEXIST` rather than truncating user data.
-- Accept a trailing CR/LF in `.workspace`, but write the selected filename
-  without a newline.
+- Backend-neutral persistence API with path/name validation and a no-storage
+  Zephyr adapter.
+- Native fake backend and Workspace create, select, restore, list, and append
+  behavior.
+- MainApplication Workspace and Position UI, including storage-unavailable
+  handling and fixed-point millimetre records.
+- Versioned/checksummed timezone, port-assignment, boot-metadata, and serial
+  configuration records.
+- Connection-aware routing, UART ownership validation, console fallback, and
+  MainApplication measurement integration.
+- Explicit legacy Mbed readers, preflight validation, read-back verification,
+  duplicate DebugDevice rejection, and preservation of malformed source data.
 
-## Phase 2: MainApplication Integration
+The compatibility contract remains normative. Physical QSPI/FAT behavior and a
+production Mbed file dump are still open validation tasks.
 
-Status: implemented in this increment.
+## Active plan: controlled hardware and persistence validation
 
-- Add Workspace entries below the existing Workspace menu.
-- Add keyboard dialogs for restore, existing-workspace selection, and new
-  workspace creation.
-- Display storage-unavailable and file-operation errors without blocking the
-  main loop.
-- Keep list and selection navigation bounded and return to the correct parent
-  menu on left, Escape, or Backspace.
-- Keep `CONFIG_EF800_MAIN_STORAGE=n` for native and hardware bring-up builds
-  until the QSPI device is identified.
+### Phase 1: Target preparation and first flash
 
-## Phase 3: Settings and Format Migration
+- Confirm the fitted QSPI NOR by schematic, JEDEC ID, or SFDP before writing it.
+- Confirm capacity, erase geometry, program size, maximum frequency, voltage,
+  pinctrl, and existing FAT volume behavior.
+- Save internal flash, option bytes, and available QSPI contents before
+  changing one recoverable target.
+- Build all four images and verify their fixed addresses and sizes.
+- Flash the bootloader at `0x08000000`, BackupApplication at `0x08010000`, and
+  MainApplication at `0x08030000`; flash the keyboard controller separately.
+- Keep the USB host disconnected because BackupApplication currently exposes
+  the unverified QSPI disk through MSC.
 
-- Status: implemented against the observed deployed Mbed layout; production
-  acceptance still requires fixtures captured from the deployed Mbed toolchain.
+### Phase 2: Hardware bring-up before more hardware-dependent features
 
-- Keep the current Zephyr text format for timezone settings:
-  `<offset_minutes> <dst>\n`.
-- Read legacy port assignments as bounded decimal files and legacy
-  `Persistence<T>` files as explicitly decoded little-endian records; never
-  cast legacy bytes directly to a Zephyr or C++ structure.
-- Validate record count, exact file length, IDs, ranges, duplicate IDs, and
-  serial enum values before accepting a record.
-- Convert legacy timezone hours to Zephyr minutes and convert DebugDevice,
-  Elta3, and FTS3XX serial settings to the new typed representation.
-- Keep legacy `port_N` assignment files separate from new
-  `port_assignment_N` records while conversion is in progress.
-- Write only the new validated format, decode it again, and compare fields
-  before removing legacy aggregate files.
-- Keep malformed, conflicting, or partially converted legacy data available
-  for diagnosis; migration returns an error instead of applying a partial set.
+- Validate boot handoff, watchdog failure accounting, and controlled backup
+  fallback.
+- Validate the keyboard controller, UART framing, matrix scanning, reset, and
+  physical-keyboard resumption.
+- Validate the console, MCP23017, DS3231, MAX17043, T6963, status LED, and
+  confirmed UART routes.
+- Capture complete logs and resolve the fixed USART1 shell versus dynamic
+  external console/log routing behavior.
+- Confirm Port 2 flow-control pins, Port 3 alternate modes, and BlueNRG SPI1
+  resources from the schematic before adding or enabling their DeviceTree
+  descriptions.
 
-## Position Records
+### Phase 3: QSPI/FAT and USB ownership
 
-Status: implemented in this increment.
-
-- Validate STP and code text using the legacy allowed-character set.
-- Parse height as signed metres with at most three fractional digits.
-- Store the value internally as signed millimetres to avoid floating-point
-  formatting differences between toolchains.
-- Append the legacy logical record shape with a normalized three-digit fraction:
-  `-<stp> <height-metres> <code> \r`.
-- Require an explicitly selected Workspace before appending.
-- Keep Position UI input and append errors bounded and visible.
-
-## Phase 4: QSPI/FAT Validation
-
-Before enabling `CONFIG_EF800_MAIN_STORAGE`:
+Before enabling `CONFIG_EF800_MAIN_STORAGE`, `CONFIG_EF800_BOOT_STORAGE`, or
+MainApplication USB sharing:
 
 - Identify the fitted NOR by schematic, JEDEC ID, or SFDP.
 - Confirm capacity, erase geometry, program size, and maximum frequency.
@@ -116,20 +102,23 @@ Before enabling `CONFIG_EF800_MAIN_STORAGE`:
   exclusive.
 - Exercise power loss around writes, appends, metadata updates, and deletes.
 
-## Phase 5: Port and Device Persistence
+### Phase 4: Production data migration
 
-Status: typed port assignments, five-port metadata, connection-aware routing,
-cross-image console selection, Elta3/FTS3XX protocol and record handling,
-assigned-port UART setup, device serial-configuration persistence, legacy
-Mbed migration readers, and the MainApplication measurement workflow are
-implemented and verified. Hardware pin ownership and deployed-file validation
-remain unfinished; see `docs/migration-checkpoint.md`.
+- Capture persistence files from a deployed Mbed device.
+- Validate enum, padding, record length, and toolchain-specific representation
+  against the real production image.
+- Run conversion on a copy first and confirm that malformed, conflicting, and
+  partially converted data remains available for diagnosis.
+- Validate Workspace and Position behavior with migrated data on physical QSPI.
 
-- Define typed port-assignment records with explicit version and checksum.
-- Validate builder-ID lookup, port IDs, and capability compatibility.
-- Keep Debug, FTS3XX, and Elta3 configuration records versioned and checksummed;
-  use the validated legacy reader only as a migration input.
+### Phase 5: Release and update policy
+
+- Define image signing, package authentication, rollback, and recovery policy.
+- Make metadata updates resilient to power loss rather than relying on one
+  erase-and-write record where field reliability requires it.
 - Keep USB MSD persistence last because it shares the QSPI ownership boundary.
+- Repeat native tests, all four firmware builds, `scripts/verify-images.sh`,
+  hardware regression tests, and update-package checks before release.
 
 ## Verification Gates
 
