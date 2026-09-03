@@ -57,8 +57,7 @@ Build the four firmware targets with:
 /opt/venv/bin/west build -p always -b ef800_keyboard application/application/ef800-keyboard -d application/build/ef800-keyboard
 ```
 
-For the temporary, read-only hardware-debug image, use the separate bootloader
-partition target:
+For the temporary, read-only external-flash hardware-debug image:
 
 ```sh
 /opt/venv/bin/west build -p always -b ef800 application/application/ef800-hwdebug -d application/build/ef800-hwdebug
@@ -67,7 +66,8 @@ bash application/scripts/verify-hwdebug-image.sh
 
 This image replaces the second-level bootloader at `0x08000000` and must only
 be used on a recoverable engineering target. It provides a USB CDC diagnostic
-console and read-only QSPI probing; see `docs/hardware-debug-qspi.md`.
+console and read-only SPI/QSPI/QPI probing with recovery boundaries; see
+`docs/hardware-debug-qspi.md`.
 
 The same commands are collected in `.devcontainer/commands.txt`.
 

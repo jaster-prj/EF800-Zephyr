@@ -57,7 +57,8 @@ hardware validation described below.
 - Preflight validation and read-back verification for migration, including
   duplicate DebugDevice rejection and preservation of malformed source data.
 - Temporary read-only `ef800-hwdebug` image with a USB CDC command console and
-  raw QSPI JEDEC, SFDP, geometry, and memory-read diagnostics at `0x08000000`.
+  raw SPI/QSPI/QPI JEDEC, SFDP, geometry, recovery, and memory-read diagnostics
+  at `0x08000000`.
 - STM32L496 engineering-target snapshot captured with STM32CubeProgrammer,
   including option bytes and recovery-image hashes; the target was explicitly
   mass-erased and verified blank. See `docs/stm32l496-target-snapshot.md`.
@@ -165,7 +166,8 @@ large software porting phase.
 
 ### Board and peripheral completion
 
-- External QSPI NOR JEDEC ID, SFDP, erase geometry, and maximum frequency.
+- External QSPI NOR SPI/QSPI/QPI JEDEC ID, SFDP, erase geometry, and maximum
+  frequency.
 - Actual STM32L496 clock source and board oscillator wiring.
 - QSPI pinctrl support for the selected Zephyr revision.
 - External pull-ups on `NCS#`, `IO2/WP#`, and `IO3/HOLD#/RESET#` for robust
@@ -202,7 +204,9 @@ large software porting phase.
 1. Confirm schematic, BOM, MCU variants, oscillator, UART routes, QSPI part,
    USB, MCP23017, LCD, BlueNRG, and keyboard wiring.
 2. Save the existing target contents and flash one recoverable target with the
-   current images at the fixed addresses.
+   current images at the fixed addresses. For an unknown powered flash state,
+   use `ef800-hwdebug` and its passive probe plus recovery-wrapped SPI/QSPI/QPI
+   tests before restoring the normal image set.
 3. Validate boot, watchdog, keyboard, console, RTC, battery, MCP23017, LCD,
    LED, and confirmed UART paths. Keep the USB host disconnected.
 4. Add only confirmed DeviceTree and pinctrl resources for the active hardware

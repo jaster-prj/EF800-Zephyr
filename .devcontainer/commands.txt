@@ -33,7 +33,8 @@ fi
 /opt/venv/bin/west build -p always -b ef800_keyboard application/application/ef800-keyboard --build-dir application/build/ef800-keyboard
 /opt/venv/bin/west build -p always -b ef800 application/application/ef800-hwdebug --build-dir application/build/ef800-hwdebug
 
-# Native tests and fixed-image contract verification.
+# Native tests, fixed-image contract verification, and external-flash debug
+# image verification.
 /opt/venv/bin/west build -p always -b native_sim application/tests/keyboard_protocol --build-dir application/build/keyboard-protocol
 application/build/keyboard-protocol/zephyr/zephyr.exe
 bash application/scripts/verify-images.sh

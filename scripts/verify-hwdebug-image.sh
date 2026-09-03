@@ -13,9 +13,9 @@ if [ "${actual_address}" != "08000000" ]; then
 fi
 
 actual_size="$(stat -c '%s' "${bin_file}")"
-if [ "${actual_size}" -gt 65536 ]; then
-	echo "hwdebug: image size ${actual_size} exceeds 65536 bytes" >&2
+if [ "${actual_size}" -gt 1048576 ]; then
+	echo "hwdebug: image size ${actual_size} exceeds 1048576 bytes" >&2
 	exit 1
 fi
 
-echo "hwdebug: rom_start=${actual_address}, size=${actual_size}/65536 bytes"
+echo "hwdebug: rom_start=${actual_address}, size=${actual_size}/1048576 bytes"

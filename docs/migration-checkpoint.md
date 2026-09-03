@@ -16,8 +16,8 @@ is buildable and verified. Completed software work is summarized in
 - These figures are the last recorded software verification and must be rerun
   before a release baseline.
 - A temporary `ef800-hwdebug` image is available at `0x08000000` for controlled
-  USB CDC and read-only QSPI bring-up. It is not part of the normal four-image
-  release set.
+  USB CDC and read-only SPI/QSPI/QPI bring-up. It is not part of the normal
+  four-image release set.
 
 ## Authoritative Hardware Topology
 
@@ -62,7 +62,9 @@ implementation:
 
 The current image set may be flashed only to one sacrificial or fully
 recoverable engineering target with SWD or equivalent recovery access. It is
-not a production image set.
+not a production image set. The temporary `ef800-hwdebug` image uses the full
+1 MiB internal flash at `0x08000000` and replaces the complete normal image
+layout while it is installed.
 
 - Save internal flash, option bytes, and available QSPI contents before
   flashing.
@@ -126,12 +128,14 @@ Workspace/Position storage.
 1. Confirm the UART, alternate Port 3, BlueNRG/SPI1, oscillator, QSPI, USB,
    MCP23017, LCD, and keyboard wiring against the schematic.
 2. Save the existing target contents and flash `ef800-hwdebug` at
-   `0x08000000` on one recoverable target. Use its USB CDC and read-only QSPI
-   commands to identify and validate the external flash before flashing the
-   normal image set.
-3. Validate QSPI JEDEC ID, SFDP, configured geometry, stable reads, and the
-   electrical levels of `NCS#`, `IO2/WP#`, and `IO3/HOLD#/RESET#`. Keep the USB
-   host disconnected from any normal BackupApplication MSC image.
+   `0x08000000` on one recoverable target. Use its USB CDC console and passive
+   current-state probe first, then its recovery-wrapped SPI, QSPI, and QPI
+   tests to identify and validate the external flash before flashing the normal
+   image set.
+3. Validate SPI JEDEC/SFDP, QSPI `1-1-4`/`1-4-4`, QPI `4-4-4`, configured
+   geometry, stable reads, and the electrical levels of `NCS#`, `IO2/WP#`, and
+   `IO3/HOLD#/RESET#`. Keep the USB host disconnected from any normal
+   BackupApplication MSC image.
 4. Restore the normal image set and validate boot handoff, watchdog fallback,
    console capture, keyboard, LCD, RTC, battery, MCP23017, LED, and confirmed
    UART paths.

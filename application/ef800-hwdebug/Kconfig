@@ -1,0 +1,16 @@
+# SPDX-License-Identifier: Apache-2.0
+
+menu "EF800 hardware debug"
+
+config EF800_HWDEBUG_QSPI_HAL
+	bool "Use the STM32 QSPI HAL for direct probing"
+	default y
+	select USE_STM32_HAL_DMA
+	select USE_STM32_HAL_QSPI
+	help
+	  Link the STM32 QSPI HAL for the direct read-only hardware probe without
+	  enabling the generic Zephyr external-flash driver.
+
+endmenu
+
+source "Kconfig.zephyr"

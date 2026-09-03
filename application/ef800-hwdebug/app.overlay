@@ -2,7 +2,7 @@
 
 / {
 	chosen {
-		zephyr,code-partition = &boot_partition;
+		zephyr,code-partition = &hwdebug_partition;
 		zephyr,console = &cdc_acm_uart0;
 		zephyr,shell-uart = &cdc_acm_uart0;
 	};
@@ -22,12 +22,13 @@ zephyr_udc0: &usbotg_fs {
 };
 
 /*
- * Use single-line SPI commands for the first probe. This prevents the
- * standard STM32 QSPI driver from changing the flash Quad Enable bit during
- * initialization. reset-cmd only recovers the command state; it does not
- * erase or program the memory array.
+ * The generic NOR driver is disabled. The application issues explicit
+ * read-only transactions so SPI, QSPI, and QPI can be tested independently.
+ * reset-cmd is retained as metadata for any future driver use; this image does
+ * not erase, program, or change the flash configuration registers.
  */
 &qspi_nor {
+	status = "disabled";
 	size = <DT_SIZE_M(32)>; /* IS25LP032D: 32 Mbit = 4 MiB */
 	qspi-max-frequency = <8000000>;
 	cs-high-time = <2>;
@@ -129,4 +130,19 @@ zephyr_udc0: &usbotg_fs {
 			 &quadspi_bk1_io2_pf7 &quadspi_bk1_io3_pf6>;
 	pinctrl-names = "default";
 	status = "okay";
+};
+
+/* This temporary image owns internal flash while it is being debugged. */
+&flash0 {
+	partitions {
+		/delete-node/ partition@0;
+		/delete-node/ partition@10000;
+		/delete-node/ partition@20000;
+		/delete-node/ partition@30000;
+
+		hwdebug_partition: partition@0 {
+			label = "hwdebug";
+			reg = <0x00000000 0x00100000>;
+		};
+	};
 };
