@@ -85,10 +85,14 @@ native-testable feature development continues in parallel. Do not deploy the
 current images broadly and do not postpone all target testing until feature
 work is complete.
 
-The first connected L496 engineering target has now been explicitly erased and
-verified blank. Its option-byte snapshot is recorded in
-`docs/stm32l496-target-snapshot.md`; no firmware was restored afterward. The
-legacy recovery captures remain available under `Backup/`.
+The first connected L496 engineering target was explicitly erased and verified
+blank before the controlled hardware run. Its option-byte snapshot is recorded
+in `docs/stm32l496-target-snapshot.md`; the temporary `ef800-hwdebug` image was
+subsequently installed at `0x08000000` and the cleaned download verified
+successfully after the external flash was renewed. The latest external-flash
+results are recorded in `docs/hardware-debug-qspi.md`; all SPI, QSPI, and QPI
+receive tests still return zeroes. The target is currently held halted through
+SWD. The legacy recovery captures remain available under `Backup/`.
 
 ## Open Hardware And Product Problems
 

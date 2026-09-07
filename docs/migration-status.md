@@ -83,11 +83,16 @@ layout, but not yet against a production device dump.
 The current images are suitable for a controlled bring-up on one recoverable
 engineering target. They are not yet suitable for production flashing.
 
-The recorded engineering target is currently blank. Its final Under Reset
-option-byte read reports `RDP=0xAA` (Level 0), `FLASH_OPTR=0xFBEEF8AA`, and a
-hardware-selected IWDG. The target must remain unflashed until the current
-images account for the observed watchdog configuration and the remaining
-hardware gates are closed.
+The recorded engineering target was blank immediately after the snapshot. Its
+final Under Reset option-byte read reported `RDP=0xAA` (Level 0),
+`FLASH_OPTR=0xFBEEF8AA`, and a hardware-selected IWDG. The later controlled
+hardware run installed the temporary `ef800-hwdebug` image at `0x08000000`.
+The cleaned 59,608-byte image verified successfully after the external flash
+was renewed, but all SPI, QSPI, and QPI flash receive tests still returned
+zeroes. The target is currently held halted through SWD and must remain in
+debug-image mode until a valid JEDEC or SFDP response and the remaining
+hardware gates have been validated. See `docs/hardware-debug-qspi.md` for the
+bench result.
 
 ## Flash decision and safety boundary
 

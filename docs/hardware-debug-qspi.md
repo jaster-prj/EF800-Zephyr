@@ -19,7 +19,9 @@ approximately 4.7 kOhm to 10 kOhm from `NCS#`, `IO2/WP#`, and
 `IO3/HOLD#/RESET#` to 3V3, placed close to the flash. Do not add pull-downs to
 these lines. The internal pull-ups are inactive while the STM32 is in reset.
 
-All three protocol families use the STM32L496 `QUADSPI` peripheral on Bank 1.
+All three protocol families use the STM32L496 `QUADSPI` peripheral. The existing
+flash is on Bank 1 and the newly fitted W25Q128JVSQ is on Bank 2. Both banks
+share `CLK=PF10`, but have separate chip-select and IO pin groups.
 They differ in the number of active lines in each flash transaction:
 
 | Protocol | Transaction format | Test commands |
@@ -103,13 +105,35 @@ standalone image does not change MCP23017 outputs because the switch polarity
 is not yet confirmed. Verify the USB path and switch state from the schematic
 before treating a missing CDC device as a firmware failure.
 
+## Flash banks
+
+Bank 2 is the Winbond `W25Q128JVSQ`, 128 Mbit / 16 MiB:
+
+| Signal | STM32 pin |
+|---|---|
+| IO0 | PC1 |
+| IO1 | PC2 |
+| IO2/WP# | PC3 |
+| IO3/HOLD#/RESET# | PC4 |
+| CLK | PF10 |
+| NCS# | PD3 |
+
+The debug image selects the bank when initializing the STM32 QUADSPI HAL. The
+two flashes are independent devices; dual-flash mode is disabled.
+
 ## Console commands
 
-Offsets are zero-based offsets within the external 4 MiB flash. All commands
-are read-only and limit one dump to 256 bytes.
+Offsets are zero-based offsets within the selected external flash. Existing
+commands operate on Bank 1. `flash info 2` selects and queries Bank 2. The
+dedicated `flash2` commands provide read-only Bank 2 JEDEC/status and SFDP
+diagnostics. All commands are
+read-only and limit one dump to 256 bytes.
 
 ```text
-flash info
+flash info [1|2]
+flash2 recover
+flash2 probe
+flash2 sfdp [offset] [length]
 flash probe
 flash recover
 flash jedec
@@ -181,9 +205,12 @@ program, or other write commands.
 
 Expected initial observations:
 
-- `flash info` reports 4,194,304 configured bytes.
+- `flash info` reports 4,194,304 configured bytes for Bank 1.
+- `flash info 2` reports 16,777,216 configured bytes and reads the Bank 2 JEDEC ID.
 - SPI JEDEC returns the physical device's three-byte JEDEC ID. The expected ID
   for the documented part is commonly `9d 60 16`; confirm the fitted marking.
+- Bank 2's expected W25Q128JV JEDEC ID is commonly `ef 40 18`; confirm the
+  fitted marking and voltage variant.
 - SPI `flash sfdp` starts with the SFDP signature bytes `53 46 44 50` if the
   device responds correctly.
 - SFDP density identifies a 32-Mbit device.
@@ -219,3 +246,141 @@ Do not connect the target to a host as USB MSC and do not enable FAT or update
 storage from this image. BackupApplication in the normal image set exposes the
 same unverified external flash through MSC and remains subject to the migration
 hardware gates.
+
+## Latest bench result
+
+On 2026-09-03 the recoverable L496 target was connected through ST-LINK
+`0672FF504955857567234934` at 3.25 V. The target was identified as device ID
+`0x461`, revision 2.0, using Under Reset SWD access. The cleaned debug image
+was programmed at `0x08000000` after the external flash was renewed; the
+59,608-byte download verified successfully. The debug image enumerated as CDC
+`COM6` with USB PID `0xEF81`, and the watchdog reported as feeding.
+
+The following read-only tests completed at the STM32 HAL level but returned
+all-zero data:
+
+| Test | Observation |
+|---|---|
+| SPI JEDEC `9F` | `00 00 00` |
+| SPI status `05` | `00` |
+| SPI SFDP `5A` | all `00`, invalid signature |
+| SPI normal/fast read | all `00`, repeated match |
+| QSPI `1-1-4` / `1-4-4` | all `00` |
+| QPI JEDEC `AF` / `9F` | all `00` |
+| QPI `0B` / `EB` reads | all `00` |
+
+Recovery commands also completed at the QUADSPI controller but could not be
+confirmed by a plausible SPI JEDEC response. No valid flash identity or SFDP
+signature was obtained. The same all-zero result was reproduced after the
+external flash renewal. The target remains in debug-image mode with FAT and
+USB MSC disabled and is currently held halted through Under Reset SWD access.
+
+An SWD register read while the target was idle showed `PE11` (`NCS#`) high and
+`PF6` (`IO3`) high. `PF7` (`IO2/WP#`) read low despite its configured internal
+pull-up; `PF8` and `PF9` also read low. The `PF7` level is a priority hardware
+check, but static readings alone do not prove that a transaction was active.
+
+The cleaned-image run produced no verbose Zephyr log flood. `flash info`
+reported QUADSPI ready at 1 MHz, while `flash probe`, `flash recover`, and
+`flash test all` still returned all-zero receive data. The final SWD reconnect
+reported the core halted, so the target was left safely halted rather than
+running an unverified image.
+
+Next hardware actions:
+
+1. Measure external-flash VCC directly at the flash package against GND.
+2. Measure `NCS#`, `IO2/WP#`, and `IO3/HOLD#/RESET#` while the MCU is in reset
+   and while the debug image is idle. Confirm that `IO2` and `IO3` are not
+   externally pulled low.
+3. Use a logic analyzer on `NCS#`, `CLK`, `IO0`, and `IO1` during
+   `flash test spi`. Confirm that `9F` is present on `IO0` and that clock and
+   chip-select activity reach the flash package.
+4. Check the actual fitted flash marking and schematic connection against the
+   documented `IS25LP032D-JTLE-TR` pin assignment.
+5. Repeat `flash probe` and `flash recover` after the electrical checks. Do not
+   enable FAT, USB MSC, erase, program, or QE writes until a valid JEDEC or
+   SFDP response is obtained.
+
+## Bank 2 bench result
+
+## Clock source correction
+
+The external 25 MHz HSE oscillator was removed from the target. The board
+DeviceTree now disables HSE and uses the STM32L496 internal 16 MHz HSI as the
+PLL source with `M=1`, `N=10`, and `P=2`, preserving an 80 MHz system clock.
+The HSI48 clock remains enabled for USB.
+
+The HSI image was built and flashed on 2026-09-05. SWD core-register capture
+showed the CPU in Zephyr's `arch_cpu_idle()` WFI loop after startup, rather than
+in the previous HSE-ready wait loop. This proves the image reaches `main()` and
+is waiting for USB CDC DTR. The target still did not enumerate a CDC device,
+so the remaining issue is the physical USB path or USB-select hardware, not
+the removed HSE oscillator.
+
+On 2026-09-04 the powered target was programmed with the verified Bank 2
+debug-image update at `0x08000000`. STM32CubeProgrammer verified the 60,048-byte
+download successfully. The target enumerated the CDC console as `COM6`; `COM5`
+remained the ST-LINK virtual COM port.
+
+The following read-only commands selected both banks successfully:
+
+```text
+flash info
+flash info 2
+flash info 1
+```
+
+Bank 1 reported the expected controller and pin configuration:
+
+```text
+controller-ready: yes
+size: 4194304 bytes (32 Mbit)
+controller: STM32 QUADSPI Bank 1 at 1000000 Hz
+pins: IO0=PF8 IO1=PF9 IO2=PF7 IO3=PF6 CLK=PF10 NCS=PE11
+data: 00 00 00
+```
+
+Bank 2 reported the expected controller and newly fitted pin configuration:
+
+```text
+controller-ready: yes
+size: 16777216 bytes (128 Mbit)
+controller: STM32 QUADSPI Bank 2 at 1000000 Hz
+pins: IO0=PC1 IO1=PC2 IO2=PC3 IO3=PC4 CLK=PF10 NCS=PD3
+data: 00 00 00
+```
+
+Switching back to Bank 1 after Bank 2 also succeeded. Both Bank 1 and Bank 2
+JEDEC transactions completed at the HAL level but returned `00 00 00`, so the
+W25Q128JVSQ has not yet been electrically identified. Check Bank 2 VCC,
+`NCS#`, `IO2/WP#`, `IO3/HOLD#/RESET#`, and the PC1-PC4/PD3 wiring with a logic
+analyzer before enabling further protocol tests.
+
+The explicit Bank 2 diagnostics produced the same result:
+
+```text
+flash2 probe
+JEDEC data: 00 00 00
+status data: 00
+
+flash2 sfdp 0 64
+SFDP signature: invalid
+data: all 00
+```
+
+This rules out a Bank 2-only command-path omission in the debug image. Both
+banks are selected and initialized, but neither flash drives a nonzero response
+on the single-line read transactions. The target remains in the read-only
+debug-image state; no erase, program, QE, FAT, or MSC operation was performed.
+
+`flash2 recover` sends only the Winbond-compatible `AB`, `66`, and `99` SPI
+commands, followed by a JEDEC read. These commands do not erase, program, or
+change the Quad Enable bit. Use it once after power-up if the part may have
+been left in deep power-down or an unknown reset state. If it still returns
+all zeroes, stop firmware experimentation and inspect the electrical signals.
+
+On 2026-09-04, `flash2 recover` completed all three command transactions with
+no HAL error, but the follow-up JEDEC response remained `00 00 00`. A subsequent
+`flash2 probe` and `flash2 sfdp 0 64` also returned all zeroes. The recovery
+sequence therefore did not reveal a device in deep power-down or a recoverable
+SPI protocol state.
