@@ -48,7 +48,8 @@
 };
 
 &clk_hse {
-		status = "disabled";
+		clock-frequency = <DT_FREQ_M(25)>;
+		status = "okay";
 };
 
 &clk_hsi48 {
@@ -56,16 +57,16 @@
 };
 
 &clk_hsi {
-		status = "okay";
+		status = "disabled";
 };
 
 &pll {
-		div-m = <1>;
-		mul-n = <10>;
+		div-m = <5>;
+		mul-n = <32>;
 		div-p = <2>;
 		div-q = <2>;
 		div-r = <2>;
-		clocks = <&clk_hsi>;
+		clocks = <&clk_hse>;
 		status = "okay";
 };
 
@@ -87,9 +88,9 @@
 		clock-frequency = <I2C_BITRATE_FAST>;
 		status = "okay";
 
-		mcp23017: gpio@48 {
+		mcp23017: gpio@24 {
 			compatible = "microchip,mcp23017";
-			reg = <0x48>;
+			reg = <0x24>;
 			gpio-controller;
 			#gpio-cells = <2>;
 			ngpios = <16>;

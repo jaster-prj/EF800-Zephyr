@@ -79,7 +79,7 @@
 	};
 
 	quadspi_clk_pf10: quadspi_clk_pf10 {
-		pinmux = <STM32_PINMUX('F', 10, AF10)>;
+		pinmux = <STM32_PINMUX('F', 10, AF3)>;
 	};
 
 	quadspi_bk1_ncs_pe11: quadspi_bk1_ncs_pe11 {

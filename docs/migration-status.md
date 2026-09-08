@@ -204,6 +204,104 @@ large software porting phase.
 - Re-run the native suite, all four firmware builds, image verification, and
   update-package checks after hardware gates are closed.
 
+## Future driver architecture
+
+The following work is intentionally deferred until the current hardware
+bring-up and compatibility behavior are stable. It is a planned architectural
+improvement, not a prerequisite for the present controlled-target checkpoint.
+The existing implementations and protocol behavior must remain the reference
+until each step has matching tests and hardware validation.
+
+### MAX17043 sensor driver
+
+Convert the existing `shared/ef800_drivers/ef800_max17043.*` helper into a
+devicetree-instantiated Zephyr sensor driver.
+
+- First check the Zephyr `v4.4.1` tree for an upstream MAX17043 binding or
+  driver before adding a project-local implementation.
+- Keep the existing `maxim,max17043` board node at `fuel-gauge@36` as the
+  hardware description and use its I2C specification directly in the driver.
+- Implement the standard sensor fetch and channel operations for cell voltage
+  and state of charge, while preserving the existing big-endian register
+  decoding and conversion rules.
+- Keep the application-level battery status conversion in a small compatibility
+  layer so UI code does not depend directly on `struct sensor_value` details.
+- Preserve optional-device behavior: an absent or nonresponsive gauge must not
+  prevent MainApplication startup.
+- Add native tests for register byte order, voltage conversion, SOC clamping,
+  sensor channel values, and I2C error propagation.
+
+### T6963 display device
+
+Replace the T6963 properties currently stored under `zephyr,user` with a
+project-local, devicetree-backed EF800 T6963 device.
+
+- Add a `jaster,ef800-t6963` binding with the eight data GPIOs, control/reset
+  GPIOs, display geometry, font width, and controller memory size.
+- Instantiate the existing implementation through Zephyr's device model and
+  move GPIO readiness, configuration, reset, and controller initialization into
+  the device initialization path.
+- Keep the current EF800-specific API for text memory, cursor control,
+  character-generator RAM, controller modes, and drawing helpers. These
+  operations do not map completely to the generic Zephyr display API.
+- Consider a later `display_driver_api` adapter only for capabilities, clear,
+  and basic pixel/rectangle operations after the hardware behavior is proven.
+- Remove the manual LCD configuration object and `zephyr,user` LCD properties
+  from MainApplication once the device API is established.
+- Keep T6963 bus timing, pixel bit order, control polarity, and MCP23017-backed
+  signal behavior as explicit hardware gates. A successful device build does
+  not validate those electrical assumptions.
+- Add tests around devicetree-derived configuration and preserve the existing
+  pure address helper tests. Hardware testing must cover initialization,
+  command timing, reset, text output, and pixel behavior.
+
+### EF800 keyboard device and protocol split
+
+Refactor `ef800-keyboard` into a proper device-backed GPIO scanner while
+keeping the legacy EF800 UART protocol as a separate compatibility layer.
+
+- Freeze the current behavior before refactoring: matrix orientation, special
+  key mapping, debounce, make/break scancodes, typematic timing, activation,
+  debug virtual keys, ACK/RESEND behavior, and release-all cleanup.
+- Extract protocol parsing and encoding into pure shared modules that do not
+  depend on GPIO, UART, logging, or application state.
+- Implement the matrix scanner as a `jaster,ef800-keyboard` device using the
+  existing row, column, and special-key GPIO properties. Preserve the current
+  scan order and logical-to-scancode mapping during the first migration.
+- Evaluate Zephyr's common matrix keyboard infrastructure, but do not replace
+  the current scanner until generated key transitions match the compatibility
+  tests. The five special GPIO keys require explicit treatment outside a pure
+  matrix description.
+- Report ordinary physical key transitions through Zephyr's input subsystem
+  where a standard key code is unambiguous.
+- Keep an EF800-specific API for activation, typematic, debug virtual keys,
+  keyboard identification, reset, bootloader entry, and protocol status.
+- Move UART configuration, RX buffering, and TX behind a transport layer. The
+  transport must not interpret protocol bytes or allow console/log output to
+  corrupt the binary keyboard link.
+- Treat the `ef800-main` keyboard host as a separate UART/protocol-device
+  migration. Initially preserve its translated character and application-event
+  queues, then add input-event integration only after compatibility is proven.
+- Add native tests for scanner transitions, protocol framing, special keys,
+  typematic behavior, virtual-key cleanup, parser recovery, and queue overflow.
+- Hardware validation must cover reset, physical scanning, UART framing, debug
+  input, and resumption of physical scanning after virtual-key mode.
+
+### Completion criteria
+
+Do not consider these future driver migrations complete until the relevant
+increment has passed all of the following:
+
+- Existing native compatibility tests remain green and new driver tests pass.
+- All four firmware images build in the reusable development container.
+- The changed image layout and binary-size checks still pass.
+- Devicetree-disabled configurations continue to build where the peripheral is
+  optional.
+- Hardware behavior has been validated for the affected GPIO, I2C, display,
+  keyboard, and UART paths.
+- The migration status and component status documents record the resulting API
+  and any remaining hardware assumptions.
+
 ## Recommended resume order
 
 1. Confirm schematic, BOM, MCU variants, oscillator, UART routes, QSPI part,

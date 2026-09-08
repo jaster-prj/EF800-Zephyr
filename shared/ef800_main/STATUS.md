@@ -6,7 +6,7 @@ Initialized by this increment:
 - Bounded keyboard startup wait with key and event logging.
 - Zephyr watchdog task when the `watchdog0` device is ready.
 - Status LED through the `status-led` devicetree alias.
-- Minimal I2C probe for MCP23017 at `0x48`.
+- Minimal I2C probe for MCP23017 at `0x24` (7-bit address; `0x48` on the wire).
 - Optional standard Zephyr DS3231 RTC API probe when a supported
   `maxim,ds3231-rtc` node is present.
 - Optional QSPI FAT mount, disabled by default, with no format-on-failure and
