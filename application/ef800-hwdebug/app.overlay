@@ -14,7 +14,7 @@
 	status = "okay";
 };
 
-/* UART4, Bank 1 IS25, and MCP23017 are fitted for bring-up. */
+/* UART4, Bank 1 IS25, MCP23017, DS3231, and MAX17048 are fitted for bring-up. */
 &usbotg_fs {
 	status = "disabled";
 };
@@ -28,19 +28,28 @@
 };
 
 &external_rtc {
-	status = "disabled";
+	compatible = "maxim,ds3231-mfd";
+	status = "okay";
+
+	ef800_hwdebug_rtc: rtc {
+		compatible = "maxim,ds3231-rtc";
+		isw-gpios = <&gpioc 6 GPIO_ACTIVE_LOW>;
+		status = "okay";
+	};
 };
 
 &fuel_gauge {
-	status = "disabled";
+	status = "okay";
 };
 
 &lpuart1 {
-	status = "disabled";
+	current-speed = <115200>;
+	status = "okay";
 };
 
 &usart1 {
-	status = "disabled";
+	current-speed = <115200>;
+	status = "okay";
 };
 
 &uart4 {
@@ -49,7 +58,8 @@
 };
 
 &usart3 {
-	status = "disabled";
+	current-speed = <115200>;
+	status = "okay";
 };
 
 &iwdg {
@@ -84,6 +94,26 @@
 
 &qspi_storage_partition {
 	reg = <0x00000000 DT_SIZE_M(4)>;
+};
+
+/* The debug image owns the parallel T6963 during display bring-up. */
+/ {
+	zephyr,user {
+		keyboard-reset-gpios = <&mcp23017 12 0>;
+		data-gpios = <&gpioa 0 0>, <&gpioa 1 0>, <&gpioa 2 0>,
+				     <&gpioa 3 0>, <&gpioa 4 0>, <&gpioa 5 0>,
+				     <&gpioa 6 0>, <&gpioa 7 0>;
+		cd-gpios = <&gpiod 6 0>;
+		wr-gpios = <&gpioa 15 0>;
+		rd-gpios = <&gpiob 0 0>;
+		ce-gpios = <&gpioa 10 0>;
+		fs-gpios = <&mcp23017 4 0>;
+		reset-gpios = <&mcp23017 5 0>;
+		pixels-horizontal = <240>;
+		pixels-vertical = <64>;
+		font-width = <6>;
+		memory-kb = <8>;
+	};
 };
 
 #include <zephyr/dt-bindings/pinctrl/stm32-pinctrl.h>

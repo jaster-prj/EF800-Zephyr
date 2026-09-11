@@ -104,7 +104,7 @@
 		};
 
 		fuel_gauge: fuel-gauge@36 {
-			compatible = "maxim,max17043";
+			compatible = "maxim,max17048";
 			reg = <0x36>;
 			status = "okay";
 		};

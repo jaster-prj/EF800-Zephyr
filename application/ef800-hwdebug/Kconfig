@@ -13,4 +13,11 @@ config EF800_HWDEBUG_QSPI_HAL
 
 endmenu
 
+config EF800_MAIN_LCD_STATUS_TIMEOUT_US
+	int "T6963 status polling timeout (us)"
+	default 1000
+	range 100 100000
+	help
+		Bounded status polling timeout used by the shared T6963 driver.
+
 source "Kconfig.zephyr"

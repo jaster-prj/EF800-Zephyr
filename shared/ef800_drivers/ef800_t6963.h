@@ -3,6 +3,7 @@
 #define EF800_T6963_H
 
 #include <stdbool.h>
+#include <stddef.h>
 #include <stdint.h>
 
 #include <zephyr/drivers/gpio.h>
@@ -41,6 +42,8 @@ int ef800_t6963_text_cursor(struct ef800_t6963 *lcd,
 int ef800_t6963_write_char(struct ef800_t6963 *lcd, char character);
 int ef800_t6963_write_string(struct ef800_t6963 *lcd,
 				     const char *string);
+int ef800_t6963_read_text(struct ef800_t6963 *lcd, uint8_t column,
+				  uint8_t row, uint8_t *data, size_t length);
 int ef800_t6963_write_pixel(struct ef800_t6963 *lcd,
 				    uint16_t x, uint16_t y, bool value);
 int ef800_t6963_clear_text(struct ef800_t6963 *lcd);

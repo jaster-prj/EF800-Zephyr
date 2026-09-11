@@ -512,7 +512,7 @@ static void expire_command(uint64_t now_ms)
 	if (command_mode != COMMAND_IDLE &&
 	    now_ms - command_timestamp_ms > 250U) {
 		command_mode = COMMAND_IDLE;
-		keyboard_active = keyboard_auto;
+		keyboard_active = debug_enabled ? false : keyboard_auto;
 	}
 }
 
@@ -592,8 +592,8 @@ static int init_uart(void)
 {
 	const struct uart_config config = {
 		.baudrate = KB_UART_BAUDRATE,
-		.parity = UART_CFG_PARITY_ODD,
-		.stop_bits = UART_CFG_STOP_BITS_2,
+		.parity = UART_CFG_PARITY_NONE,
+		.stop_bits = UART_CFG_STOP_BITS_1,
 		.data_bits = UART_CFG_DATA_BITS_8,
 		.flow_ctrl = UART_CFG_FLOW_CTRL_NONE,
 	};

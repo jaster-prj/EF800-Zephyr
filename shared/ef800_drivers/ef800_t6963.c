@@ -388,9 +388,8 @@ int ef800_t6963_initialize(struct ef800_t6963 *lcd)
 	(void)set_pin(&lcd->config.wr, 1);
 	(void)set_pin(&lcd->config.rd, 1);
 	(void)set_pin(&lcd->config.ce, 1);
-	(void)set_pin(&lcd->config.fs, lcd->config.font_width == 8U ? 0 : 1);
-	(void)set_pin(&lcd->config.reset, 0);
-	k_busy_wait(1000U);
+	/* Match the legacy controller startup: leave all control lines inactive. */
+	(void)set_pin(&lcd->config.fs, 1);
 	(void)set_pin(&lcd->config.reset, 1);
 	ret = write_data_bus(lcd, 0xFFU);
 	if (ret != 0) {
@@ -570,6 +569,34 @@ int ef800_t6963_write_string(struct ef800_t6963 *lcd,
 		ret = write_char_locked(lcd, *cursor);
 		if (ret != 0) {
 			break;
+		}
+	}
+	k_mutex_unlock(&lcd->lock);
+	return ret;
+}
+
+int ef800_t6963_read_text(struct ef800_t6963 *lcd, uint8_t column,
+				  uint8_t row, uint8_t *data, size_t length)
+{
+	int ret = 0;
+
+	if (lcd == NULL || data == NULL || length == 0U || !lcd->ready) {
+		return -EINVAL;
+	}
+	if (column >= lcd->columns || row >= lcd->rows ||
+	    length > (size_t)lcd->columns - column) {
+		return -EINVAL;
+	}
+
+	k_mutex_lock(&lcd->lock, K_FOREVER);
+	ret = set_address_locked(lcd,
+		ef800_t6963_text_address(0U, lcd->columns, column, row));
+	for (size_t index = 0U; ret == 0 && index < length; ++index) {
+		uint8_t value;
+
+		ret = read_display_data_locked(lcd, &value, index + 1U < length);
+		if (ret == 0) {
+			data[index] = value;
 		}
 	}
 	k_mutex_unlock(&lcd->lock);

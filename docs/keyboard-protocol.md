@@ -3,7 +3,7 @@
 The L496 host and independent L431 keyboard controller communicate over UART:
 
 ```text
-9600 baud, 8 data bits, odd parity, 2 stop bits
+115200 baud, 8 data bits, no parity, 1 stop bit
 ```
 
 The controller sends `0xAA` after startup. Commands are single-byte commands,

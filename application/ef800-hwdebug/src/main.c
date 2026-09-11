@@ -13,6 +13,9 @@
 
 #include "flash.h"
 #include "mcp23017.h"
+#include "rtc.h"
+#include "fuel_gauge.h"
+#include "peripheral_tests.h"
 
 #define CONSOLE_LINE_SIZE 128U
 #define CONSOLE_RX_QUEUE_SIZE 128U
@@ -33,7 +36,16 @@ static void print_help(void)
 	hwdebug_console_puts("commands:\r\n"
 		"\r\n"
 		"hardware tests:\r\n"
-		"  hardware test flash|mcp23017|all\r\n"
+		"  hardware test flash|mcp23017|rtc|fuel-gauge|keyboard|display|all\r\n"
+		"  keyboard test|interactive\r\n"
+		"  display test|interactive|status|wr-test [count]\r\n"
+		"  uart test port1|port2\r\n"
+		"  lpuart test\r\n"
+		"  lpuart host-test\r\n"
+		"  lpuart bitbang-test\r\n"
+		"  storage test\r\n"
+		"  next (storage step)\r\n"
+		"  pass|fail|cancel|exit (pending interactive test)\r\n"
 		"\r\n"
 		"flash / QUADSPI:\r\n"
 		"  flash info\r\n"
@@ -49,7 +61,11 @@ static void print_help(void)
 		"  mcp23017 test\r\n"
 		"  mcp23017 raw\r\n"
 		"  mcp23017 stm32-hal\r\n"
-		"  mcp23017 shared-driver\r\n");
+		"  mcp23017 shared-driver\r\n"
+		"\r\n"
+		"RTC / fuel gauge:\r\n"
+		"  rtc test\r\n"
+		"  fuel-gauge test\r\n");
 }
 
 static int parse_u32(const char *text, uint32_t *value)
@@ -78,6 +94,91 @@ static void handle_command(char *line)
 	uint32_t length;
 
 	if (command == NULL) return;
+	if (hwdebug_interactive_pending() &&
+	    (strcmp(command, "pass") == 0 || strcmp(command, "fail") == 0 ||
+	     strcmp(command, "cancel") == 0 || strcmp(command, "exit") == 0 ||
+	     strcmp(command, "next") == 0) &&
+	    strtok(NULL, " \t") == NULL) {
+		hwdebug_interactive_reply(command);
+		return;
+	}
+	if (strcmp(command, "keyboard") == 0) {
+		subcommand = strtok(NULL, " \t");
+		argument = strtok(NULL, " \t");
+		if (subcommand != NULL && strcmp(subcommand, "test") == 0 &&
+		    argument == NULL && strtok(NULL, " \t") == NULL) {
+			hwdebug_keyboard_test("keyboard");
+		} else if (subcommand != NULL && strcmp(subcommand, "interactive") == 0 &&
+			   argument == NULL && strtok(NULL, " \t") == NULL) {
+			hwdebug_keyboard_interactive();
+		} else {
+			hwdebug_console_puts("error: usage: keyboard test|interactive\r\n");
+		}
+		return;
+	}
+	if (strcmp(command, "display") == 0) {
+		subcommand = strtok(NULL, " \t");
+		argument = strtok(NULL, " \t");
+		if (subcommand != NULL && strcmp(subcommand, "test") == 0 &&
+		    argument == NULL && strtok(NULL, " \t") == NULL) {
+			hwdebug_display_test();
+		} else if (subcommand != NULL && strcmp(subcommand, "interactive") == 0 &&
+			   argument == NULL && strtok(NULL, " \t") == NULL) {
+			hwdebug_display_interactive();
+		} else if (subcommand != NULL && strcmp(subcommand, "wr-test") == 0 &&
+			   (argument == NULL || strtok(NULL, " \t") == NULL)) {
+			uint32_t count = 20U;
+			if (argument != NULL && parse_u32(argument, &count) != 0) {
+				hwdebug_console_puts("error: usage: display wr-test [count]\r\n");
+			} else {
+				 hwdebug_display_wr_test(count);
+			}
+		} else if (subcommand != NULL && strcmp(subcommand, "status") == 0 &&
+			   argument == NULL && strtok(NULL, " \t") == NULL) {
+			hwdebug_display_status();
+		} else {
+			hwdebug_console_puts("error: usage: display test|interactive|status|wr-test [count]\r\n");
+		}
+		return;
+	}
+	if (strcmp(command, "uart") == 0) {
+		subcommand = strtok(NULL, " \t");
+		argument = strtok(NULL, " \t");
+		if (subcommand != NULL && strcmp(subcommand, "test") == 0 &&
+		    argument != NULL && strtok(NULL, " \t") == NULL &&
+		    (strcmp(argument, "port1") == 0 || strcmp(argument, "port2") == 0)) {
+			hwdebug_uart_test(argument);
+		} else {
+			hwdebug_console_puts("error: usage: uart test port1|port2\r\n");
+		}
+		return;
+	}
+	if (strcmp(command, "lpuart") == 0) {
+		subcommand = strtok(NULL, " \t");
+		if (subcommand != NULL && strcmp(subcommand, "test") == 0 &&
+		    strtok(NULL, " \t") == NULL) {
+			hwdebug_lpuart_test();
+		} else if (subcommand != NULL && strcmp(subcommand, "host-test") == 0 &&
+			   strtok(NULL, " \t") == NULL) {
+			hwdebug_lpuart_host_test();
+		} else if (subcommand != NULL && strcmp(subcommand, "bitbang-test") == 0 &&
+			   strtok(NULL, " \t") == NULL) {
+			hwdebug_lpuart_bitbang_test();
+		} else {
+			hwdebug_console_puts("error: usage: lpuart test|host-test\r\n");
+		}
+		return;
+	}
+	if (strcmp(command, "storage") == 0) {
+		subcommand = strtok(NULL, " \t");
+		if (subcommand != NULL && strcmp(subcommand, "test") == 0 &&
+		    strtok(NULL, " \t") == NULL) {
+			hwdebug_storage_test();
+		} else {
+			hwdebug_console_puts("error: usage: storage test\r\n");
+		}
+		return;
+	}
 	if (strcmp(command, "help") == 0) { print_help(); return; }
 	if (strcmp(command, "hardware") == 0) {
 		subcommand = strtok(NULL, " \t");
@@ -88,9 +189,28 @@ static void handle_command(char *line)
 				hwdebug_flash_test_group("all");
 			if (strcmp(argument, "mcp23017") == 0 || strcmp(argument, "all") == 0)
 				hwdebug_mcp23017_test();
+			if (strcmp(argument, "rtc") == 0 || strcmp(argument, "all") == 0)
+				hwdebug_rtc_test();
+			if (strcmp(argument, "fuel-gauge") == 0 || strcmp(argument, "all") == 0)
+				hwdebug_fuel_gauge_test();
+			if (strcmp(argument, "keyboard") == 0 || strcmp(argument, "all") == 0)
+				hwdebug_keyboard_test("keyboard");
+			if (strcmp(argument, "display") == 0 || strcmp(argument, "all") == 0)
+				hwdebug_display_test();
 			return;
 		}
-		hwdebug_console_puts("error: usage: hardware test flash|mcp23017|all\r\n");
+		hwdebug_console_puts("error: usage: hardware test flash|mcp23017|rtc|fuel-gauge|keyboard|display|all\r\n");
+		return;
+	}
+	if (strcmp(command, "rtc") == 0 || strcmp(command, "fuel-gauge") == 0) {
+		subcommand = strtok(NULL, " \t");
+		if (subcommand != NULL && strcmp(subcommand, "test") == 0 &&
+			strtok(NULL, " \t") == NULL) {
+			if (strcmp(command, "rtc") == 0) hwdebug_rtc_test();
+			else hwdebug_fuel_gauge_test();
+		} else {
+			hwdebug_console_printf("error: usage: %s test\r\n", command);
+		}
 		return;
 	}
 	if (strcmp(command, "mcp23017") == 0) {

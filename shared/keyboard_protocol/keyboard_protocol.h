@@ -5,9 +5,9 @@
 #include <stdint.h>
 
 /* UART framing used by the EF800 keyboard link. */
-#define KB_UART_BAUDRATE 9600U
+#define KB_UART_BAUDRATE 115200U
 #define KB_UART_DATA_BITS 8U
-#define KB_UART_STOP_BITS 2U
+#define KB_UART_STOP_BITS 1U
 
 /* Protocol bytes.  The short names intentionally match mbed-uart-keyboard. */
 #define CMD_ACK 0x7FU

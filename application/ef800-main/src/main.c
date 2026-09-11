@@ -513,8 +513,8 @@ static int configure_keyboard_uart(void)
 {
 	const struct uart_config config = {
 		.baudrate = KB_UART_BAUDRATE,
-		.parity = UART_CFG_PARITY_ODD,
-		.stop_bits = UART_CFG_STOP_BITS_2,
+		.parity = UART_CFG_PARITY_NONE,
+		.stop_bits = UART_CFG_STOP_BITS_1,
 		.data_bits = UART_CFG_DATA_BITS_8,
 		.flow_ctrl = UART_CFG_FLOW_CTRL_NONE,
 	};

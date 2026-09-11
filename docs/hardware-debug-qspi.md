@@ -13,6 +13,10 @@ The image provides:
 - Read-only SPI, QSPI, and QPI JEDEC-ID and memory-read test cases.
 - Explicit recovery attempts for an externally unknown flash protocol state.
 - Internal STM32 pull-ups on `NCS#`, `IO2/WP#`, and `IO3/RESET#/HOLD#`.
+- Peripheral bring-up commands for keyboard-controller protocol, T6963
+  read/write, selectable UART3/UART1 loopback, and manual FAT/MSC ownership
+  confirmation. These commands are documented below and do not enable FAT or
+  USB MSC in the debug image.
 
 The PCB currently has no external pull-ups. For production stability, add
 approximately 4.7 kOhm to 10 kOhm from `NCS#`, `IO2/WP#`, and
@@ -131,7 +135,36 @@ flash test qpi
 flash test all
 qspi bitbang spi
 qspi bitbang qpi
+keyboard test
+keyboard interactive
+display test
+display interactive
+uart test port1|port2
+storage test
 ```
+
+`keyboard test` uses the L496-to-L431 keyboard link at `115200 8N1` and runs
+echo, ID, activate, typematic, debug enable, virtual `a` make/break, debug
+disable, and deactivate checks. It then prints instructions for the separate
+physical keyboard test. Start it separately with `keyboard interactive`; confirm
+it with `pass` or `fail`, or leave it with `cancel` or `exit`.
+
+`display test` initializes the T6963, writes `EF800 LCD TEST`, reads the text
+memory back, and compares the bytes. Start the visible display confirmation
+separately with `display interactive`; use `pass` or `fail`, or leave it with
+`cancel` or `exit`.
+
+`uart test port1` selects USART3 and `uart test port2` selects USART1. Both
+use `115200 8O2` and expect a local TX-to-RX loopback through the approved
+RS232 level converter. Only one selected port is tested at a time.
+
+The debug image intentionally does not mount FAT or enable USB MSC. Use
+`storage test` as a checklist with the normal images. Confirm each displayed
+step and reply `next` to advance: boot MainApplication and verify FAT, assign
+Port 4 to MSD and connect USB VBUS, confirm FAT unmounts before MSC enable,
+confirm the host enumerates and reads the volume without formatting, then
+disconnect USB and confirm FAT mounts again after reset. Only the final step
+accepts `pass` or `fail`; `cancel` and `exit` leave the test at any point.
 
 The `qspi` command name remains accepted as an alias for `flash`.
 

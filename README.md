@@ -103,3 +103,6 @@ See `docs/` for the migration contract and hardware assumptions.
 
 For physical target testing with semantic virtual keyboard input, see
 `docs/hardware-debug-keyboard.md`.
+
+For the TLX-711A virtual controller and framebuffer viewer, see
+`GSE/TLX-711A/README.md` and build `application/tlx-711a`.

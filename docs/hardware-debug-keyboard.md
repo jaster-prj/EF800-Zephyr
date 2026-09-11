@@ -34,7 +34,7 @@ controller link is:
 
 ```text
 MainApplication LPUART1 to keyboard-controller USART3
-9600 baud, 8 data bits, odd parity, 2 stop bits (9600 8O2)
+115200 baud, 8 data bits, no parity, 1 stop bit (115200 8N1)
 ```
 
 Use a common ground and the board's approved debug/programming connection.

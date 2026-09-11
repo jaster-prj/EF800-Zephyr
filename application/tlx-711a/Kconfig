@@ -1,0 +1,11 @@
+# SPDX-License-Identifier: Apache-2.0
+
+menu "TLX-711A virtual display"
+
+config TLX711A_STATUS_BUSY
+	bool "Report T6963 busy status while processing"
+	default n
+
+endmenu
+
+source "Kconfig.zephyr"
