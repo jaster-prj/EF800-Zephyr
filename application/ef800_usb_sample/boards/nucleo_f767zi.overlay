@@ -1,0 +1,31 @@
+/* SPDX-License-Identifier: Apache-2.0 */
+
+/ {
+	chosen {
+		zephyr,console = &usart3;
+		zephyr,shell-uart = &usart3;
+		/delete-property/ zephyr,code-partition;
+	};
+
+	ramdisk0 {
+		compatible = "zephyr,ram-disk";
+		disk-name = "RAM";
+		sector-size = <512>;
+		sector-count = <192>;
+	};
+};
+
+&zephyr_udc0 {
+	status = "okay";
+};
+
+/* This standalone image owns the whole internal flash from 0x08000000. */
+&flash0 {
+	partitions {
+		/delete-node/ partition@0;
+		/delete-node/ partition@10000;
+		/delete-node/ partition@40000;
+		/delete-node/ partition@100000;
+		/delete-node/ partition@1c0000;
+	};
+};

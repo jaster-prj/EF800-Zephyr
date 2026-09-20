@@ -13,6 +13,7 @@ target_sources(app PRIVATE
 	src/rtc.c
 	src/fuel_gauge.c
 	src/peripheral_tests.c
+	src/keyboard_update.c
 	${CMAKE_CURRENT_LIST_DIR}/../../shared/ef800_drivers/ef800_mcp23017.c
 	${CMAKE_CURRENT_LIST_DIR}/../../shared/ef800_drivers/ef800_max17043.c
 	${CMAKE_CURRENT_LIST_DIR}/../../shared/ef800_drivers/ef800_t6963.c

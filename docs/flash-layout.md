@@ -43,7 +43,9 @@ each of those three lines to 3V3. Do not add pull-downs to them. The same
 startup biasing must be applied to the normal image overlays before relying on
 QSPI across reset and boot handoff.
 
-The initial hardware-debug image keeps the QSPI disk and FAT disabled and
-probes the device with single-line SPI commands. Confirm JEDEC ID, SFDP,
-signal integrity, erase geometry, and existing FAT contents before enabling
-production storage or update packages.
+The hardware-debug image provides explicit raw-flash probes and a destructive
+FAT/MSC ownership test. The storage test is enabled only in the temporary
+debug image; it formats the QSPI volume after `format-confirm`, creates test
+files, switches ownership between internal FAT and USB MSC, and verifies a
+file created by the host. Production storage and update packages remain
+disabled until this test and the normal-image ownership tests pass.

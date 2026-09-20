@@ -15,8 +15,8 @@ The image provides:
 - Internal STM32 pull-ups on `NCS#`, `IO2/WP#`, and `IO3/RESET#/HOLD#`.
 - Peripheral bring-up commands for keyboard-controller protocol, T6963
   read/write, selectable UART3/UART1 loopback, and manual FAT/MSC ownership
-  confirmation. These commands are documented below and do not enable FAT or
-  USB MSC in the debug image.
+  confirmation. The `storage test` command enables FAT and USB MSC only for
+  its controlled, interactive ownership sequence.
 
 The PCB currently has no external pull-ups. For production stability, add
 approximately 4.7 kOhm to 10 kOhm from `NCS#`, `IO2/WP#`, and
@@ -40,8 +40,6 @@ the external flash pins.
 
 The image does not provide:
 
-- FAT or filesystem access.
-- USB MSC.
 - Bootloader update installation.
 - Flash erase, program, or write shell commands.
 - Automatic Quad Enable register programming.
@@ -158,13 +156,51 @@ separately with `display interactive`; use `pass` or `fail`, or leave it with
 use `115200 8O2` and expect a local TX-to-RX loopback through the approved
 RS232 level converter. Only one selected port is tested at a time.
 
-The debug image intentionally does not mount FAT or enable USB MSC. Use
-`storage test` as a checklist with the normal images. Confirm each displayed
-step and reply `next` to advance: boot MainApplication and verify FAT, assign
-Port 4 to MSD and connect USB VBUS, confirm FAT unmounts before MSC enable,
-confirm the host enumerates and reads the volume without formatting, then
-disconnect USB and confirm FAT mounts again after reset. Only the final step
-accepts `pass` or `fail`; `cancel` and `exit` leave the test at any point.
+The debug image provides a destructive, interactive FAT/MSC ownership test.
+It uses the QSPI partition directly and keeps exactly one owner active at a
+time. Existing data is deleted only after the explicit `format-confirm`
+response.
+
+Run:
+
+```text
+storage test
+format-confirm
+```
+
+The test formats the volume and creates:
+
+```text
+/storage_test/created_by_fat.txt  (created by internal FAT)
+/storage_test/dummy.txt           (EF800 storage test dummy)
+```
+
+It reads both files through the internal FAT API and reports
+`storage/internal-fat PASS`. FAT is then unmounted, the disk is synchronized,
+and USB MSC is enabled. Connect the USB host and reply `pass` only after both
+files are visible and readable, or reply `fail` if enumeration or reading
+fails.
+
+After the MSC read test, create this file from the host:
+
+```text
+/storage_test/created_by_msc.txt
+```
+
+with the content `created by USB MSC`, safely eject the volume, and reply
+`pass`. The test disables MSC, remounts FAT, and verifies that the new file is
+readable through the internal filesystem. It then performs a final FAT
+unmount/remount and verifies all three files. The final result is
+`STORAGE TEST PASS` or `STORAGE TEST FAIL`.
+
+The hwdebug MSC test does not drive the MCP23017 USB-select output. On the
+tested board this switch is bypassed by solder bridges, so the STM32 USB path
+is permanently selected.
+
+Use `cancel` or `exit` to leave the test. Do not connect the USB host before
+the console asks for it, and always safely eject the MSC volume before replying
+to the MSC-created-file step. The storage test is destructive and is intended
+only for a recoverable engineering target.
 
 The `qspi` command name remains accepted as an alias for `flash`.
 

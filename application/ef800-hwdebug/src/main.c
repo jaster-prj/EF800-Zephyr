@@ -38,12 +38,20 @@ static void print_help(void)
 		"hardware tests:\r\n"
 		"  hardware test flash|mcp23017|rtc|fuel-gauge|keyboard|display|all\r\n"
 		"  keyboard test|interactive\r\n"
+		"  keyboard baud-test\r\n"
+		"  keyboard version\r\n"
+		"  keyboard version-raw\r\n"
+		"  keyboard id-raw\r\n"
+		"  keyboard update /EF800:/fwu/EF800_KEYBOARD.bin\r\n"
+		"  keyboard receive\r\n"
+		"  keyboard bootloader probe\r\n"
 		"  display test|interactive|status|wr-test [count]\r\n"
 		"  uart test port1|port2\r\n"
 		"  lpuart test\r\n"
 		"  lpuart host-test\r\n"
 		"  lpuart bitbang-test\r\n"
 		"  storage test\r\n"
+		"  usb cdc test\r\n"
 		"  next (storage step)\r\n"
 		"  pass|fail|cancel|exit (pending interactive test)\r\n"
 		"\r\n"
@@ -97,7 +105,8 @@ static void handle_command(char *line)
 	if (hwdebug_interactive_pending() &&
 	    (strcmp(command, "pass") == 0 || strcmp(command, "fail") == 0 ||
 	     strcmp(command, "cancel") == 0 || strcmp(command, "exit") == 0 ||
-	     strcmp(command, "next") == 0) &&
+	     strcmp(command, "next") == 0 ||
+	     strcmp(command, "format-confirm") == 0) &&
 	    strtok(NULL, " \t") == NULL) {
 		hwdebug_interactive_reply(command);
 		return;
@@ -108,11 +117,33 @@ static void handle_command(char *line)
 		if (subcommand != NULL && strcmp(subcommand, "test") == 0 &&
 		    argument == NULL && strtok(NULL, " \t") == NULL) {
 			hwdebug_keyboard_test("keyboard");
+		} else if (subcommand != NULL && strcmp(subcommand, "baud-test") == 0 &&
+			   argument == NULL && strtok(NULL, " \t") == NULL) {
+			hwdebug_keyboard_baud_test();
+		} else if (subcommand != NULL && strcmp(subcommand, "version") == 0 &&
+			   argument == NULL && strtok(NULL, " \t") == NULL) {
+			hwdebug_keyboard_version();
+		} else if (subcommand != NULL && strcmp(subcommand, "version-raw") == 0 &&
+			   argument == NULL && strtok(NULL, " \t") == NULL) {
+			hwdebug_keyboard_version_raw();
+		} else if (subcommand != NULL && strcmp(subcommand, "id-raw") == 0 &&
+			   argument == NULL && strtok(NULL, " \t") == NULL) {
+			hwdebug_keyboard_id_raw();
 		} else if (subcommand != NULL && strcmp(subcommand, "interactive") == 0 &&
 			   argument == NULL && strtok(NULL, " \t") == NULL) {
 			hwdebug_keyboard_interactive();
+		} else if (subcommand != NULL && strcmp(subcommand, "update") == 0 &&
+			   argument != NULL && strtok(NULL, " \t") == NULL) {
+			hwdebug_keyboard_update(argument);
+		} else if (subcommand != NULL && strcmp(subcommand, "receive") == 0 &&
+			   argument == NULL && strtok(NULL, " \t") == NULL) {
+			hwdebug_keyboard_receive();
+		} else if (subcommand != NULL && strcmp(subcommand, "bootloader") == 0 &&
+			   argument != NULL && strcmp(argument, "probe") == 0 &&
+			   strtok(NULL, " \t") == NULL) {
+			hwdebug_keyboard_bootloader_probe();
 		} else {
-			hwdebug_console_puts("error: usage: keyboard test|interactive\r\n");
+			hwdebug_console_puts("error: usage: keyboard test|interactive|update <path>\r\n");
 		}
 		return;
 	}
@@ -176,6 +207,18 @@ static void handle_command(char *line)
 			hwdebug_storage_test();
 		} else {
 			hwdebug_console_puts("error: usage: storage test\r\n");
+		}
+		return;
+	}
+	if (strcmp(command, "usb") == 0) {
+		subcommand = strtok(NULL, " \t");
+		argument = strtok(NULL, " \t");
+		if (subcommand != NULL && argument != NULL &&
+		    strcmp(subcommand, "cdc") == 0 && strcmp(argument, "test") == 0 &&
+		    strtok(NULL, " \t") == NULL) {
+			hwdebug_usb_cdc_test();
+		} else {
+			hwdebug_console_puts("error: usage: usb cdc test\r\n");
 		}
 		return;
 	}
@@ -296,11 +339,14 @@ int main(void)
 {
 	uint8_t received;
 	int watchdog_result = hwdebug_flash_watchdog_init();
+	int keyboard_reset_result;
 	if (!device_is_ready(console_uart)) return 0;
+	keyboard_reset_result = hwdebug_keyboard_reset_release();
 	uart_irq_callback_set(console_uart, console_rx_callback);
 	uart_irq_rx_enable(console_uart);
 	hwdebug_console_puts("boot: main\r\nboot: UART4 ready\r\nboot: clock source HSE 25 MHz -> PLL -> SYSCLK 80 MHz\r\nEF800 hardware debug\r\n");
 	hwdebug_console_printf("watchdog: %s (%d)\r\n", watchdog_result == 0 ? "feeding" : "unavailable", watchdog_result);
+	hwdebug_console_printf("keyboard reset: released high (%d)\r\n", keyboard_reset_result);
 	print_help(); hwdebug_console_puts("> ");
 	while (true) {
 		hwdebug_flash_watchdog_feed();

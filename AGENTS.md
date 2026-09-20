@@ -82,6 +82,21 @@ For normal source-only iterations, reuse the configured build directory:
 docker exec -w /workspace EF800_Devcontainer /opt/venv/bin/west build -d application/build/ef800-main
 ```
 
+Every build keeps the generated firmware inside its build directory. The
+primary binary, Intel HEX file, ELF, map, and generated DeviceTree are located
+at:
+
+```text
+build/<target>/zephyr/zephyr.bin
+build/<target>/zephyr/zephyr.hex
+build/<target>/zephyr/zephyr.elf
+build/<target>/zephyr/zephyr.map
+build/<target>/zephyr/zephyr.dts
+```
+
+Use the build-directory `zephyr.bin` directly for programming. Do not copy
+firmware to a temporary directory or use an older artifact from `%TEMP%`.
+
 Use a pristine build after changing Kconfig, DeviceTree, overlays, board files,
 the manifest, or CMake source lists.
 
@@ -89,6 +104,47 @@ Build directories created before the persistent container may contain absolute
 paths from another mount layout. If pristine handling reports a path such as
 `/workspace/zephyr/zephyr/cmake/pristine.cmake`, do not repair or reuse that
 cache. Build into a new directory or remove only that ignored build directory.
+
+## Flashing
+
+STM32CubeProgrammer is installed on the Windows host at:
+
+```text
+C:\Program Files\STMicroelectronics\STM32Cube\STM32CubeProgrammer\bin\STM32_Programmer_CLI.exe
+```
+
+The reusable ST-LINK has serial number `0672FF504955857567234934`. Always
+verify the detected device before programming. The EF800 main/debug target is
+the STM32L496 with device ID `0x461`; the keyboard controller is an STM32L431
+with device ID `0x435`. Do not flash an image built for one MCU onto the other.
+
+Flash the temporary `ef800-hwdebug` image at `0x08000000`:
+
+```powershell
+& "C:\Program Files\STMicroelectronics\STM32Cube\STM32CubeProgrammer\bin\STM32_Programmer_CLI.exe" -c port=SWD mode=UR reset=HWrst sn=0672FF504955857567234934 -d "build\ef800-hwdebug\zephyr\zephyr.bin" 0x08000000 -rst
+```
+
+The command must report `Device ID : 0x461` and `Device name : STM32L496xx`.
+The hwdebug image replaces the normal internal-flash image and must be restored
+before returning the target to normal EF800 operation.
+
+Flash the keyboard-controller image at `0x08000000` only when the ST-LINK is
+connected to the STM32L431:
+
+```powershell
+& "C:\Program Files\STMicroelectronics\STM32Cube\STM32CubeProgrammer\bin\STM32_Programmer_CLI.exe" -c port=SWD mode=UR reset=HWrst -d "build\ef800-keyboard\zephyr\zephyr.bin" 0x08000000 -rst
+```
+
+The command must report `Device ID : 0x435` and `Device name : STM32L43xxx/STM32L44xxx`.
+If the programmer reports `DEV_CONNECT_ERR`, do not retry by flashing another
+image. Check target power, SWD wiring, reset state, and ST-LINK target selection
+first.
+
+For the keyboard link, the physical L496 pin functions are `PG7=LPUART1_TX`
+and `PC0=LPUART1_RX`. The STM32 HAL diagnostic enables the internal UART swap
+(`UART_ADVFEATURE_SWAP_ENABLE`) to match the fitted board wiring. Verify the
+hwdebug console with `lpuart test`; successful output includes `byte=0xaa` and
+`PASS`.
 
 ## Tests
 

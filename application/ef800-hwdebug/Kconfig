@@ -20,4 +20,12 @@ config EF800_MAIN_LCD_STATUS_TIMEOUT_US
 	help
 		Bounded status polling timeout used by the shared T6963 driver.
 
+config EF800_USB_VID
+	hex "Hardware-debug USB vendor ID"
+	default 0x2fe3
+
+config EF800_USB_PID
+	hex "Hardware-debug USB product ID"
+	default 0xef82
+
 source "Kconfig.zephyr"

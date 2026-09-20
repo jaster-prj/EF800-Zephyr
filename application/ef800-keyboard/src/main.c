@@ -19,6 +19,19 @@
 #include "keyboard_key_names.h"
 
 static void jump_to_system_bootloader(void);
+static int configure_protocol_uart(uint32_t baudrate);
+
+static int baud_selector_to_rate(uint8_t selector, uint32_t *rate)
+{
+	switch (selector) {
+	case KB_BAUD_SELECTOR_9600: *rate = 9600U; return 0;
+	case KB_BAUD_SELECTOR_19200: *rate = 19200U; return 0;
+	case KB_BAUD_SELECTOR_38400: *rate = 38400U; return 0;
+	case KB_BAUD_SELECTOR_57600: *rate = 57600U; return 0;
+	case KB_BAUD_SELECTOR_115200: *rate = 115200U; return 0;
+	default: return -EINVAL;
+	}
+}
 
 #define KB_NODE DT_PATH(keyboard)
 #define KB_UART_NODE DT_CHOSEN(zephyr_console)
@@ -87,6 +100,7 @@ enum command_mode {
 	COMMAND_DEBUG_NAME_LENGTH,
 	COMMAND_DEBUG_NAME,
 	COMMAND_DEBUG_DISCARD,
+	COMMAND_BAUDRATE,
 };
 
 static enum command_mode command_mode;
@@ -135,6 +149,13 @@ static void send_resend(uint8_t command)
 	const uint8_t response[] = { CMD_RETURN, command, CMD_RESEND };
 
 	uart_send(response, sizeof(response));
+}
+
+static void send_initialized(void)
+{
+	const uint8_t startup = CMD_INITIALIZED;
+
+	uart_send(&startup, 1U);
 }
 
 static void send_scancode(uint8_t prefix, uint8_t code, bool release)
@@ -442,6 +463,19 @@ static void process_command_byte(uint8_t byte, uint64_t now_ms)
 				command_complete();
 			}
 			return;
+		case COMMAND_BAUDRATE: {
+			uint32_t baudrate;
+			/* ACK the request at the old baud before changing the UART. */
+			send_ack(CMD_KEYBOARD_BAUDRATE);
+			/* Let the old-baud ACK drain before reconfiguring USART3. */
+			k_msleep(10U);
+			(void)(baud_selector_to_rate(byte, &baudrate) == 0 &&
+				configure_protocol_uart(baudrate) == 0);
+			k_msleep(100U);
+			send_initialized();
+			command_complete();
+			return;
+		}
 		default:
 			command_mode = COMMAND_IDLE;
 			break;
@@ -475,6 +509,22 @@ static void process_command_byte(uint8_t byte, uint64_t now_ms)
 		k_sleep(K_MSEC(10));
 		jump_to_system_bootloader();
 		break;
+	case CMD_KEYBOARD_BAUDRATE:
+		keyboard_auto = false;
+		keyboard_active = false;
+		command_mode = COMMAND_BAUDRATE;
+		command_timestamp_ms = now_ms;
+		break;
+	case CMD_KEYBOARD_BAUDRATE_DEFAULT:
+		keyboard_auto = false;
+		keyboard_active = false;
+		send_ack(CMD_KEYBOARD_BAUDRATE_DEFAULT);
+		k_msleep(10U);
+		if (configure_protocol_uart(KB_UART_BAUDRATE) == 0) {
+			k_msleep(100U);
+			send_initialized();
+		}
+		break;
 	case CMD_KEYBOARD_TYPEMATIC:
 		keyboard_active = false;
 		command_mode = COMMAND_TYPEMATIC;
@@ -498,6 +548,13 @@ static void process_command_byte(uint8_t byte, uint64_t now_ms)
 		break;
 	case CMD_KEYBOARD_ID: {
 			const uint8_t response[] = { CMD_RETURN, CMD_KEYBOARD_ID, 0xABU, 0x83U };
+			uart_send(response, sizeof(response));
+			break;
+	}
+	case CMD_KEYBOARD_VERSION: {
+			/* Firmware version 1.0.0, encoded as SemVer major/minor/patch. */
+			const uint8_t response[] = { CMD_RETURN, CMD_KEYBOARD_VERSION,
+				1U, 0U, 0U };
 			uart_send(response, sizeof(response));
 			break;
 	}
@@ -590,8 +647,13 @@ static int init_gpio(void)
 
 static int init_uart(void)
 {
+	return configure_protocol_uart(KB_UART_BAUDRATE);
+}
+
+static int configure_protocol_uart(uint32_t baudrate)
+{
 	const struct uart_config config = {
-		.baudrate = KB_UART_BAUDRATE,
+		.baudrate = baudrate,
 		.parity = UART_CFG_PARITY_NONE,
 		.stop_bits = UART_CFG_STOP_BITS_1,
 		.data_bits = UART_CFG_DATA_BITS_8,

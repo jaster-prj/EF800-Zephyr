@@ -16,7 +16,7 @@
 
 /* UART4, Bank 1 IS25, MCP23017, DS3231, and MAX17048 are fitted for bring-up. */
 &usbotg_fs {
-	status = "disabled";
+	status = "okay";
 };
 
 &i2c1 {
@@ -66,30 +66,37 @@
 	status = "disabled";
 };
 
-/* Never instantiate the QSPI disk or a filesystem in this image. */
+
+/* The storage test owns the QSPI disk and switches it between FAT and MSC. */
 &qspi_disk {
-	status = "disabled";
+	status = "okay";
 };
 
-/*
- * The generic NOR driver is disabled. The application issues explicit
- * read-only transactions so SPI, QSPI, and QPI can be tested independently.
- * reset-cmd is retained as metadata for any future driver use; this image does
- * not erase, program, or change the flash configuration registers.
- */
+/* The storage test uses the generic NOR driver through the flash-disk API. */
 &qspi_nor {
-	status = "disabled";
+	status = "okay";
 	size = <DT_SIZE_M(32)>; /* IS25LP032D: 32 Mbit = 4 MiB */
 	qspi-max-frequency = <8000000>;
 	cs-high-time = <2>;
 	reset-cmd;
 	reset-cmd-wait = <10>;
-	/delete-property/ spi-bus-width;
-	/delete-property/ writeoc;
+	spi-bus-width = <4>;
+	writeoc = "PP_1_1_4";
 };
 
 &quadspi {
 	ssht-enable;
+};
+
+&usbotg_fs {
+	pinctrl-0 = <&usb_otg_fs_dm_pa11 &usb_otg_fs_dp_pa12>;
+	pinctrl-names = "default";
+	status = "okay";
+
+	cdc_acm_uart0: cdc_acm_uart0 {
+		compatible = "zephyr,cdc-acm-uart";
+		label = "EF800 USB CDC ACM";
+	};
 };
 
 &qspi_storage_partition {
@@ -173,6 +180,7 @@
 	usb_otg_fs_dp_pa12: usb_otg_fs_dp_pa12 {
 		pinmux = <STM32_PINMUX('A', 12, AF10)>;
 	};
+
 
 	quadspi_clk_pf10: quadspi_clk_pf10 {
 		pinmux = <STM32_PINMUX('F', 10, AF3)>;

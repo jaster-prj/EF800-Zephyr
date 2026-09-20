@@ -12,7 +12,13 @@
 #include <zephyr/drivers/gpio.h>
 #include <zephyr/drivers/uart.h>
 #include <zephyr/kernel.h>
+#include <zephyr/fs/fs.h>
+#include <zephyr/storage/disk_access.h>
+#include <zephyr/storage/flash_map.h>
 #include <zephyr/sys/util.h>
+#include <zephyr/usb/class/usbd_msc.h>
+#include <zephyr/usb/usbd.h>
+#include <ff.h>
 
 #include <stm32l4xx_hal.h>
 #include <stm32l4xx_hal_uart.h>
@@ -25,9 +31,155 @@
 #define LCD_NODE DT_PATH(zephyr_user)
 #define TEST_UART_TIMEOUT_MS 1000U
 #define KEYBOARD_RESET_NODE DT_PATH(zephyr_user)
+#define STORAGE_DISK_NAME "EF800"
+#define STORAGE_MOUNT_POINT "/EF800:"
+#define STORAGE_DIR STORAGE_MOUNT_POINT "/storage_test"
+#define STORAGE_FAT_FILE STORAGE_DIR "/created_by_fat.txt"
+#define STORAGE_DUMMY_FILE STORAGE_DIR "/dummy.txt"
+#define STORAGE_MSC_FILE STORAGE_DIR "/created_by_msc.txt"
+#define STORAGE_FAT_CONTENT "created by internal FAT\r\n"
+#define STORAGE_DUMMY_CONTENT "EF800 storage test dummy\r\n"
+#define STORAGE_MSC_CONTENT "created by USB MSC\r\n"
+
+#define STORAGE_USB_UDC_NODE DT_NODELABEL(usbotg_fs)
+#define STORAGE_FLASH_NODE DT_NODELABEL(qspi_nor)
+BUILD_ASSERT(DT_NODE_HAS_STATUS(STORAGE_USB_UDC_NODE, okay),
+	"hwdebug storage test requires USB device controller");
+
+USBD_DEVICE_DEFINE(hwdebug_usbd, DEVICE_DT_GET(STORAGE_USB_UDC_NODE),
+	CONFIG_EF800_USB_VID, CONFIG_EF800_USB_PID);
+USBD_DESC_LANG_DEFINE(hwdebug_usb_lang);
+USBD_DESC_MANUFACTURER_DEFINE(hwdebug_usb_manufacturer, "EF800");
+USBD_DESC_PRODUCT_DEFINE(hwdebug_usb_product, "EF800 Storage Test");
+USBD_DESC_CONFIG_DEFINE(hwdebug_usb_config_desc, "Storage MSC");
+USBD_CONFIGURATION_DEFINE(hwdebug_usb_config, 0, 125,
+	&hwdebug_usb_config_desc);
+USBD_DEFINE_MSC_LUN(hwdebug_qspi_lun, STORAGE_DISK_NAME, "EF800",
+	"Storage Test", "1.00");
+
+static FATFS storage_fat_fs;
+static struct fs_mount_t storage_mount = {
+	.type = FS_FATFS,
+	.mnt_point = STORAGE_MOUNT_POINT,
+	.fs_data = &storage_fat_fs,
+	.storage_dev = (void *)PARTITION_ID(qspi_storage_partition),
+	.flags = FS_MOUNT_FLAG_NO_FORMAT,
+};
+static bool storage_mounted;
+static bool storage_msc_active;
+static int storage_msc_stop(void);
+static const char *const msc_only_blocklist[] = {
+	"cdc_acm_0",
+	NULL,
+};
+static const char *const cdc_only_blocklist[] = {
+	"msc_0",
+	NULL,
+};
+
+USBD_DEVICE_DEFINE(hwdebug_cdc_usbd, DEVICE_DT_GET(STORAGE_USB_UDC_NODE),
+	CONFIG_EF800_USB_VID, 0xef83);
+USBD_DESC_LANG_DEFINE(hwdebug_cdc_lang);
+USBD_DESC_MANUFACTURER_DEFINE(hwdebug_cdc_manufacturer, "EF800");
+USBD_DESC_PRODUCT_DEFINE(hwdebug_cdc_product, "EF800 USB CDC Test");
+USBD_DESC_CONFIG_DEFINE(hwdebug_cdc_config_desc, "CDC Test");
+USBD_CONFIGURATION_DEFINE(hwdebug_cdc_config, 0, 125,
+	&hwdebug_cdc_config_desc);
+static struct usbd_context *cdc_usbd;
+static const struct device *const cdc_uart =
+	DEVICE_DT_GET(DT_NODELABEL(cdc_acm_uart0));
+
+static void cdc_usbd_message(struct usbd_context *ctx,
+	const struct usbd_msg *msg)
+{
+	if (msg->type == USBD_MSG_VBUS_READY && usbd_can_detect_vbus(ctx)) {
+		(void)usbd_enable((struct usbd_context *)ctx);
+	}
+}
+
+void hwdebug_usb_cdc_test(void)
+{
+	uint8_t byte;
+	int ret;
+
+	if (storage_msc_active) {
+		hwdebug_console_puts("USB CDC test requires MSC to be stopped\r\n");
+		return;
+	}
+	if (!device_is_ready(cdc_uart)) {
+		hwdebug_console_puts("USB CDC UART is not ready\r\n");
+		return;
+	}
+	hwdebug_console_puts("USB CDC: add language descriptor\r\n");
+	ret = usbd_add_descriptor(&hwdebug_cdc_usbd, &hwdebug_cdc_lang);
+	if (ret == 0) {
+		hwdebug_console_puts("USB CDC: add manufacturer descriptor\r\n");
+		ret = usbd_add_descriptor(&hwdebug_cdc_usbd, &hwdebug_cdc_manufacturer);
+	}
+	if (ret == 0) {
+		hwdebug_console_puts("USB CDC: add product descriptor\r\n");
+		ret = usbd_add_descriptor(&hwdebug_cdc_usbd, &hwdebug_cdc_product);
+	}
+	if (ret == 0) {
+		hwdebug_console_puts("USB CDC: add configuration\r\n");
+		ret = usbd_add_configuration(&hwdebug_cdc_usbd, USBD_SPEED_FS,
+			&hwdebug_cdc_config);
+	}
+	if (ret == 0) {
+		hwdebug_console_puts("USB CDC: register classes\r\n");
+		ret = usbd_register_all_classes(&hwdebug_cdc_usbd, USBD_SPEED_FS, 1,
+			cdc_only_blocklist);
+	}
+	if (ret == 0) {
+		hwdebug_console_puts("USB CDC: register message callback\r\n");
+		ret = usbd_msg_register_cb(&hwdebug_cdc_usbd, cdc_usbd_message);
+	}
+	if (ret == 0) {
+		hwdebug_console_puts("USB CDC: initialize controller\r\n");
+		ret = usbd_init(&hwdebug_cdc_usbd);
+	}
+	if (ret != 0) {
+		hwdebug_console_printf("USB CDC setup failed=%d\r\n", ret);
+		return;
+	}
+	cdc_usbd = &hwdebug_cdc_usbd;
+	hwdebug_console_printf("USB CDC: VBUS detection=%s\r\n",
+		usbd_can_detect_vbus(cdc_usbd) ? "yes" : "no");
+	ret = usbd_enable(cdc_usbd);
+	if (ret != 0) {
+		hwdebug_console_printf("USB CDC enable failed=%d\r\n", ret);
+		return;
+	}
+	hwdebug_console_puts("USB CDC enabled; open the new COM port and send bytes\r\n"
+		"Echo is active for 60 seconds\r\n");
+	for (int seconds = 0; seconds < 60; ++seconds) {
+		for (int count = 0; count < 100; ++count) {
+			while (uart_poll_in(cdc_uart, &byte) == 0) {
+				uart_poll_out(cdc_uart, byte);
+			}
+			k_msleep(10);
+		}
+	}
+	(void)usbd_disable(cdc_usbd);
+	hwdebug_console_puts("USB CDC test complete\r\n");
+}
 
 static const struct gpio_dt_spec keyboard_reset =
 	GPIO_DT_SPEC_GET(KEYBOARD_RESET_NODE, keyboard_reset_gpios);
+
+int hwdebug_keyboard_reset_release(void)
+{
+	int ret;
+
+	if (!gpio_is_ready_dt(&keyboard_reset)) {
+		return -ENODEV;
+	}
+	ret = gpio_pin_configure_dt(&keyboard_reset, GPIO_OUTPUT_INACTIVE);
+	if (ret == 0) {
+		ret = gpio_pin_set_dt(&keyboard_reset, 1);
+	}
+	return ret;
+}
 
 enum interactive_test {
 	INTERACTIVE_NONE,
@@ -38,6 +190,30 @@ enum interactive_test {
 
 static enum interactive_test interactive_waiting;
 static unsigned int storage_step;
+static UART_HandleTypeDef lpuart1_hal_uart;
+static bool keyboard_hal_active;
+static int lpuart1_hal_init(void);
+static int keyboard_command(const struct device *uart, uint8_t command,
+				    const uint8_t *payload, size_t payload_length,
+				    const uint8_t *response, size_t response_length);
+static void uart_drain(const struct device *uart);
+static int keyboard_reset_and_wait(const struct device *uart);
+static int keyboard_response(const struct device *uart, uint8_t command,
+				     const uint8_t *response, size_t length);
+static int keyboard_receive_byte(const struct device *uart, uint8_t *byte,
+					uint32_t timeout_ms);
+
+static int keyboard_wait_initialized(const struct device *uart,
+					     uint32_t timeout_ms)
+{
+	uint8_t byte;
+	int ret = keyboard_receive_byte(uart, &byte, timeout_ms);
+
+	if (ret == 0 && byte != CMD_INITIALIZED) {
+		ret = -EPROTO;
+	}
+	return ret;
+}
 static const struct device *uart_for_name(const char *name)
 {
 	if (name != NULL && strcmp(name, "port1") == 0) {
@@ -52,7 +228,7 @@ static const struct device *uart_for_name(const char *name)
 static int configure_uart(const struct device *uart)
 {
 	const struct uart_config config = {
-		.baudrate = 115200,
+		.baudrate = KB_UART_BAUDRATE,
 		.parity = UART_CFG_PARITY_ODD,
 		.stop_bits = UART_CFG_STOP_BITS_2,
 		.data_bits = UART_CFG_DATA_BITS_8,
@@ -75,10 +251,246 @@ static int configure_keyboard_uart(const struct device *uart)
 		.flow_ctrl = UART_CFG_FLOW_CTRL_NONE,
 	};
 
-	if (uart == NULL || !device_is_ready(uart)) {
+	if (lpuart1_hal_init() == 0) {
+		keyboard_hal_active = true;
+		return 0;
+	}
+	keyboard_hal_active = false;
+	if (uart == NULL || !device_is_ready(uart)) return -ENODEV;
+	return uart_configure(uart, &config);
+}
+
+static int keyboard_hal_baudrate(uint32_t baudrate)
+{
+	if (!keyboard_hal_active) return -ENODEV;
+	lpuart1_hal_uart.Init.BaudRate = baudrate;
+	return HAL_UART_Init(&lpuart1_hal_uart) == HAL_OK ? 0 : -EIO;
+}
+
+static int storage_sync(void)
+{
+	return disk_access_ioctl(STORAGE_DISK_NAME, DISK_IOCTL_CTRL_SYNC, NULL);
+}
+
+static int storage_write_file(const char *path, const char *content)
+{
+	struct fs_file_t file;
+	ssize_t written;
+	int ret;
+
+	fs_file_t_init(&file);
+	ret = fs_open(&file, path, FS_O_CREATE | FS_O_WRITE);
+	if (ret != 0) {
+		return ret;
+	}
+	written = fs_write(&file, content, strlen(content));
+	ret = written == (ssize_t)strlen(content) ? 0 : -EIO;
+	if (fs_close(&file) != 0 && ret == 0) {
+		ret = -EIO;
+	}
+	return ret;
+}
+
+static int storage_read_file(const char *path, const char *expected)
+{
+	struct fs_file_t file;
+	char buffer[64];
+	ssize_t count;
+	int ret;
+
+	fs_file_t_init(&file);
+	ret = fs_open(&file, path, FS_O_READ);
+	if (ret != 0) {
+		return ret;
+	}
+	count = fs_read(&file, buffer, sizeof(buffer) - 1U);
+	if (count < 0) {
+		ret = (int)count;
+	} else {
+		buffer[count] = '\0';
+		ret = strcmp(buffer, expected) == 0 ? 0 : -EBADMSG;
+	}
+	if (fs_close(&file) != 0 && ret == 0) {
+		ret = -EIO;
+	}
+	return ret;
+}
+
+static int storage_mount_fat(void)
+{
+	int ret;
+
+	if (storage_mounted) {
+		return 0;
+	}
+	ret = fs_mount(&storage_mount);
+	if (ret == 0) {
+		storage_mounted = true;
+	}
+	return ret;
+}
+
+int hwdebug_storage_prepare_update(void)
+{
+	int ret = storage_msc_stop();
+
+	if (ret == 0) {
+		ret = storage_sync();
+	}
+	if (ret == 0) {
+		ret = storage_mount_fat();
+	}
+	return ret;
+}
+
+static int storage_unmount_fat(void)
+{
+	int ret;
+
+	if (!storage_mounted) {
+		return 0;
+	}
+	ret = fs_unmount(&storage_mount);
+	if (ret == 0) {
+		storage_mounted = false;
+	}
+	return ret;
+}
+
+static int storage_msc_start(void)
+{
+	int ret;
+	const struct device *udc = DEVICE_DT_GET(STORAGE_USB_UDC_NODE);
+
+	if (storage_msc_active) {
+		return 0;
+	}
+	hwdebug_console_printf("storage: USB controller ready=%s\r\n",
+		device_is_ready(udc) ? "yes" : "no");
+	if (!device_is_ready(udc)) {
 		return -ENODEV;
 	}
-	return uart_configure(uart, &config);
+	ret = disk_access_init(STORAGE_DISK_NAME);
+	if (ret != 0) {
+		return ret;
+	}
+	ret = usbd_add_descriptor(&hwdebug_usbd, &hwdebug_usb_lang);
+	if (ret != 0) return ret;
+	ret = usbd_add_descriptor(&hwdebug_usbd, &hwdebug_usb_manufacturer);
+	if (ret != 0) return ret;
+	ret = usbd_add_descriptor(&hwdebug_usbd, &hwdebug_usb_product);
+	if (ret != 0) return ret;
+	ret = usbd_add_configuration(&hwdebug_usbd, USBD_SPEED_FS,
+		&hwdebug_usb_config);
+	if (ret != 0) return ret;
+	ret = usbd_register_all_classes(&hwdebug_usbd, USBD_SPEED_FS, 1,
+		msc_only_blocklist);
+	if (ret != 0) return ret;
+	ret = usbd_init(&hwdebug_usbd);
+	if (ret != 0) {
+		hwdebug_console_printf("storage: USB init failed=%d\r\n", ret);
+		return ret;
+	}
+	ret = usbd_enable(&hwdebug_usbd);
+	if (ret != 0) {
+		hwdebug_console_printf("storage: USB enable failed=%d\r\n", ret);
+	}
+	if (ret == 0) {
+		storage_msc_active = true;
+	}
+	return ret;
+}
+
+static int storage_msc_stop(void)
+{
+	int ret;
+
+	if (!storage_msc_active) {
+		return 0;
+	}
+	ret = usbd_shutdown(&hwdebug_usbd);
+	if (ret == 0) {
+		storage_msc_active = false;
+	}
+	return ret;
+}
+
+static int storage_prepare_volume(void)
+{
+	int ret;
+	const struct device *flash = DEVICE_DT_GET(STORAGE_FLASH_NODE);
+	const struct flash_area *area;
+
+	hwdebug_console_puts("storage: test implementation 3\r\n");
+	ret = storage_msc_stop();
+	if (ret != 0) return ret;
+	hwdebug_console_printf("storage: qspi device ready=%s disk=%s\r\n",
+		device_is_ready(flash) ? "yes" : "no", STORAGE_DISK_NAME);
+	if (!device_is_ready(flash)) {
+		return -ENODEV;
+	}
+	ret = disk_access_init(STORAGE_DISK_NAME);
+	if (ret != 0) {
+		hwdebug_console_printf("storage: disk init failed=%d status=%d\r\n",
+			ret, disk_access_status(STORAGE_DISK_NAME));
+		return ret;
+	}
+	hwdebug_console_printf("storage: disk ready status=%d\r\n",
+		disk_access_status(STORAGE_DISK_NAME));
+	hwdebug_console_puts("storage: synchronizing disk before erase\r\n");
+	ret = storage_sync();
+	if (ret != 0) {
+		hwdebug_console_printf("storage: disk sync failed=%d\r\n", ret);
+		return ret;
+	}
+	hwdebug_console_puts("storage: opening QSPI partition\r\n");
+	ret = flash_area_open(PARTITION_ID(qspi_storage_partition), &area);
+	if (ret != 0) {
+		hwdebug_console_printf("storage: QSPI partition open failed=%d\r\n", ret);
+		return ret;
+	}
+	hwdebug_console_printf("storage: erasing QSPI partition size=%u\r\n",
+		(unsigned int)area->fa_size);
+	ret = flash_area_erase(area, 0, area->fa_size);
+	flash_area_close(area);
+	if (ret != 0) {
+		hwdebug_console_printf("storage: QSPI partition erase failed=%d\r\n", ret);
+		return ret;
+	}
+	hwdebug_console_puts("storage: QSPI erase complete; mounting FAT\r\n");
+	/* Let the FAT mount create a fresh filesystem using /EF800:. */
+	storage_mount.flags = 0;
+	ret = storage_mount_fat();
+	storage_mount.flags = FS_MOUNT_FLAG_NO_FORMAT;
+	if (ret != 0) {
+		hwdebug_console_printf("storage: FAT format/mount failed=%d\r\n", ret);
+		return ret;
+	}
+	hwdebug_console_puts("storage: FAT mounted; creating test directory\r\n");
+	ret = fs_mkdir(STORAGE_DIR);
+	if (ret != 0 && ret != -EEXIST) {
+		hwdebug_console_printf("storage: test directory failed=%d\r\n", ret);
+		return ret;
+	}
+	ret = storage_write_file(STORAGE_FAT_FILE, STORAGE_FAT_CONTENT);
+	if (ret != 0) {
+		hwdebug_console_printf("storage: FAT test file failed=%d\r\n", ret);
+		return ret;
+	}
+	ret = storage_write_file(STORAGE_DUMMY_FILE, STORAGE_DUMMY_CONTENT);
+	if (ret != 0) {
+		hwdebug_console_printf("storage: dummy test file failed=%d\r\n", ret);
+	}
+	return ret;
+}
+
+static int storage_internal_test(void)
+{
+	int ret = storage_read_file(STORAGE_FAT_FILE, STORAGE_FAT_CONTENT);
+	if (ret == 0) {
+		ret = storage_read_file(STORAGE_DUMMY_FILE, STORAGE_DUMMY_CONTENT);
+	}
+	return ret;
 }
 
 static int uart_receive(const struct device *uart, uint8_t expected,
@@ -88,12 +500,117 @@ static int uart_receive(const struct device *uart, uint8_t expected,
 	uint8_t byte;
 
 	while (k_uptime_get() < deadline) {
+		if (keyboard_hal_active) {
+			uint8_t received;
+			if (HAL_UART_Receive(&lpuart1_hal_uart, &received, 1U, 10U) == HAL_OK) {
+				return received == expected ? 0 : -EPROTO;
+			}
+			continue;
+		}
 		if (uart_poll_in(uart, &byte) == 0) {
 			return byte == expected ? 0 : -EPROTO;
 		}
 		k_sleep(K_MSEC(1));
 	}
 	return -ETIMEDOUT;
+}
+
+static int keyboard_receive_byte(const struct device *uart, uint8_t *byte,
+					uint32_t timeout_ms)
+{
+	uint64_t deadline = k_uptime_get() + timeout_ms;
+
+	while (k_uptime_get() < deadline) {
+		if (keyboard_hal_active) {
+			if (HAL_UART_Receive(&lpuart1_hal_uart, byte, 1U, 10U) == HAL_OK) {
+				return 0;
+			}
+			continue;
+		}
+		if (uart_poll_in(uart, byte) == 0) return 0;
+		k_sleep(K_MSEC(1));
+	}
+	return -ETIMEDOUT;
+}
+
+static void keyboard_uart_send(const struct device *uart, uint8_t byte)
+{
+	if (keyboard_hal_active) {
+		(void)HAL_UART_Transmit(&lpuart1_hal_uart, &byte, 1U,
+			TEST_UART_TIMEOUT_MS);
+	} else {
+		uart_poll_out(uart, byte);
+	}
+}
+
+void hwdebug_keyboard_baud_test(void)
+{
+	const struct device *uart = DEVICE_DT_GET(DT_NODELABEL(lpuart1));
+	int ret;
+
+	hwdebug_test_begin("keyboard/baud-roundtrip");
+	ret = configure_keyboard_uart(uart);
+	if (ret == 0) ret = keyboard_reset_and_wait(uart);
+	if (ret == 0) {
+		uart_drain(uart);
+		keyboard_uart_send(uart, CMD_KEYBOARD_BAUDRATE);
+		keyboard_uart_send(uart, KB_BAUD_SELECTOR_9600);
+		static const uint8_t baud_ack[] = {
+			CMD_RETURN, CMD_KEYBOARD_BAUDRATE, CMD_ACK,
+		};
+		ret = keyboard_response(uart, CMD_KEYBOARD_BAUDRATE,
+			baud_ack, sizeof(baud_ack));
+		if (ret == 0) ret = keyboard_hal_baudrate(9600U);
+	}
+	if (ret == 0) {
+		ret = keyboard_wait_initialized(uart, 500U);
+		if (ret != 0) {
+			(void)keyboard_hal_baudrate(KB_UART_BAUDRATE);
+		}
+	}
+	if (ret == 0) {
+		uart_drain(uart);
+		keyboard_uart_send(uart, CMD_KEYBOARD_BAUDRATE);
+		keyboard_uart_send(uart, KB_BAUD_SELECTOR_115200);
+		static const uint8_t default_ack[] = {
+			CMD_RETURN, CMD_KEYBOARD_BAUDRATE, CMD_ACK,
+		};
+		ret = keyboard_response(uart, CMD_KEYBOARD_BAUDRATE,
+			default_ack, sizeof(default_ack));
+		if (ret == 0) ret = keyboard_hal_baudrate(KB_UART_BAUDRATE);
+	}
+	if (ret == 0) {
+		ret = keyboard_wait_initialized(uart, 500U);
+		if (ret != 0) {
+			(void)keyboard_hal_baudrate(9600U);
+		}
+	}
+	if (ret == 0) {
+		static const uint8_t echo[] = { CMD_KEYBOARD_ECHO };
+		ret = keyboard_command(uart, CMD_KEYBOARD_ECHO, NULL, 0U,
+			echo, sizeof(echo));
+	}
+	if (ret == 0) {
+		static const uint8_t id[] = { CMD_RETURN, CMD_KEYBOARD_ID, 0xABU, 0x83U };
+		ret = keyboard_command(uart, CMD_KEYBOARD_ID, NULL, 0U,
+			id, sizeof(id));
+	}
+	if (ret == 0) {
+		static const uint8_t activate[] = {
+			CMD_RETURN, CMD_KEYBOARD_ACTIVATE, CMD_ACK,
+		};
+		ret = keyboard_command(uart, CMD_KEYBOARD_ACTIVATE, NULL, 0U,
+			activate, sizeof(activate));
+	}
+	if (ret == 0) {
+		static const uint8_t deactivate[] = {
+			CMD_RETURN, CMD_KEYBOARD_DEACTIVATE, CMD_ACK,
+		};
+		ret = keyboard_command(uart, CMD_KEYBOARD_DEACTIVATE, NULL, 0U,
+			deactivate, sizeof(deactivate));
+	}
+	if (ret == 0) hwdebug_test_pass();
+	else hwdebug_test_fail("keyboard baud roundtrip failed", ret);
 }
 
 static void uart_drain(const struct device *uart)
@@ -110,6 +627,7 @@ static int keyboard_reset_and_wait(const struct device *uart)
 	int ret;
 
 	if (!gpio_is_ready_dt(&keyboard_reset)) {
+		hwdebug_console_puts("keyboard: reset GPIO not ready\r\n");
 		return -ENODEV;
 	}
 	ret = gpio_pin_configure_dt(&keyboard_reset, GPIO_OUTPUT_INACTIVE);
@@ -125,8 +643,6 @@ static int keyboard_reset_and_wait(const struct device *uart)
 	initialized = CMD_INITIALIZED;
 	return uart_receive(uart, initialized, TEST_UART_TIMEOUT_MS);
 }
-
-static UART_HandleTypeDef lpuart1_hal_uart;
 
 static int lpuart1_hal_init(void)
 {
@@ -147,6 +663,12 @@ static int lpuart1_hal_init(void)
 
 	__HAL_RCC_GPIOG_CLK_ENABLE();
 	__HAL_RCC_GPIOC_CLK_ENABLE();
+	/* Use HSI16 for LPUART1 so 9600 baud is independent of APB1. */
+	__HAL_RCC_HSI_ENABLE();
+	while (__HAL_RCC_GET_FLAG(RCC_FLAG_HSIRDY) == RESET) {
+	}
+	MODIFY_REG(RCC->CCIPR, RCC_CCIPR_LPUART1SEL,
+		RCC_LPUART1CLKSOURCE_HSI);
 	__HAL_RCC_LPUART1_CLK_ENABLE();
 	__HAL_RCC_LPUART1_FORCE_RESET();
 	__HAL_RCC_LPUART1_RELEASE_RESET();
@@ -376,17 +898,100 @@ void hwdebug_lpuart_bitbang_test(void)
 	hwdebug_test_pass();
 }
 
-static int keyboard_response(const struct device *uart,
+static int keyboard_response(const struct device *uart, uint8_t command,
 				     const uint8_t *response, size_t length)
 {
 	for (size_t index = 0U; index < length; ++index) {
-		int ret = uart_receive(uart, response[index], TEST_UART_TIMEOUT_MS);
+		uint8_t received = 0U;
+		int ret = keyboard_receive_byte(uart, &received, TEST_UART_TIMEOUT_MS);
+		if (ret == 0 && received != response[index]) ret = -EPROTO;
 
 		if (ret != 0) {
+			hwdebug_console_printf("keyboard response command=0x%02x index=%u expected=0x%02x received=0x%02x error=%d\r\n",
+				command, (unsigned int)index, response[index], received, ret);
 			return ret;
 		}
 	}
 	return 0;
+}
+
+void hwdebug_keyboard_version(void)
+{
+	const struct device *uart = DEVICE_DT_GET(DT_NODELABEL(lpuart1));
+	uint8_t response[5] = {0};
+	int ret;
+
+	hwdebug_test_begin("keyboard/version");
+	ret = configure_keyboard_uart(uart);
+	if (ret != 0) {
+		hwdebug_console_printf("keyboard version: UART configure failed=%d ready=%s\r\n",
+			ret, device_is_ready(uart) ? "yes" : "no");
+	}
+	if (ret == 0) ret = keyboard_reset_and_wait(uart);
+	if (ret == 0) {
+		uart_drain(uart);
+		keyboard_uart_send(uart, CMD_KEYBOARD_VERSION);
+		for (size_t index = 0U; index < sizeof(response); ++index) {
+			ret = uart_receive(uart, response[index], TEST_UART_TIMEOUT_MS);
+			if (ret != 0) break;
+		}
+	}
+	if (ret == 0 && response[0] == CMD_RETURN &&
+		response[1] == CMD_KEYBOARD_VERSION) {
+		hwdebug_console_printf("keyboard version: %u.%u.%u\r\n",
+			response[2], response[3], response[4]);
+		hwdebug_test_pass();
+	} else {
+		hwdebug_test_fail("keyboard version response invalid", ret == 0 ? -EPROTO : ret);
+	}
+}
+
+void hwdebug_keyboard_version_raw(void)
+{
+	const struct device *uart = DEVICE_DT_GET(DT_NODELABEL(lpuart1));
+	uint8_t response[5] = {0};
+	int ret;
+
+	hwdebug_test_begin("keyboard/version-raw");
+	ret = configure_keyboard_uart(uart);
+	if (ret == 0) ret = keyboard_reset_and_wait(uart);
+	if (ret == 0) {
+		uart_drain(uart);
+		keyboard_uart_send(uart, CMD_KEYBOARD_VERSION);
+		ret = keyboard_response(uart, CMD_KEYBOARD_VERSION, response,
+			sizeof(response));
+	}
+	hwdebug_console_printf("keyboard version raw:");
+	for (size_t index = 0U; index < sizeof(response); ++index) {
+		hwdebug_console_printf(" %02x", response[index]);
+	}
+	hwdebug_console_puts("\r\n");
+	if (ret == 0) hwdebug_test_pass();
+	else hwdebug_test_fail("keyboard raw response receive failed", ret);
+}
+
+void hwdebug_keyboard_id_raw(void)
+{
+	const struct device *uart = DEVICE_DT_GET(DT_NODELABEL(lpuart1));
+	uint8_t response[4] = {0};
+	int ret;
+
+	hwdebug_test_begin("keyboard/id-raw");
+	ret = configure_keyboard_uart(uart);
+	if (ret == 0) ret = keyboard_reset_and_wait(uart);
+	if (ret == 0) {
+		uart_drain(uart);
+		keyboard_uart_send(uart, CMD_KEYBOARD_ID);
+		ret = keyboard_response(uart, CMD_KEYBOARD_ID, response,
+			sizeof(response));
+	}
+	hwdebug_console_printf("keyboard id raw:");
+	for (size_t index = 0U; index < sizeof(response); ++index) {
+		hwdebug_console_printf(" %02x", response[index]);
+	}
+	hwdebug_console_puts("\r\n");
+	if (ret == 0) hwdebug_test_pass();
+	else hwdebug_test_fail("keyboard raw ID receive failed", ret);
 }
 
 static int keyboard_command(const struct device *uart, uint8_t command,
@@ -394,11 +999,11 @@ static int keyboard_command(const struct device *uart, uint8_t command,
 				    const uint8_t *response, size_t response_length)
 {
 	uart_drain(uart);
-	uart_poll_out(uart, command);
+	keyboard_uart_send(uart, command);
 	for (size_t index = 0U; index < payload_length; ++index) {
-		uart_poll_out(uart, payload[index]);
+		keyboard_uart_send(uart, payload[index]);
 	}
-	return keyboard_response(uart, response, response_length);
+	return keyboard_response(uart, command, response, response_length);
 }
 
 void hwdebug_keyboard_test(const char *port_name)
@@ -425,6 +1030,10 @@ void hwdebug_keyboard_test(const char *port_name)
 
 	hwdebug_test_begin("keyboard/protocol");
 	ret = configure_keyboard_uart(uart);
+	if (ret != 0) {
+		hwdebug_console_printf("keyboard: UART configure failed=%d ready=%s\r\n",
+			ret, device_is_ready(uart) ? "yes" : "no");
+	}
 	if (ret == 0) {
 		ret = keyboard_reset_and_wait(uart);
 	}
@@ -684,10 +1293,8 @@ void hwdebug_storage_test(void)
 {
 	storage_step = 1U;
 	interactive_waiting = INTERACTIVE_STORAGE;
-	hwdebug_console_puts("Storage ownership test requires the normal images, not hwdebug.\r\n"
-		"Step 1/5: boot MainApplication with FAT enabled and confirm a known\r\n"
-		"Workspace file is readable. Reply 'next' when complete.\r\n"
-		"Use 'cancel' or 'exit' to leave the test.\r\n");
+	hwdebug_console_puts("WARNING: storage test formats the QSPI volume and deletes all files.\r\n"
+		"Type 'format-confirm' to continue, or 'cancel' to abort.\r\n");
 }
 
 bool hwdebug_interactive_pending(void)
@@ -698,6 +1305,83 @@ bool hwdebug_interactive_pending(void)
 void hwdebug_interactive_reply(const char *reply)
 {
 	if (interactive_waiting == INTERACTIVE_NONE) {
+		return;
+	}
+	if (interactive_waiting == INTERACTIVE_STORAGE && storage_step == 1U &&
+		strcmp(reply, "format-confirm") == 0) {
+		int ret = storage_prepare_volume();
+		if (ret != 0) {
+			hwdebug_console_printf("ERROR storage format/internal preparation failed (error=%d)\r\n", ret);
+			hwdebug_console_puts("FAIL\r\n");
+			interactive_waiting = INTERACTIVE_NONE;
+			return;
+		}
+		ret = storage_internal_test();
+		if (ret != 0) {
+			hwdebug_console_printf("ERROR internal FAT readback failed (error=%d)\r\n", ret);
+			hwdebug_console_puts("FAIL\r\n");
+			interactive_waiting = INTERACTIVE_NONE;
+			return;
+		}
+		storage_step = 2U;
+		hwdebug_console_puts("RUN   storage/internal-fat\r\nPASS\r\n"
+			"Switching ownership to USB MSC. Connect USB and confirm these files are visible:\r\n"
+			"  storage_test/created_by_fat.txt\r\n"
+			"  storage_test/dummy.txt\r\n"
+		"Reply 'pass' or 'fail'.\r\n");
+		ret = storage_unmount_fat();
+		if (ret != 0 || storage_sync() != 0 || storage_msc_start() != 0) {
+			hwdebug_console_puts("ERROR FAT-to-MSC ownership handoff failed\r\nFAIL\r\n");
+			interactive_waiting = INTERACTIVE_NONE;
+		}
+		return;
+	}
+	if (interactive_waiting == INTERACTIVE_STORAGE && storage_step == 2U &&
+		strcmp(reply, "pass") == 0) {
+		storage_step = 3U;
+		hwdebug_console_puts("Step 3/4: create storage_test/created_by_msc.txt from the USB host,\r\n"
+			"write exactly: created by USB MSC, safely eject, then reply 'pass' or 'fail'.\r\n");
+		return;
+	}
+	if (interactive_waiting == INTERACTIVE_STORAGE && storage_step == 3U &&
+		strcmp(reply, "pass") == 0) {
+		int ret = storage_msc_stop();
+		if (ret == 0) ret = storage_sync();
+		if (ret == 0) ret = storage_mount_fat();
+		if (ret == 0) ret = storage_read_file(STORAGE_MSC_FILE, STORAGE_MSC_CONTENT);
+		if (ret != 0) {
+			hwdebug_console_printf("ERROR MSC-created file was not readable by FAT (error=%d)\r\n", ret);
+			hwdebug_console_puts("FAIL\r\n");
+			interactive_waiting = INTERACTIVE_NONE;
+			return;
+		}
+		storage_step = 4U;
+		hwdebug_console_puts("RUN   storage/msc-to-fat\r\nPASS\r\n"
+		"Step 4/4: unmount and remount FAT, then reply 'pass' if all three files remain readable,\r\n"
+		"otherwise reply 'fail'.\r\n");
+		(void)storage_unmount_fat();
+		if (storage_mount_fat() != 0) {
+			hwdebug_console_puts("ERROR final FAT remount failed\r\nFAIL\r\n");
+			interactive_waiting = INTERACTIVE_NONE;
+		}
+		return;
+	}
+	if (interactive_waiting == INTERACTIVE_STORAGE && storage_step == 4U &&
+		strcmp(reply, "pass") == 0) {
+		int ret = storage_internal_test();
+		if (ret == 0) ret = storage_read_file(STORAGE_MSC_FILE, STORAGE_MSC_CONTENT);
+		hwdebug_console_puts(ret == 0 ? "STORAGE TEST PASS\r\n" : "STORAGE TEST FAIL\r\n");
+		interactive_waiting = INTERACTIVE_NONE;
+		return;
+	}
+	if (interactive_waiting == INTERACTIVE_STORAGE && storage_step >= 2U &&
+		storage_step <= 4U && strcmp(reply, "fail") == 0) {
+		/* Do not remount FAT while the host may still own the MSC volume. */
+		int ret = storage_msc_stop();
+		hwdebug_console_printf("storage: MSC stopped after failure=%d; FAT left unmounted\r\n",
+			ret);
+		hwdebug_console_puts("STORAGE TEST FAIL\r\n");
+		interactive_waiting = INTERACTIVE_NONE;
 		return;
 	}
 	if (interactive_waiting == INTERACTIVE_STORAGE && strcmp(reply, "next") == 0) {
@@ -723,6 +1407,15 @@ void hwdebug_interactive_reply(const char *reply)
 			break;
 		}
 		return;
+	}
+	if (interactive_waiting == INTERACTIVE_STORAGE &&
+		(strcmp(reply, "cancel") == 0 || strcmp(reply, "exit") == 0)) {
+		if (storage_step == 2U) {
+			(void)storage_msc_stop();
+		} else if (storage_step >= 3U) {
+			(void)storage_msc_stop();
+			(void)storage_mount_fat();
+		}
 	}
 	if (interactive_waiting == INTERACTIVE_STORAGE && storage_step != 5U &&
 	    (strcmp(reply, "pass") == 0 || strcmp(reply, "fail") == 0)) {
