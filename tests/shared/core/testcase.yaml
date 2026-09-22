@@ -1,10 +1,9 @@
 common:
   tags:
-    - keyboard
-    - protocol
+    - shared
+    - ef800
   harness: ztest
 tests:
-  ef800.keyboard_protocol:
-    type: unit
+  ef800.shared.core:
     platform_allow:
       - native_sim

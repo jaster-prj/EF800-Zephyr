@@ -3,8 +3,8 @@
 The EF800 bootloader is a second-level bootloader entered by the hardware
 bootloader. It owns update installation and application selection.
 
-When update storage is enabled after the QSPI hardware and package-policy gates
-are closed, the bootloader will:
+After the QSPI hardware and package-policy gates are closed, the bootloader
+will:
 
 1. Initialize the QSPI FAT disk.
 2. Find `/fwu/EF800_FW.bin`.
@@ -15,10 +15,22 @@ are closed, the bootloader will:
 7. Select the backup application after repeated main-application watchdog
    failures.
 
-The current default image keeps QSPI/FAT update storage disabled. Its active
-boot path validates the main and backup vector tables, tracks main watchdog
-failures, and starts the valid image; it does not currently inspect or install
-an update file.
+Boot failure state transitions are:
+
+```text
+MAIN + watchdog reset         -> increment failure counter
+MAIN + normal reset/shutdown  -> clear failure counter
+failure limit reached         -> start BackupApplication
+BACKUP + next boot            -> clear counter and retry MainApplication
+```
+
+BackupApplication is therefore a one-boot recovery path. It does not become a
+permanent boot target merely because the persistent failure counter reached the
+configured limit.
+
+The bootloader always compiles the QSPI/FAT update path. A missing or
+unavailable QSPI volume is handled as a runtime condition and does not prevent
+normal main/backup selection.
 
 The first Zephyr implementation uses a small custom boot manager to preserve
 the legacy internal backup application. MCUboot may be evaluated later, but it

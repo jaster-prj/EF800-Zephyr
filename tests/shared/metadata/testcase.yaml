@@ -1,0 +1,7 @@
+common:
+  tags: [shared, metadata]
+  harness: ztest
+tests:
+  ef800.shared.metadata:
+    platform_allow:
+      - native_sim

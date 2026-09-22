@@ -63,7 +63,7 @@
 };
 
 &iwdg {
-	status = "disabled";
+	status = "okay";
 };
 
 

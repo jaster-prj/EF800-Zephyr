@@ -7,6 +7,11 @@ project(ef800_backup)
 
 target_sources(app PRIVATE
 	src/main.c
+	${CMAKE_CURRENT_LIST_DIR}/../../shared/ef800_watchdog/ef800_watchdog.c
+)
+
+target_include_directories(app PRIVATE
+	${CMAKE_CURRENT_LIST_DIR}/../../shared/ef800_watchdog
 )
 
 target_include_directories(app PRIVATE

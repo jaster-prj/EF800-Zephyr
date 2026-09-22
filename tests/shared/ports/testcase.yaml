@@ -1,0 +1,7 @@
+common:
+  tags: [shared, ports]
+  harness: ztest
+tests:
+  ef800.shared.ports:
+    platform_allow:
+      - native_sim

@@ -6,6 +6,34 @@
 #include <zephyr/devicetree.h>
 #include <zephyr/kernel.h>
 #include <zephyr/storage/disk_access.h>
+
+#include "ef800_watchdog.h"
+
+static K_THREAD_STACK_DEFINE(watchdog_stack, 512);
+static struct k_thread watchdog_thread;
+
+static void backup_watchdog_task(void *arg1, void *arg2, void *arg3)
+{
+	ARG_UNUSED(arg1);
+	ARG_UNUSED(arg2);
+	ARG_UNUSED(arg3);
+
+	while (true) {
+		(void)ef800_watchdog_feed();
+		k_msleep(250U);
+	}
+}
+
+static void backup_watchdog_start(void)
+{
+	if (ef800_watchdog_start(1000U) != 0) {
+		return;
+	}
+	(void)k_thread_create(&watchdog_thread, watchdog_stack,
+				      K_THREAD_STACK_SIZEOF(watchdog_stack),
+				      backup_watchdog_task, NULL, NULL, NULL,
+				      K_PRIO_PREEMPT(2), 0, K_NO_WAIT);
+}
 #if CONFIG_EF800_BACKUP_USB_MSC
 #include <zephyr/usb/class/usbd_msc.h>
 #include <zephyr/usb/usbd.h>
@@ -73,6 +101,7 @@ static int ef800_usb_start(void)
 
 int main(void)
 {
+	backup_watchdog_start();
 #if CONFIG_EF800_BACKUP_USB_MSC
 	const struct device *const udc = DEVICE_DT_GET(EF800_USB_UDC_NODE);
 	int rc;

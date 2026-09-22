@@ -23,7 +23,6 @@ enum ef800_storage_root {
 /* Initialize the isolated Zephyr MainApplication foundation services. */
 int ef800_main_foundation_init(void);
 
-/* The service is deliberately unavailable when storage support is disabled. */
 bool ef800_storage_is_mounted(void);
 int ef800_storage_mount(void);
 int ef800_storage_unmount(void);

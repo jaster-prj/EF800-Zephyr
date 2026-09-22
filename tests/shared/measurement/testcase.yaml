@@ -1,0 +1,7 @@
+common:
+  tags: [shared, measurement]
+  harness: ztest
+tests:
+  ef800.shared.measurement:
+    platform_allow:
+      - native_sim

@@ -5,8 +5,47 @@
 #include <errno.h>
 #include <string.h>
 
+#include <zephyr/drivers/flash.h>
+#include <zephyr/kvss/nvs.h>
 #include <zephyr/storage/flash_map.h>
 #include <zephyr/sys/util.h>
+
+static struct nvs_fs metadata_nvs;
+static const struct flash_area *metadata_area;
+static bool metadata_nvs_ready;
+
+static int metadata_nvs_mount(const struct flash_area *area)
+{
+	struct flash_pages_info page_info;
+	int ret;
+
+	if (area == NULL || !flash_area_device_is_ready(area)) {
+		return -ENODEV;
+	}
+	if (metadata_nvs_ready) {
+		return metadata_area == area ? 0 : -EINVAL;
+	}
+
+	ret = flash_get_page_info_by_offs(area->fa_dev, area->fa_off, &page_info);
+	if (ret != 0 || page_info.size == 0U ||
+		(area->fa_size % page_info.size) != 0U) {
+		return ret != 0 ? ret : -EINVAL;
+	}
+	metadata_nvs.flash_device = area->fa_dev;
+	metadata_nvs.offset = area->fa_off;
+	metadata_nvs.sector_size = page_info.size;
+	metadata_nvs.sector_count = area->fa_size / page_info.size;
+	if (metadata_nvs.sector_count < 2U) {
+		return -EINVAL;
+	}
+
+	ret = nvs_mount(&metadata_nvs);
+	if (ret == 0) {
+		metadata_area = area;
+		metadata_nvs_ready = true;
+	}
+	return ret;
+}
 
 int ef800_metadata_read(const struct flash_area *area,
 				struct ef800_boot_metadata *metadata, bool *valid)
@@ -18,13 +57,17 @@ int ef800_metadata_read(const struct flash_area *area,
 		return -EINVAL;
 	}
 	*valid = false;
-	if (!flash_area_device_is_ready(area) || area->fa_size < sizeof(*metadata)) {
-		return -ENODEV;
+	ret = metadata_nvs_mount(area);
+	if (ret != 0) {
+		return ret;
 	}
-	ret = flash_area_read(area, 0U, buffer, sizeof(buffer));
-	if (ret == 0) {
+	ret = nvs_read(&metadata_nvs, EF800_METADATA_NVS_ID, buffer,
+			       sizeof(buffer));
+	if (ret == sizeof(buffer)) {
 		ret = ef800_boot_metadata_decode(buffer, sizeof(buffer), metadata);
 		*valid = ret == 0 && ef800_boot_metadata_valid(metadata);
+	} else if (ret >= 0) {
+		ret = -ENOENT;
 	}
 	return ret;
 }
@@ -32,7 +75,6 @@ int ef800_metadata_read(const struct flash_area *area,
 int ef800_metadata_write(const struct flash_area *area,
 				struct ef800_boot_metadata *metadata)
 {
-	struct ef800_boot_metadata verify;
 	uint8_t buffer[EF800_BOOT_METADATA_SIZE];
 	uint8_t verify_buffer[EF800_BOOT_METADATA_SIZE];
 	int ret;
@@ -40,8 +82,9 @@ int ef800_metadata_write(const struct flash_area *area,
 	if (area == NULL || metadata == NULL) {
 		return -EINVAL;
 	}
-	if (!flash_area_device_is_ready(area) || area->fa_size < sizeof(*metadata)) {
-		return -ENODEV;
+	ret = metadata_nvs_mount(area);
+	if (ret != 0) {
+		return ret;
 	}
 	metadata->size = sizeof(*metadata);
 	metadata->sequence++;
@@ -50,21 +93,15 @@ int ef800_metadata_write(const struct flash_area *area,
 	if (ret != 0) {
 		return ret;
 	}
-	ret = flash_area_erase(area, 0U, area->fa_size);
-	if (ret != 0) {
+	ret = nvs_write(&metadata_nvs, EF800_METADATA_NVS_ID, buffer,
+			       sizeof(buffer));
+	if (ret < 0) {
 		return ret;
 	}
-	ret = flash_area_write(area, 0U, buffer, sizeof(buffer));
-	if (ret != 0) {
-		return ret;
-	}
-	ret = flash_area_read(area, 0U, verify_buffer, sizeof(verify_buffer));
-	if (ret != 0 || ef800_boot_metadata_decode(verify_buffer,
-									 sizeof(verify_buffer), &verify) != 0) {
-		return ret != 0 ? ret : -EIO;
-	}
-	return memcmp(verify_buffer, buffer, sizeof(buffer)) == 0 &&
-		ef800_boot_metadata_valid(&verify) ? 0 : -EIO;
+	ret = nvs_read(&metadata_nvs, EF800_METADATA_NVS_ID, verify_buffer,
+			       sizeof(verify_buffer));
+	return ret == sizeof(verify_buffer) &&
+		memcmp(verify_buffer, buffer, sizeof(buffer)) == 0 ? 0 : -EIO;
 }
 
 int ef800_metadata_read_current(struct ef800_boot_metadata *metadata,

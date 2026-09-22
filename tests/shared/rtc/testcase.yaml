@@ -1,0 +1,7 @@
+common:
+  tags: [shared, rtc]
+  harness: ztest
+tests:
+  ef800.shared.rtc:
+    platform_allow:
+      - native_sim

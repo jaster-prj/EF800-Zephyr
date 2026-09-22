@@ -29,33 +29,13 @@ config EF800_MAIN_WATCHDOG_STACK_SIZE
 	default 768
 	range 512 4096
 
-config EF800_MAIN_STORAGE
-	bool "Mount the external QSPI FAT filesystem"
-	default n
-	depends on DT_HAS_ZEPHYR_FLASH_DISK_ENABLED
-	select DISK_DRIVERS
-	select DISK_DRIVER_FLASH
-	select FILE_SYSTEM
-	select FAT_FILESYSTEM_ELM
-	select FS_FATFS_LFN
-	help
-	  Mount the existing EF800 QSPI flash disk as a FAT filesystem. The
-	  foundation never formats the disk on a mount failure and does not enable
-	  USB MSC, so only the application owns the disk in this mode.
+config EF800_USB_VID
+	hex "MainApplication USB vendor ID"
+	default 0x2fe3
 
-config EF800_MAIN_USB_MSC
-	bool "Expose the QSPI disk as USB MSC when Port 4 is assigned MSD"
-	default n
-	depends on DT_HAS_ZEPHYR_FLASH_DISK_ENABLED
-	select DISK_DRIVERS
-	select DISK_DRIVER_FLASH
-	select USB_DEVICE_STACK_NEXT
-	select USBD_MSC_CLASS
-	help
-	  Transfer QSPI ownership from the MainApplication FAT service to USB MSC
-	  when VBUS is detected and Port 4 is assigned to the MSD device. The
-	  application unmounts FAT before USB is enabled and never mounts FAT while
-	  MSC is active.
+config EF800_USB_PID
+	hex "MainApplication USB product ID"
+	default 0xef81
 
 config EF800_MAIN_LCD_STATUS_TIMEOUT_US
 	int "T6963 status polling timeout (us)"

@@ -36,13 +36,11 @@ jobs:
           /opt/venv/bin/west zephyr-export
           /opt/venv/bin/python -m pip install -r zephyr/scripts/requirements.txt
 
-      - name: Test keyboard protocol
+      - name: Run all native tests
         working-directory: ./zephyr_workspace
         run: |
-          /opt/venv/bin/west build -p always -b native_sim \
-            application/tests/keyboard_protocol \
-            --build-dir application/build/keyboard-protocol
-          application/build/keyboard-protocol/zephyr/zephyr.exe
+          /opt/venv/bin/west twister -T application/tests \
+            -p native_sim --inline-logs
 
       - name: Build keyboard controller
         working-directory: ./zephyr_workspace

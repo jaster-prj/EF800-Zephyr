@@ -91,7 +91,7 @@
 };
 
 &clk_hsi {
-	status = "okay";
+	status = "disabled";
 };
 
 &pll {

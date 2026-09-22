@@ -8,6 +8,8 @@
 
 struct flash_area;
 
+#define EF800_METADATA_NVS_ID 1U
+
 int ef800_metadata_read(const struct flash_area *area,
 				struct ef800_boot_metadata *metadata, bool *valid);
 int ef800_metadata_write(const struct flash_area *area,

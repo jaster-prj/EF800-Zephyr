@@ -39,15 +39,16 @@ implementation:
 
 ## Console And Storage Contract
 
-- Keep the existing Zephyr startup/development console on `USART1`; do not move
-  startup console ownership to UART4.
+- Keep the Zephyr startup/development console on `UART4` at 115200 8N1 in all
+  normal L496 images, exposed through the CP2102 bridge on `COM7`. The hwdebug
+  USB CDC console is a separate port, currently `COM10`.
 - A persisted DebugDevice selection must be applied as early as possible so
   bootloader, BackupApplication, and MainApplication boot information reaches
   the selected debug target.
 - If no DebugDevice is configured and Port 3 is not configured for another
   device/mode, Port 3 is the automatic console fallback in all three L496
   images.
-- If Port 3 is occupied, retain the fixed Zephyr `USART1` console as the safe
+- If Port 3 is occupied, retain the fixed Zephyr `UART4` console as the safe
   fallback.
 - The normal application owns QSPI/FAT. If USB VBUS is detected and Port 4 is
   assigned to MSD, MainApplication must unmount FAT before transferring QSPI
@@ -55,8 +56,9 @@ implementation:
 - BackupApplication must always provide USB MSC. It must not mount FAT and must
   not require a Port 4 MSD assignment or instantiate a second optional MSD
   device.
-- Bootloader update storage remains disabled until the QSPI hardware gates are
-  satisfied.
+- Bootloader update storage is compiled in and remains runtime-safe until the
+  QSPI hardware gates are satisfied; it must not be used on an unverified
+  target.
 
 ## Current Flash Boundary
 
@@ -77,8 +79,8 @@ layout while it is installed.
 - Keep the USB host disconnected. BackupApplication currently enables MSC over
   the unverified QSPI disk, and a main watchdog failure can enter the backup
   image.
-- Leave MainApplication FAT and bootloader update storage disabled during first
-  bring-up.
+- Leave the USB host disconnected during first bring-up, and do not use the
+  compiled-in FAT/update paths until QSPI hardware validation is complete.
 
 The strategy is controlled flash-first for hardware discovery, while
 native-testable feature development continues in parallel. Do not deploy the
@@ -160,8 +162,7 @@ Workspace/Position storage.
 Run west only inside `EF800_Devcontainer`:
 
 ```powershell
-docker exec -w /workspace EF800_Devcontainer /opt/venv/bin/west build -p always -b native_sim application/tests/keyboard_protocol -d application/build/keyboard-protocol
-docker exec -w /workspace EF800_Devcontainer application/build/keyboard-protocol/zephyr/zephyr.exe
+docker exec -w /workspace EF800_Devcontainer /opt/venv/bin/west twister -T application/tests -p native_sim --inline-logs
 docker exec -w /workspace EF800_Devcontainer /opt/venv/bin/west build -p always -b ef800 application/application/ef800-main -d application/build/ef800-main
 docker exec -w /workspace EF800_Devcontainer /opt/venv/bin/west build -p always -b ef800 application/application/ef800-backup -d application/build/ef800-backup
 docker exec -w /workspace EF800_Devcontainer /opt/venv/bin/west build -p always -b ef800 application/application/ef800-bootloader -d application/build/ef800-bootloader

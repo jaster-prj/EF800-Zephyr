@@ -8,17 +8,15 @@ use these fixed addresses:
 | Partition | Address | Size |
 |---|---:|---:|
 | Second-level bootloader | `0x08000000` | `0x10000` |
-| Backup application | `0x08010000` | `0x10000` |
-| Reserved metadata/gap | `0x08020000` | `0x10000` |
+| Backup application | `0x08010000` | `0x18000` |
+| NVS boot metadata | `0x08028000` | `0x08000` |
 | Main application | `0x08030000` | `0xD0000` |
 
-The current Zephyr contract deliberately assigns `0x10000` to the backup image
-and `0x10000` to boot metadata. The captured legacy `BackupApplication.bin` is
-`0x20000` bytes and has its reset vector at `0x08024AE5`, so the legacy image
-uses the upper range now assigned to metadata. Do not treat
-`0x08020000..0x0802FFFF` as unused when restoring the legacy capture. The
-smaller Zephyr backup partition remains intentional and must fit within the
-current fixed image contract.
+The current Zephyr contract assigns `0x18000` to the backup image and `0x8000`
+to boot metadata. The captured legacy `BackupApplication.bin` is `0x20000`
+bytes and has its reset vector at `0x08024AE5`, so it still does not fit this
+layout and would overlap metadata. Do not flash the legacy capture without
+changing the complete image contract.
 
 ## External QSPI flash
 

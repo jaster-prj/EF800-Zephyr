@@ -23,10 +23,15 @@ input. They need no debug-keyboard command handling.
 
 ## Connections
 
-Connect the test terminal to the MainApplication development console:
+Connect the test terminal to the normal EF800 development console:
 
 ```text
-USART1, 115200 baud, 8 data bits, no parity, 1 stop bit (115200 8N1)
+UART4 through the CP2102 bridge on `COM7`, 115200 baud, 8 data bits, no parity,
+1 stop bit (115200 8N1). The hwdebug image's USB CDC console is a separate
+port, currently `COM10`.
+
+Bootloader, BackupApplication, and MainApplication emit the Zephyr startup
+banner and route logs to the same UART4 connection.
 ```
 
 Do not connect the terminal to the binary keyboard-controller link. The
@@ -275,7 +280,7 @@ cleanup.
 Run the native protocol suite before hardware testing:
 
 ```powershell
-docker exec -w /workspace EF800_Devcontainer /opt/venv/bin/west build -p always -b native_sim application/tests/keyboard_protocol -d application/build/keyboard-protocol
+docker exec -w /workspace EF800_Devcontainer /opt/venv/bin/west twister -T application/tests -p native_sim --inline-logs
 docker exec -w /workspace EF800_Devcontainer application/build/keyboard-protocol/zephyr/zephyr.exe
 ```
 

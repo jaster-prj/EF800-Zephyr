@@ -86,6 +86,7 @@ static int debug_watchdog_channel = -1;
 #endif
 static bool test_quiet;
 static bool backend_test_failed;
+static bool watchdog_test_pending;
 
 struct qspi_transaction {
 	const char *name;
@@ -140,10 +141,16 @@ static int debug_watchdog_init(void)
 static void debug_watchdog_feed(void)
 {
 #if DT_HAS_ALIAS(watchdog0) && DT_NODE_HAS_STATUS(DT_ALIAS(watchdog0), okay)
-	if (debug_watchdog_channel >= 0) {
+	if (debug_watchdog_channel >= 0 && !watchdog_test_pending) {
 		(void)wdt_feed(debug_watchdog, debug_watchdog_channel);
 	}
 #endif
+}
+
+void hwdebug_flash_watchdog_test(void)
+{
+	watchdog_test_pending = true;
+	console_puts("watchdog: test armed; waiting for IWDG reset\r\n");
 }
 
 void hwdebug_console_puts(const char *text)

@@ -2,30 +2,10 @@
 
 menu "EF800 bootloader"
 
-config EF800_BOOT_STORAGE
-	bool "Enable QSPI FAT update installation"
-	default n
-	select DISK_DRIVERS
-	select DISK_DRIVER_FLASH
-	select FILE_SYSTEM
-	select FAT_FILESYSTEM_ELM
-	help
-	  Enable access to /EF800:/fwu/EF800_FW.bin. Leave disabled while the
-	  external QSPI part and its capacity are being brought up.
-
-config EF800_BOOT_METADATA
-	bool "Enable persistent boot failure metadata"
-	default y
-	depends on FLASH_MAP
-	help
-	  Store the main application watchdog failure count in the internal
-	  boot-metadata partition.
-
 config EF800_BOOT_MAIN_FAILURE_LIMIT
 	int "Main application watchdog failure limit"
 	default 3
 	range 1 255
-	depends on EF800_BOOT_METADATA
 	help
 	  Select the backup application after this many watchdog resets while
 	  the main application was the selected target.

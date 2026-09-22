@@ -113,18 +113,26 @@ STM32CubeProgrammer is installed on the Windows host at:
 C:\Program Files\STMicroelectronics\STM32Cube\STM32CubeProgrammer\bin\STM32_Programmer_CLI.exe
 ```
 
-The reusable ST-LINK has serial number `0672FF504955857567234934`. Always
-verify the detected device before programming. The EF800 main/debug target is
-the STM32L496 with device ID `0x461`; the keyboard controller is an STM32L431
-with device ID `0x435`. Do not flash an image built for one MCU onto the other.
+Two ST-LINK probes are normally used. Always select the probe explicitly and
+verify the detected device before programming:
+
+```text
+L431 keyboard probe: 0672FF504955857567234934, device ID 0x435
+L496 main/debug probe: 066FFF504982494867074032, device ID 0x461
+```
+
+Do not flash an image built for one MCU onto the other. A Nucleo ST-LINK may
+report a very low target voltage when its target board is not powered by the
+Nucleo; this does not replace checking that the EF800 PCB has its own valid
+power and VTREF.
 
 Flash the temporary `ef800-hwdebug` image at `0x08000000`:
 
 ```powershell
-& "C:\Program Files\STMicroelectronics\STM32Cube\STM32CubeProgrammer\bin\STM32_Programmer_CLI.exe" -c port=SWD mode=UR reset=HWrst sn=0672FF504955857567234934 -d "build\ef800-hwdebug\zephyr\zephyr.bin" 0x08000000 -rst
+& "C:\Program Files\STMicroelectronics\STM32Cube\STM32CubeProgrammer\bin\STM32_Programmer_CLI.exe" -c port=SWD mode=UR reset=HWrst sn=066FFF504982494867074032 -d "build\ef800-hwdebug\zephyr\zephyr.bin" 0x08000000 -rst
 ```
 
-The command must report `Device ID : 0x461` and `Device name : STM32L496xx`.
+The command must use probe `066FFF504982494867074032` and report `Device ID : 0x461` and `Device name : STM32L496xx`.
 The hwdebug image replaces the normal internal-flash image and must be restored
 before returning the target to normal EF800 operation.
 
@@ -132,7 +140,7 @@ Flash the keyboard-controller image at `0x08000000` only when the ST-LINK is
 connected to the STM32L431:
 
 ```powershell
-& "C:\Program Files\STMicroelectronics\STM32Cube\STM32CubeProgrammer\bin\STM32_Programmer_CLI.exe" -c port=SWD mode=UR reset=HWrst -d "build\ef800-keyboard\zephyr\zephyr.bin" 0x08000000 -rst
+& "C:\Program Files\STMicroelectronics\STM32Cube\STM32CubeProgrammer\bin\STM32_Programmer_CLI.exe" -c port=SWD mode=UR reset=HWrst sn=0672FF504955857567234934 -d "build\ef800-keyboard\zephyr\zephyr.bin" 0x08000000 -rst
 ```
 
 The command must report `Device ID : 0x435` and `Device name : STM32L43xxx/STM32L44xxx`.
@@ -140,19 +148,74 @@ If the programmer reports `DEV_CONNECT_ERR`, do not retry by flashing another
 image. Check target power, SWD wiring, reset state, and ST-LINK target selection
 first.
 
+For a controlled two-target build-and-flash pass, use separate commands with
+the target-ID checks above. Do not chain flashing commands without checking the
+probe result; a successful download to the wrong MCU is still a destructive
+mistake. The normal sequence is:
+
+```powershell
+docker exec -w /workspace EF800_Devcontainer /opt/venv/bin/west build -p always -b ef800_keyboard application/application/ef800-keyboard -d application/build/ef800-keyboard
+docker exec -w /workspace EF800_Devcontainer /opt/venv/bin/west build -p always -b ef800 application/application/ef800-hwdebug -d application/build/ef800-hwdebug
+& "C:\Program Files\STMicroelectronics\STM32Cube\STM32CubeProgrammer\bin\STM32_Programmer_CLI.exe" -c port=SWD mode=UR reset=HWrst sn=0672FF504955857567234934 -d "build\ef800-keyboard\zephyr\zephyr.bin" 0x08000000 -rst
+& "C:\Program Files\STMicroelectronics\STM32Cube\STM32CubeProgrammer\bin\STM32_Programmer_CLI.exe" -c port=SWD mode=UR reset=HWrst sn=066FFF504982494867074032 -d "build\ef800-hwdebug\zephyr\zephyr.bin" 0x08000000 -rst
+```
+
 For the keyboard link, the physical L496 pin functions are `PG7=LPUART1_TX`
 and `PC0=LPUART1_RX`. The STM32 HAL diagnostic enables the internal UART swap
 (`UART_ADVFEATURE_SWAP_ENABLE`) to match the fitted board wiring. Verify the
 hwdebug console with `lpuart test`; successful output includes `byte=0xaa` and
 `PASS`.
 
+The normal keyboard communication default is `115200 8N1` on both controllers.
+LPUART1 uses TX/RX swap; UART4, which is the physical normal-image debug
+console through the CP2102 bridge on `COM7`, also uses `115200 8N1`. The
+hwdebug USB CDC console appears separately as `COM10`. Do not change the keyboard link to 9600 while debugging the
+normal protocol unless both images are rebuilt and flashed together.
+
+The optional selector protocol is separate from the normal default:
+
+```text
+E3 01 -> request 9600
+E3 05 -> request 115200
+E4    -> request default 115200
+```
+
+The keyboard ACKs the selector at the old baud, waits before reconfiguring, and
+sends `0xaa` at the new baud. The L496 must receive the complete `a0 e3 7f`
+frame before changing its baud. The baud-transition test is not a substitute
+for the normal protocol test.
+
 ## Tests
+
+The hwdebug USB CDC console is on `COM10`; the normal-image UART4 console is
+on the CP2102 bridge at `COM7`. After flashing the matching images, run these
+commands in order:
+
+```text
+lpuart test
+keyboard version-raw
+keyboard id-raw
+keyboard test
+```
+
+Expected baseline results are `lpuart test ... PASS`, raw version bytes
+`a0 f1 01 00 00`, raw ID bytes `a0 f2 ab 83`, and `keyboard/protocol PASS`.
+The `keyboard baud-test` command is optional and should be run separately;
+first establish that the normal `115200` protocol passes.
+
+Keep the UART/CDC console process closed between scripted `COM7`/`COM10` accesses. A locked
+COM port produces no useful firmware result and can be mistaken for a target
+failure.
+
+The keyboard ID and version raw commands are the preferred diagnostics when a
+high-level test reports a missing byte. They distinguish a keyboard firmware
+response problem from an L496 receive-path problem. Do not weaken expected
+protocol frames to accept truncated responses.
 
 Build and run the native keyboard, protocol, RTC, and persistence tests with:
 
 ```powershell
-docker exec -w /workspace EF800_Devcontainer /opt/venv/bin/west build -p always -b native_sim application/tests/keyboard_protocol -d application/build/keyboard-protocol
-docker exec -w /workspace EF800_Devcontainer application/build/keyboard-protocol/zephyr/zephyr.exe
+docker exec -w /workspace EF800_Devcontainer /opt/venv/bin/west twister -T application/tests -p native_sim --inline-logs
 ```
 
 All four firmware builds and the native tests must pass before considering a
@@ -164,8 +227,8 @@ The fixed internal-flash layout is part of the compatibility contract:
 
 ```text
 bootloader  0x08000000  0x00010000
-backup      0x08010000  0x00010000
-metadata    0x08020000  0x00010000
+backup      0x08010000  0x00018000
+metadata    0x08028000  0x00008000
 main        0x08030000  0x000D0000
 ```
 

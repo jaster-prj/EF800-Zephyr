@@ -13,13 +13,8 @@
 #include <zephyr/kernel.h>
 #include <zephyr/logging/log.h>
 #include <zephyr/storage/flash_map.h>
-#include <zephyr/sys/reboot.h>
+#include <zephyr/sys/printk.h>
 #include <zephyr/sys/util.h>
-
-#if CONFIG_EF800_BOOT_STORAGE
-#include <ff.h>
-#include <zephyr/fs/fs.h>
-#endif
 
 #if CONFIG_HWINFO
 #include <zephyr/drivers/hwinfo.h>
@@ -28,15 +23,15 @@
 #include "ef800_update.h"
 #include "ef800_metadata.h"
 #include "ef800_console.h"
+#include "boot_update.h"
+#include "ef800_boot_decision.h"
+#include "ef800_watchdog.h"
 
 LOG_MODULE_REGISTER(ef800_bootloader, LOG_LEVEL_INF);
 
-#define EF800_VECTOR_BYTES  (2U * sizeof(uint32_t))
-#define EF800_UPDATE_PATH   "/EF800:/fwu/EF800_FW.bin"
-#define EF800_UPDATE_CHUNK 1024U
-
 #define MAIN_PARTITION_ID PARTITION_ID(main_partition)
 #define BACKUP_PARTITION_ID PARTITION_ID(backup_partition)
+#define EF800_VECTOR_BYTES (2U * sizeof(uint32_t))
 
 BUILD_ASSERT(PARTITION_EXISTS(main_partition), "main partition is required");
 BUILD_ASSERT(PARTITION_EXISTS(backup_partition), "backup partition is required");
@@ -47,12 +42,12 @@ BUILD_ASSERT(PARTITION_SIZE(boot_partition) == 0x00010000U,
 	     "bootloader partition size must remain 64 KiB");
 BUILD_ASSERT(PARTITION_OFFSET(backup_partition) == 0x00010000U,
 	     "backup partition offset must remain 0x00010000");
-BUILD_ASSERT(PARTITION_SIZE(backup_partition) == 0x00010000U,
-	     "backup partition size must remain 64 KiB");
-BUILD_ASSERT(PARTITION_OFFSET(metadata_partition) == 0x00020000U,
-	     "metadata partition offset must remain 0x00020000");
-BUILD_ASSERT(PARTITION_SIZE(metadata_partition) == 0x00010000U,
-	     "metadata partition size must remain 64 KiB");
+BUILD_ASSERT(PARTITION_SIZE(backup_partition) == 0x00018000U,
+	     "backup partition size must remain 96 KiB");
+BUILD_ASSERT(PARTITION_OFFSET(metadata_partition) == 0x00028000U,
+	     "metadata partition offset must remain 0x00028000");
+BUILD_ASSERT(PARTITION_SIZE(metadata_partition) == 0x00008000U,
+	     "metadata partition size must remain 32 KiB");
 BUILD_ASSERT(PARTITION_OFFSET(main_partition) == 0x00030000U,
 	     "main partition offset must remain 0x00030000");
 BUILD_ASSERT(PARTITION_SIZE(main_partition) == 0x000D0000U,
@@ -82,7 +77,6 @@ static bool partition_is_valid(const struct flash_area *area, uintptr_t address)
 					 sram_address, sram_size);
 }
 
-#if CONFIG_EF800_BOOT_METADATA
 static bool reset_was_watchdog(void)
 {
 #if CONFIG_HWINFO
@@ -99,275 +93,73 @@ static bool reset_was_watchdog(void)
 	return false;
 #endif
 }
-#endif
 
-#if CONFIG_EF800_BOOT_STORAGE
-static int file_read_exact(struct fs_file_t *file, void *buffer, size_t length)
+__attribute__((naked, noreturn)) static void branch_to_application(
+	uint32_t stack_pointer, uint32_t reset_handler)
 {
-	size_t offset = 0U;
-
-	while (offset < length) {
-		ssize_t count = fs_read(file, (uint8_t *)buffer + offset,
-					length - offset);
-
-		if (count < 0) {
-			return (int)count;
-		}
-		if (count == 0) {
-			return -EIO;
-		}
-		offset += (size_t)count;
-	}
-
-	return 0;
+	__asm__ volatile (
+		"msr msp, r0\n"
+		"movs r0, #0\n"
+		"msr control, r0\n"
+		"msr basepri, r0\n"
+		"msr faultmask, r0\n"
+		"isb\n"
+		"cpsie i\n"
+		"bx r1\n"
+	);
 }
 
-static int copy_update_image(struct fs_file_t *file, const struct flash_area *area,
-				     off_t source_offset, size_t image_size,
-				     bool has_crc, uint32_t expected_crc)
-{
-	uint8_t source[EF800_UPDATE_CHUNK] __aligned(8);
-	uint8_t verify[EF800_UPDATE_CHUNK] __aligned(8);
-	size_t remaining = image_size;
-	size_t destination = 0U;
-	size_t alignment = flash_area_align(area);
-	uint32_t crc = 0U;
-	int rc;
-
-	if (alignment == 0U || alignment > sizeof(source)) {
-		return -EINVAL;
-	}
-
-	rc = flash_area_erase(area, 0, area->fa_size);
-	if (rc < 0) {
-		return rc;
-	}
-
-	while (remaining != 0U) {
-		size_t count = MIN(remaining, sizeof(source));
-		size_t write_count = ROUND_UP(count, alignment);
-
-		if (write_count > sizeof(source) || destination > area->fa_size ||
-			write_count > (area->fa_size - destination) || source_offset < 0) {
-			return -EINVAL;
-		}
-		if (fs_seek(file, source_offset, FS_SEEK_SET) < 0 ||
-			file_read_exact(file, source, count) < 0) {
-			return -EIO;
-		}
-		if (write_count > count) {
-			memset(source + count, 0xff, write_count - count);
-		}
-
-		if (has_crc) {
-			crc = ef800_crc32_update(crc, source, count);
-		}
-
-		rc = flash_area_write(area, destination, source, write_count);
-		if (rc < 0) {
-			return rc;
-		}
-		rc = flash_area_read(area, destination, verify, write_count);
-		if (rc < 0) {
-			return rc;
-		}
-		if (memcmp(source, verify, write_count) != 0) {
-			return -EIO;
-		}
-
-		source_offset += (off_t)count;
-		destination += write_count;
-		remaining -= count;
-	}
-
-	return !has_crc || crc == expected_crc ? 0 : -EBADMSG;
-}
-
-static int install_update(void)
-{
-	static FATFS fat_fs;
-	struct fs_mount_t mount = {
-		.type = FS_FATFS,
-		.mnt_point = "/EF800:",
-		.fs_data = &fat_fs,
-		.storage_dev = (void *)PARTITION_ID(qspi_storage_partition),
-		.flags = FS_MOUNT_FLAG_NO_FORMAT,
-	};
-	struct fs_file_t file;
-	struct fs_dirent entry;
-	struct ef800_update_header header;
-	const struct flash_area *area;
-	uint32_t magic;
-	uint32_t vector[2];
-	off_t source_offset = 0;
-	size_t image_size;
-	bool mounted = false;
-	bool opened = false;
-	bool has_crc = false;
-	int rc;
-
-	fs_file_t_init(&file);
-	rc = fs_mount(&mount);
-	if (rc < 0) {
-		LOG_WRN("update disk mount failed: %d", rc);
-		return rc;
-	}
-	mounted = true;
-
-	rc = fs_stat(EF800_UPDATE_PATH, &entry);
-	if (rc < 0 || entry.type != FS_DIR_ENTRY_FILE) {
-		rc = rc < 0 ? rc : -ENOENT;
-		goto out;
-	}
-	if (entry.size < EF800_VECTOR_BYTES) {
-		rc = -EINVAL;
-		goto out;
-	}
-
-	rc = fs_open(&file, EF800_UPDATE_PATH, FS_O_READ);
-	if (rc < 0) {
-		goto out;
-	}
-	opened = true;
-
-	rc = flash_area_open(MAIN_PARTITION_ID, &area);
-	if (rc < 0 || !flash_area_device_is_ready(area)) {
-		rc = rc < 0 ? rc : -ENODEV;
-		goto out;
-	}
-
-	if (fs_seek(&file, 0, FS_SEEK_SET) < 0 ||
-		file_read_exact(&file, &magic, sizeof(magic)) < 0) {
-		rc = -EIO;
-		goto out;
-	}
-
-	if (magic == EF800_UPDATE_MAGIC) {
-		if (entry.size < sizeof(header) ||
-			fs_seek(&file, 0, FS_SEEK_SET) < 0 ||
-			file_read_exact(&file, &header, sizeof(header)) < 0 ||
-			!ef800_update_header_valid(&header, entry.size,
-						   PARTITION_ADDRESS(main_partition),
-						   area->fa_size)) {
-			rc = -EINVAL;
-			goto out;
-		}
-		image_size = header.image_size;
-		source_offset = header.header_size;
-		has_crc = true;
-	} else {
-		image_size = entry.size;
-	}
-	if (source_offset < 0 || (uintmax_t)source_offset > (uintmax_t)entry.size ||
-		image_size > area->fa_size ||
-		image_size > ((size_t)entry.size - (size_t)source_offset)) {
-		rc = -EFBIG;
-		goto out;
-	}
-
-	if (fs_seek(&file, source_offset, FS_SEEK_SET) < 0 ||
-		file_read_exact(&file, vector, sizeof(vector)) < 0 ||
-		!ef800_vector_table_valid(vector, PARTITION_ADDRESS(main_partition),
-					   image_size, sram_address, sram_size)) {
-		rc = -EINVAL;
-		goto out;
-	}
-
-	rc = copy_update_image(&file, area, source_offset, image_size, has_crc,
-				       has_crc ? header.image_crc32 : 0U);
-	if (rc < 0) {
-		goto out;
-	}
-
-	if (!partition_is_valid(area, PARTITION_ADDRESS(main_partition))) {
-		rc = -EBADMSG;
-		goto out;
-	}
-
-	rc = fs_close(&file);
-	opened = false;
-	if (rc < 0) {
-		goto out;
-	}
-
-	/* Deleting is deliberately last; a failed delete leaves the valid image. */
-	rc = fs_unlink(EF800_UPDATE_PATH);
-	if (rc < 0) {
-		LOG_WRN("verified update could not be removed: %d", rc);
-		rc = 0;
-	} else {
-		LOG_INF("verified update installed");
-	}
-
-out:
-	if (opened) {
-		int close_rc = fs_close(&file);
-
-		if (rc == 0 && close_rc < 0) {
-			rc = close_rc;
-		}
-	}
-	if (mounted) {
-		int unmount_rc = fs_unmount(&mount);
-
-		if (rc == 0 && unmount_rc < 0) {
-			rc = unmount_rc;
-		}
-	}
-
-	return rc;
-}
-#endif
-
-static FUNC_NORETURN void handoff(const struct flash_area *area, uintptr_t address)
+static FUNC_NORETURN void jumpApplication(const struct flash_area *area, uintptr_t address)
 {
 	uint32_t vector[2];
-	void (*reset_handler)(void);
 
 	if (read_vector(area, vector) != 0 ||
 		!ef800_vector_table_valid(vector, address, area->fa_size,
 					  sram_address, sram_size)) {
-		LOG_ERR("refusing handoff to invalid image at 0x%lx",
+		LOG_ERR("refusing jumpApplication to invalid image at 0x%lx",
 			(unsigned long)address);
 		while (true) {
 			k_sleep(K_FOREVER);
 		}
 	}
-
-	reset_handler = (void (*)(void))(uintptr_t)vector[1];
 	__disable_irq();
 	SysTick->CTRL = 0U;
+	SysTick->LOAD = 0U;
+	SysTick->VAL = 0U;
+	SCB->ICSR = SCB_ICSR_PENDSTCLR_Msk | SCB_ICSR_PENDSVCLR_Msk;
+	for (size_t index = 0U; index < ARRAY_SIZE(NVIC->ICER); ++index) {
+		NVIC->ICER[index] = UINT32_MAX;
+		NVIC->ICPR[index] = UINT32_MAX;
+	}
+	MPU->CTRL = 0U;
+	SCB->CFSR = SCB->CFSR;
+	SCB->HFSR = SCB->HFSR;
 	SCB->VTOR = (uint32_t)address;
 	__DSB();
 	__ISB();
-	__set_MSP(vector[0]);
-	__DSB();
-	__ISB();
-	reset_handler();
-
-	/* A valid application reset handler must not return. */
-	sys_reboot(SYS_REBOOT_COLD);
+	branch_to_application(vector[0], vector[1]);
 }
 
 int main(void)
 {
+	int console_result = ef800_console_init(false);
+	printk("ef800 bootloader: main (console=%u, init=%d)\r\n",
+		ef800_console_get_target(), console_result);
+	/* Start/feed the option-byte IWDG before slow flash and metadata work. */
+	if (ef800_watchdog_start(10000U) != 0) {
+		LOG_WRN("IWDG could not be initialized at boot");
+	}
 	const struct flash_area *main_area;
 	const struct flash_area *backup_area;
-#if CONFIG_EF800_BOOT_METADATA
 	struct ef800_boot_metadata metadata __aligned(8);
 	bool metadata_valid = false;
 	bool metadata_dirty = false;
 	bool watchdog_reset = false;
-#endif
 	bool main_valid;
 	bool backup_valid;
 	bool use_backup = false;
-#if CONFIG_EF800_BOOT_STORAGE
 	bool update_installed = false;
-#endif
 	int rc;
-
-	(void)ef800_console_init(false);
 
 	rc = flash_area_open(MAIN_PARTITION_ID, &main_area);
 	if (rc < 0 || !flash_area_device_is_ready(main_area)) {
@@ -380,7 +172,6 @@ int main(void)
 		return 0;
 	}
 
-#if CONFIG_EF800_BOOT_METADATA
 	rc = ef800_metadata_read_current(&metadata, &metadata_valid);
 	if (rc < 0 || !metadata_valid) {
 		LOG_WRN("boot metadata unavailable or invalid: %d", rc);
@@ -391,7 +182,13 @@ int main(void)
 
 	if (metadata_valid) {
 		watchdog_reset = reset_was_watchdog();
-		if (watchdog_reset &&
+		if (metadata.last_target == EF800_BOOT_TARGET_BACKUP) {
+			/* Backup is a recovery boot, not a permanent boot target. */
+			metadata.main_failures = 0U;
+			metadata.last_target = EF800_BOOT_TARGET_MAIN;
+			metadata_dirty = true;
+			LOG_INF("backup recovery boot complete; retrying main application");
+		} else if (watchdog_reset &&
 			metadata.last_target == EF800_BOOT_TARGET_MAIN &&
 			metadata.main_failures < UINT32_MAX) {
 			metadata.main_failures++;
@@ -400,34 +197,33 @@ int main(void)
 				CONFIG_EF800_BOOT_MAIN_FAILURE_LIMIT);
 		}
 	}
-#endif
 
-#if CONFIG_EF800_BOOT_STORAGE
-	rc = install_update();
+	rc = ef800_boot_install_update(main_area, PARTITION_ADDRESS(main_partition),
+					 sram_address, sram_size);
 	update_installed = rc == 0;
 	if (rc < 0 && rc != -ENOENT && rc != -ENODEV) {
 		LOG_WRN("update inspection failed: %d", rc);
 	}
-#if CONFIG_EF800_BOOT_METADATA
 	if (update_installed) {
 		metadata.main_failures = 0U;
 		metadata.last_target = EF800_BOOT_TARGET_MAIN;
 		metadata_dirty = true;
 	}
-#endif
-#endif
 
 	main_valid = partition_is_valid(main_area, PARTITION_ADDRESS(main_partition));
 	backup_valid = partition_is_valid(backup_area,
 					 PARTITION_ADDRESS(backup_partition));
 
-#if CONFIG_EF800_BOOT_METADATA
-	use_backup = metadata.main_failures >= CONFIG_EF800_BOOT_MAIN_FAILURE_LIMIT;
-#endif
+	use_backup = ef800_boot_decide(&(struct ef800_boot_decision_input){
+		.main_valid = main_valid,
+		.backup_valid = backup_valid,
+		.failure_limit_reached = metadata.last_target == EF800_BOOT_TARGET_MAIN &&
+			metadata.main_failures >=
+			CONFIG_EF800_BOOT_MAIN_FAILURE_LIMIT,
+	}) == EF800_BOOT_DECISION_BACKUP;
 
 	if (use_backup && backup_valid) {
 		LOG_WRN("main failure limit reached; starting backup");
-#if CONFIG_EF800_BOOT_METADATA
 		metadata.last_target = EF800_BOOT_TARGET_BACKUP;
 		metadata_dirty = true;
 		if (metadata_dirty) {
@@ -436,12 +232,10 @@ int main(void)
 				LOG_ERR("boot metadata write failed: %d", rc);
 			}
 		}
-#endif
-		handoff(backup_area, PARTITION_ADDRESS(backup_partition));
+		jumpApplication(backup_area, PARTITION_ADDRESS(backup_partition));
 	}
 
 	if (main_valid) {
-#if CONFIG_EF800_BOOT_METADATA
 		/* A non-watchdog reset is the only safe indication that main ran. */
 		if (!watchdog_reset && metadata.main_failures != 0U) {
 			metadata.main_failures = 0U;
@@ -457,13 +251,11 @@ int main(void)
 				LOG_ERR("boot metadata write failed: %d", rc);
 			}
 		}
-#endif
 		LOG_INF("starting main application");
-		handoff(main_area, PARTITION_ADDRESS(main_partition));
+		jumpApplication(main_area, PARTITION_ADDRESS(main_partition));
 	}
 
 	if (backup_valid) {
-#if CONFIG_EF800_BOOT_METADATA
 		if (metadata.last_target != EF800_BOOT_TARGET_BACKUP) {
 			metadata.last_target = EF800_BOOT_TARGET_BACKUP;
 			metadata_dirty = true;
@@ -474,9 +266,8 @@ int main(void)
 				LOG_ERR("boot metadata write failed: %d", rc);
 			}
 		}
-#endif
 		LOG_WRN("main application invalid; starting backup");
-		handoff(backup_area, PARTITION_ADDRESS(backup_partition));
+		jumpApplication(backup_area, PARTITION_ADDRESS(backup_partition));
 	}
 
 	LOG_ERR("no valid main or backup application");

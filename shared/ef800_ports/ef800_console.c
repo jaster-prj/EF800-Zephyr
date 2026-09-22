@@ -9,6 +9,7 @@
 #include <zephyr/devicetree.h>
 #include <zephyr/drivers/uart.h>
 #include <zephyr/sys/printk-hooks.h>
+#include "ef800_metadata.h"
 #include "ef800_update.h"
 
 #define EF800_CONSOLE_DEFAULT_BAUDRATE 9600U
@@ -41,7 +42,7 @@ static int configure_uart(uint8_t port_id, const struct device *uart,
 				  const struct ef800_measurement_serial_config *serial_config)
 {
 	struct uart_config config = {
-		.baudrate = port_id == 0U ? EF800_CONSOLE_BOARD_BAUDRATE :
+		.baudrate = (port_id == 0U || port_id == 3U) ? EF800_CONSOLE_BOARD_BAUDRATE :
 			EF800_CONSOLE_DEFAULT_BAUDRATE,
 		.parity = UART_CFG_PARITY_NONE,
 		.stop_bits = UART_CFG_STOP_BITS_1,
@@ -112,12 +113,9 @@ static int read_metadata(struct ef800_boot_metadata *metadata, bool *valid)
 		return -EINVAL;
 	}
 	*valid = false;
-	/* Internal flash is memory mapped and remains available before QSPI/FAT. */
-	if (ef800_boot_metadata_decode((const uint8_t *)0x08020000UL,
-							 EF800_BOOT_METADATA_SIZE, metadata) != 0) {
+	if (ef800_metadata_read_current(metadata, valid) != 0) {
 		return -EIO;
 	}
-	*valid = ef800_boot_metadata_valid(metadata);
 	return 0;
 }
 

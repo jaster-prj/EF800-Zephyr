@@ -87,7 +87,7 @@ increment:
 0x08030000 - 0x080FFFFF  main application
 ```
 
-The current Zephyr contract reserves `0x08020000..0x0802FFFF` for boot
+The current Zephyr contract reserves `0x08028000..0x0802FFFF` for boot
 metadata. The captured legacy `BackupApplication.bin` is 128 KiB and uses that
 range, so the reservation must not be treated as unused when restoring the
 legacy image. The external QSPI flash is configured as the identified

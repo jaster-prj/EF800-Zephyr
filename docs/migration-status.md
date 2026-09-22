@@ -133,7 +133,7 @@ SDK `1.0.1`:
 
 - Second-level bootloader builds at `0x08000000` (`35592` bytes).
 - Backup application builds at `0x08010000` (`53644` bytes).
-- MainApplication builds at `0x08030000` (`119316` bytes).
+- MainApplication builds at `0x08030000`.
 - Keyboard-controller application builds (`21820` bytes).
 - Native keyboard, protocol, RTC, persistence, Position, port-assignment, and
   boot-metadata, measurement protocol, record, and Mbed migration suite passes
@@ -165,7 +165,7 @@ large software porting phase.
   key cleanup, and physical-keyboard resumption.
 - Validate the status LED, MCP23017 wiring, DS3231, MAX17043, LCD electrical
   timing/polarity, and the confirmed UART routes.
-- Capture complete logs. The fixed Zephyr shell remains on USART1, while the
+- Capture complete logs. The fixed Zephyr shell remains on UART4, while the
   custom console/log routing can select a configured external target; verify
   both the documented USART1 console and any selected fallback route.
 

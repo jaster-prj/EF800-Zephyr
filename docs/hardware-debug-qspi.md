@@ -1,5 +1,24 @@
 # EF800 external flash hardware debug image
 
+## Watchdog reset diagnostic
+
+The hardware-debug console reports the reset reason at every boot. Run:
+
+```text
+watchdog test
+```
+
+The command stops feeding the IWDG. After approximately one second, the MCU
+resets. On the next console startup, the header must include:
+
+```text
+boot: reason=watchdog
+```
+
+This confirms both that the IWDG reset occurred and that the reset cause was
+read from the STM32 reset-status registers. A normal startup reports
+`boot: reason=normal`.
+
 `ef800-hwdebug` is a temporary, read-only external-flash bring-up image. It replaces
 the complete internal flash image at `0x08000000` on one recoverable engineering
 target. It is not part of the normal four-image boot chain and must be replaced
@@ -96,6 +115,11 @@ Connect the USB host after programming and reset the target as required by the
 programmer. The device enumerates as `Jaster EF800 HW Debug` using temporary
 engineering USB identifiers. Open the assigned CDC serial port and assert DTR.
 The diagnostic command console is available after DTR is asserted.
+
+The hwdebug USB CDC console is currently assigned `COM10`. The CP2102
+physical-UART bridge on `COM7` is UART4 and is used by the normal
+Bootloader/BackupApplication/MainApplication images, not by hwdebug's command
+console.
 
 The external flash may remain powered throughout MCU programming and reset.
 Do not assume that an MCU reset also reset the flash. Start with `flash probe`

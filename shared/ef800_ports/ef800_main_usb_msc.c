@@ -2,14 +2,11 @@
 
 #include "ef800_main_usb_msc.h"
 
-#include <errno.h>
-
 #include <zephyr/device.h>
 #include <zephyr/devicetree.h>
 #include <zephyr/kernel.h>
 #include <zephyr/storage/disk_access.h>
 
-#if defined(CONFIG_EF800_MAIN_USB_MSC) && CONFIG_EF800_MAIN_USB_MSC
 #include <zephyr/usb/class/usbd_msc.h>
 #include <zephyr/usb/usbd.h>
 
@@ -94,22 +91,3 @@ bool ef800_main_usb_msc_is_active(void)
 {
 	return usb_msc_active;
 }
-
-#else
-
-int ef800_main_usb_msc_start(void)
-{
-	return -ENOTSUP;
-}
-
-int ef800_main_usb_msc_stop(void)
-{
-	return -ENOTSUP;
-}
-
-bool ef800_main_usb_msc_is_active(void)
-{
-	return false;
-}
-
-#endif

@@ -51,6 +51,8 @@ implementation plan item:
   handling and fixed-point millimetre records.
 - Versioned/checksummed timezone, port-assignment, boot-metadata, and serial
   configuration records.
+- Boot metadata is stored as NVS value ID 1 in the fixed internal-flash
+  `metadata_partition`, with NVS data CRC enabled in both images.
 - Connection-aware routing, UART ownership validation, console fallback, and
   MainApplication measurement integration.
 - Explicit legacy Mbed readers, preflight validation, read-back verification,
@@ -98,10 +100,25 @@ erased. The target remains blank. See `docs/stm32l496-target-snapshot.md`.
   resources from the schematic before adding or enabling their DeviceTree
   descriptions.
 
+### Internal boot metadata storage
+
+The fixed `metadata_partition` at `0x08028000`, size `0x8000`, is an NVS
+partition. The complete encoded boot metadata record remains one value under
+ID 1; its version, size, sequence, and payload CRC remain part of the record.
+NVS supplies record allocation, sector rotation, and recovery of interrupted
+garbage collection. The old raw 40-byte record at partition offset zero is not
+an NVS record, so a format transition creates default metadata unless a
+separate migration preserves it. Both images use the shared NVS reader and no
+code reads `0x08028000` directly.
+
+The metadata partition is reserved for small bounded records. Workspace and
+measurement data remain on QSPI/FAT when that hardware path is explicitly
+enabled.
+
 ### Phase 3: QSPI/FAT and USB ownership
 
-Before enabling `CONFIG_EF800_MAIN_STORAGE`, `CONFIG_EF800_BOOT_STORAGE`, or
-MainApplication USB sharing:
+The QSPI/FAT and MSC paths are compiled into Bootloader and MainApplication.
+Before enabling them on a target, verify:
 
 - Confirm the identified `IS25LP032D-JTLE-TR` against JEDEC ID or SFDP.
 - Confirm capacity, erase geometry, program size, and maximum frequency.
@@ -124,8 +141,8 @@ MainApplication USB sharing:
 ### Phase 5: Release and update policy
 
 - Define image signing, package authentication, rollback, and recovery policy.
-- Make metadata updates resilient to power loss rather than relying on one
-  erase-and-write record where field reliability requires it.
+- Keep NVS metadata updates resilient to interrupted sector garbage collection;
+  validate the boot-failure counter and fallback behavior on target.
 - Keep USB MSD persistence last because it shares the QSPI ownership boundary.
 - Repeat native tests, all four firmware builds, `scripts/verify-images.sh`,
   hardware regression tests, and update-package checks before release.

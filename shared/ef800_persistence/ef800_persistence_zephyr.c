@@ -7,13 +7,13 @@
 
 #include <zephyr/kernel.h>
 
-#if defined(CONFIG_EF800_MAIN_STORAGE) && CONFIG_EF800_MAIN_STORAGE
+#if defined(CONFIG_FILE_SYSTEM) && CONFIG_FILE_SYSTEM
 #include <zephyr/fs/fs.h>
 
 #include "ef800_main.h"
 #endif
 
-#if defined(CONFIG_EF800_MAIN_STORAGE) && CONFIG_EF800_MAIN_STORAGE
+#if defined(CONFIG_FILE_SYSTEM) && CONFIG_FILE_SYSTEM
 
 static const char *root_path(enum ef800_persistence_root root)
 {
@@ -240,80 +240,62 @@ const struct ef800_persistence_backend *ef800_persistence_zephyr_backend(void)
 #else
 
 static int unavailable_read(void *context, enum ef800_persistence_root root,
-			   const char *name, void *buffer, size_t capacity, size_t *length)
+				   const char *name, void *buffer, size_t capacity, size_t *length)
 {
-	ARG_UNUSED(context);
-	ARG_UNUSED(root);
-	ARG_UNUSED(name);
-	ARG_UNUSED(buffer);
-	ARG_UNUSED(capacity);
-	ARG_UNUSED(length);
+	ARG_UNUSED(context); ARG_UNUSED(root); ARG_UNUSED(name);
+	ARG_UNUSED(buffer); ARG_UNUSED(capacity); ARG_UNUSED(length);
 	return -ENOTSUP;
 }
 
 static int unavailable_write(void *context, enum ef800_persistence_root root,
-			    const char *name, const void *buffer, size_t length)
+				    const char *name, const void *buffer, size_t length)
 {
-	ARG_UNUSED(context);
-	ARG_UNUSED(root);
-	ARG_UNUSED(name);
-	ARG_UNUSED(buffer);
-	ARG_UNUSED(length);
+	ARG_UNUSED(context); ARG_UNUSED(root); ARG_UNUSED(name);
+	ARG_UNUSED(buffer); ARG_UNUSED(length);
 	return -ENOTSUP;
 }
 
 static int unavailable_append(void *context, enum ef800_persistence_root root,
-			     const char *name, const void *buffer, size_t length)
+				     const char *name, const void *buffer, size_t length)
 {
-	ARG_UNUSED(context);
-	ARG_UNUSED(root);
-	ARG_UNUSED(name);
-	ARG_UNUSED(buffer);
-	ARG_UNUSED(length);
+	ARG_UNUSED(context); ARG_UNUSED(root); ARG_UNUSED(name);
+	ARG_UNUSED(buffer); ARG_UNUSED(length);
 	return -ENOTSUP;
 }
 
 static int unavailable_stat(void *context, enum ef800_persistence_root root,
-			   const char *name, struct ef800_persistence_entry *entry)
+				   const char *name, struct ef800_persistence_entry *entry)
 {
-	ARG_UNUSED(context);
-	ARG_UNUSED(root);
-	ARG_UNUSED(name);
-	ARG_UNUSED(entry);
+	ARG_UNUSED(context); ARG_UNUSED(root); ARG_UNUSED(name); ARG_UNUSED(entry);
 	return -ENOTSUP;
 }
 
 static int unavailable_list(void *context, enum ef800_persistence_root root,
-			   ef800_persistence_list_callback callback, void *callback_context)
+				   ef800_persistence_list_callback callback, void *callback_context)
 {
-	ARG_UNUSED(context);
-	ARG_UNUSED(root);
-	ARG_UNUSED(callback);
+	ARG_UNUSED(context); ARG_UNUSED(root); ARG_UNUSED(callback);
 	ARG_UNUSED(callback_context);
 	return -ENOTSUP;
 }
 
 static int unavailable_remove(void *context, enum ef800_persistence_root root,
-			     const char *name)
+				     const char *name)
 {
-	ARG_UNUSED(context);
-	ARG_UNUSED(root);
-	ARG_UNUSED(name);
+	ARG_UNUSED(context); ARG_UNUSED(root); ARG_UNUSED(name);
 	return -ENOTSUP;
 }
 
-static const struct ef800_persistence_backend zephyr_backend = {
-	.read = unavailable_read,
-	.write = unavailable_write,
-	.append = unavailable_append,
-	.stat = unavailable_stat,
-	.list = unavailable_list,
-	.remove = unavailable_remove,
-};
-
 const struct ef800_persistence_backend *ef800_persistence_zephyr_backend(void)
 {
-	return &zephyr_backend;
+	static const struct ef800_persistence_backend backend = {
+		.read = unavailable_read,
+		.write = unavailable_write,
+		.append = unavailable_append,
+		.stat = unavailable_stat,
+		.list = unavailable_list,
+		.remove = unavailable_remove,
+	};
+	return &backend;
 }
 
 #endif

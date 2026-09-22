@@ -1,0 +1,7 @@
+common:
+  tags: [shared, persistence]
+  harness: ztest
+tests:
+  ef800.shared.persistence:
+    platform_allow:
+      - native_sim

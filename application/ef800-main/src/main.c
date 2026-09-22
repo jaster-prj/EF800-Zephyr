@@ -14,6 +14,7 @@
 #include <zephyr/kernel.h>
 #include <zephyr/logging/log.h>
 #include <zephyr/shell/shell.h>
+#include <zephyr/sys/printk.h>
 
 #include "ef800_max17043.h"
 #include "ef800_main.h"
@@ -26,6 +27,7 @@
 #include "ef800_console.h"
 #include "ef800_metadata.h"
 #include "ef800_main_usb_msc.h"
+#include "ef800_storage_owner.h"
 #include "ef800_measurement_zephyr.h"
 #include "ef800_t6963.h"
 #include "ef800_workspace.h"
@@ -434,7 +436,7 @@ static int set_console_for_port(uint8_t port_id)
 	struct ef800_measurement_serial_config config;
 	int result;
 
-	if (port_id == 0U || port_id == 4U) {
+	if (port_id == 0U || port_id == 3U || port_id == 4U) {
 		return ef800_console_set_target(port_id);
 	}
 	default_debug_serial_config(&config);
@@ -2568,6 +2570,10 @@ int main(void)
 	int result;
 	uint16_t mcp_port;
 
+	/* Keep standalone and bootloader handoff startup observable before slow init. */
+	(void)ef800_console_init(false);
+	printk("ef800 main application: entry\r\n");
+
 	(void)ef800_main_foundation_init();
 	result = ef800_persistence_init(&persistence,
 				       ef800_persistence_zephyr_backend());
@@ -2703,6 +2709,28 @@ result = ef800_mcp23017_open(&mcp23017,
 	display_menu();
 
 	while (true) {
+		static bool msc_requested;
+		static enum ef800_storage_owner storage_owner =
+			EF800_STORAGE_OWNER_FAT;
+		bool requested = ef800_main_usb_msd_requested();
+		enum ef800_storage_action storage_action =
+			ef800_storage_owner_action(storage_owner, requested);
+
+		if (storage_action == EF800_STORAGE_ACTION_FAT_TO_MSC) {
+			if (ef800_storage_unmount() == 0 &&
+				ef800_main_usb_msc_start() == 0) {
+				msc_requested = true;
+				storage_owner = EF800_STORAGE_OWNER_MSC;
+				LOG_INF("QSPI ownership transferred to USB MSC");
+			}
+		} else if (storage_action == EF800_STORAGE_ACTION_MSC_TO_FAT) {
+			if (ef800_main_usb_msc_stop() == 0 &&
+				ef800_storage_mount() == 0) {
+				msc_requested = false;
+				storage_owner = EF800_STORAGE_OWNER_FAT;
+				LOG_INF("QSPI ownership returned to FAT");
+			}
+		}
 		if (k_msgq_get(&keyboard_rx_msgq, &byte, K_MSEC(1000)) == 0) {
 			process_keyboard_byte(byte, k_uptime_get_32());
 		}

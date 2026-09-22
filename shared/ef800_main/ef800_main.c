@@ -11,7 +11,6 @@
 #include <zephyr/devicetree.h>
 #include <zephyr/drivers/gpio.h>
 #include <zephyr/drivers/rtc.h>
-#include <zephyr/drivers/watchdog.h>
 #include <zephyr/kernel.h>
 #include <zephyr/logging/log.h>
 #include <zephyr/sys/clock.h>
@@ -19,10 +18,11 @@
 #include <zephyr/storage/flash_map.h>
 
 #include "ef800_mcp23017.h"
+#include "ef800_metadata.h"
 #include "ef800_ports.h"
 #include "ef800_update.h"
+#include "ef800_watchdog.h"
 
-#if defined(CONFIG_EF800_MAIN_STORAGE) && CONFIG_EF800_MAIN_STORAGE
 uint32_t get_fattime(void)
 {
 	struct rtc_time time;
@@ -38,23 +38,14 @@ uint32_t get_fattime(void)
 		       ((uint32_t)time.tm_mday << 16) | ((uint32_t)time.tm_hour << 11) |
 		       ((uint32_t)time.tm_min << 5) | ((uint32_t)time.tm_sec / 2U);
 }
-#endif
-
-#if defined(CONFIG_EF800_MAIN_STORAGE) && CONFIG_EF800_MAIN_STORAGE
 #include <ff.h>
 #include <zephyr/fs/fs.h>
-#endif
 
 LOG_MODULE_REGISTER(ef800_main, LOG_LEVEL_INF);
 
 #if DT_HAS_ALIAS(status_led)
 static const struct gpio_dt_spec status_led =
 	GPIO_DT_SPEC_GET(DT_ALIAS(status_led), gpios);
-#endif
-
-#if DT_HAS_ALIAS(watchdog0)
-static const struct device *const watchdog =
-	DEVICE_DT_GET(DT_ALIAS(watchdog0));
 #endif
 
 #if DT_HAS_COMPAT_STATUS_OKAY(microchip_mcp23017)
@@ -69,7 +60,6 @@ static const struct device *const ds3231 =
 	DEVICE_DT_GET(EF800_MAIN_DS3231_NODE);
 #endif
 
-#if defined(CONFIG_EF800_MAIN_STORAGE) && CONFIG_EF800_MAIN_STORAGE
 static FATFS storage_fat_fs;
 static struct fs_mount_t storage_mount = {
 	.type = FS_FATFS,
@@ -77,7 +67,6 @@ static struct fs_mount_t storage_mount = {
 	.fs_data = &storage_fat_fs,
 	.flags = FS_MOUNT_FLAG_NO_FORMAT,
 };
-#endif
 
 static K_THREAD_STACK_DEFINE(watchdog_stack,
 				     CONFIG_EF800_MAIN_WATCHDOG_STACK_SIZE);
@@ -149,7 +138,6 @@ static int set_system_time(const struct rtc_time *utc)
 	return sys_clock_settime(SYS_CLOCK_REALTIME, &timestamp);
 }
 
-#if defined(CONFIG_EF800_MAIN_STORAGE) && CONFIG_EF800_MAIN_STORAGE
 static void load_time_settings(void)
 {
 	struct fs_file_t file;
@@ -205,19 +193,6 @@ static int save_time_settings(const struct ef800_time_settings *settings)
 	}
 	return ret;
 }
-#else
-static void load_time_settings(void)
-{
-	time_settings.utc_offset_minutes = 0;
-	time_settings.daylight_saving = false;
-}
-
-static int save_time_settings(const struct ef800_time_settings *settings)
-{
-	ARG_UNUSED(settings);
-	return -ENOTSUP;
-}
-#endif
 
 static const char *storage_root_path(enum ef800_storage_root root)
 {
@@ -327,15 +302,12 @@ static bool usb_vbus_present(void)
 
 static bool usb_msd_assignment_active(void)
 {
-	const struct flash_area *area;
 	struct ef800_boot_metadata metadata;
-	uint8_t buffer[EF800_BOOT_METADATA_SIZE];
+	bool valid;
 	int ret;
 
-	ret = flash_area_open(PARTITION_ID(metadata_partition), &area);
-	if (ret != 0 || flash_area_read(area, 0U, buffer, sizeof(buffer)) != 0 ||
-		ef800_boot_metadata_decode(buffer, sizeof(buffer), &metadata) != 0 ||
-		!ef800_boot_metadata_valid(&metadata)) {
+	ret = ef800_metadata_read_current(&metadata, &valid);
+	if (ret != 0 || !valid) {
 		return false;
 	}
 	return ef800_port_assignment_builder(metadata.port_assignments, 4U) ==
@@ -369,14 +341,8 @@ int ef800_storage_open(struct fs_file_t *file, enum ef800_storage_root root,
 		return -ENOTSUP;
 	}
 
-	#if defined(CONFIG_EF800_MAIN_STORAGE) && CONFIG_EF800_MAIN_STORAGE
 	fs_file_t_init(file);
 	return fs_open(file, path, flags);
-	#else
-	ARG_UNUSED(path);
-	ARG_UNUSED(flags);
-	return -ENOTSUP;
-	#endif
 }
 
 static void watchdog_task(void *arg1, void *arg2, void *arg3)
@@ -385,64 +351,31 @@ static void watchdog_task(void *arg1, void *arg2, void *arg3)
 	ARG_UNUSED(arg2);
 	ARG_UNUSED(arg3);
 
-#if DT_HAS_ALIAS(watchdog0)
-	int channel;
 	int result;
-	const struct wdt_timeout_cfg timeout = {
-		.window.min = 0U,
-		.window.max = CONFIG_EF800_MAIN_WATCHDOG_TIMEOUT_MS,
-		.callback = NULL,
-		.flags = WDT_FLAG_RESET_SOC,
-	};
-
-	if (!device_is_ready(watchdog)) {
-		LOG_WRN("Watchdog alias exists but device is not ready");
-		return;
-	}
-
-	channel = wdt_install_timeout(watchdog, &timeout);
-	if (channel < 0) {
-		LOG_ERR("Watchdog timeout install failed: %d", channel);
-		return;
-	}
-
-	result = wdt_setup(watchdog, 0U);
-	if (result < 0) {
-		LOG_ERR("Watchdog setup failed: %d", result);
+	result = ef800_watchdog_start(CONFIG_EF800_MAIN_WATCHDOG_TIMEOUT_MS);
+	if (result != 0) {
+		LOG_ERR("Watchdog start failed: %d", result);
 		return;
 	}
 
 	LOG_INF("Watchdog task active (%d ms timeout)",
 		CONFIG_EF800_MAIN_WATCHDOG_TIMEOUT_MS);
 	while (true) {
-		result = wdt_feed(watchdog, channel);
+		result = ef800_watchdog_feed();
 		if (result < 0) {
 			LOG_ERR("Watchdog feed failed: %d", result);
 		}
 		k_msleep(CONFIG_EF800_MAIN_WATCHDOG_FEED_MS);
 	}
-#else
-	LOG_INF("Watchdog task disabled: no watchdog0 alias");
-#endif
 }
 
 static bool init_watchdog_task(void)
 {
-#if DT_HAS_ALIAS(watchdog0)
-	if (!device_is_ready(watchdog)) {
-		LOG_WRN("Watchdog task not started: watchdog0 is not ready");
-		return false;
-	}
-
 	(void)k_thread_create(&watchdog_thread, watchdog_stack,
 				      K_THREAD_STACK_SIZEOF(watchdog_stack),
 				      watchdog_task, NULL, NULL, NULL,
 				      K_PRIO_PREEMPT(2), 0, K_NO_WAIT);
 	return true;
-#else
-	LOG_INF("Watchdog task not started: no watchdog0 alias");
-	return false;
-#endif
 }
 
 static bool init_status_led(void)
@@ -546,7 +479,6 @@ static bool probe_ds3231(void)
 
 int ef800_storage_mount(void)
 {
-#if defined(CONFIG_EF800_MAIN_STORAGE) && CONFIG_EF800_MAIN_STORAGE
 	int result;
 	int directory_result;
 
@@ -575,10 +507,6 @@ int ef800_storage_mount(void)
 	}
 	storage_mounted = true;
 	return 0;
-#else
-	LOG_INF("QSPI FAT filesystem disabled by CONFIG_EF800_MAIN_STORAGE");
-	return -ENOTSUP;
-#endif
 }
 
 bool ef800_main_usb_msd_requested(void)
@@ -588,7 +516,6 @@ bool ef800_main_usb_msd_requested(void)
 
 int ef800_storage_unmount(void)
 {
-#if defined(CONFIG_EF800_MAIN_STORAGE) && CONFIG_EF800_MAIN_STORAGE
 	int ret;
 
 	if (!storage_mounted) {
@@ -599,10 +526,6 @@ int ef800_storage_unmount(void)
 		storage_mounted = false;
 	}
 	return ret;
-#else
-	/* No FAT owner exists in a storage-disabled bring-up image. */
-	return 0;
-#endif
 }
 
 bool ef800_main_rtc_is_ready(void)

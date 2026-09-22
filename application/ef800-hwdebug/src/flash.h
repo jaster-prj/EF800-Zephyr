@@ -16,6 +16,7 @@ void hwdebug_console_hexdump(uint32_t offset, const uint8_t *data, size_t length
 
 int hwdebug_flash_watchdog_init(void);
 void hwdebug_flash_watchdog_feed(void);
+void hwdebug_flash_watchdog_test(void);
 void hwdebug_flash_bitbang(const char *mode);
 void hwdebug_flash_info(void);
 void hwdebug_flash_probe(void);
