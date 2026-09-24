@@ -38,6 +38,45 @@ ZTEST(keyboard_protocol, test_raw_key_map)
 	zassert_equal(scancode.prefix, KB_SCANCODE_PREFIX_E0, NULL);
 	zassert_equal(scancode.code, 0x5EU, NULL);
 	zassert_true(scancode.modifier, NULL);
+
+	zassert_ok(kb_scancode_for_raw(KB_MATRIX_RAW(4, 4), &scancode), NULL);
+	zassert_equal(scancode.prefix, KB_SCANCODE_PREFIX_E0, NULL);
+	zassert_equal(scancode.code, 0x4BU, NULL);
+	zassert_ok(kb_scancode_for_raw(KB_MATRIX_RAW(6, 6), &scancode), NULL);
+	zassert_equal(scancode.prefix, KB_SCANCODE_PREFIX_E0, NULL);
+	zassert_equal(scancode.code, 0x48U, NULL);
+	zassert_ok(kb_scancode_for_raw(KB_MATRIX_RAW(6, 4), &scancode), NULL);
+	zassert_equal(scancode.prefix, KB_SCANCODE_PREFIX_E0, NULL);
+	zassert_equal(scancode.code, 0x50U, NULL);
+	zassert_ok(kb_scancode_for_raw(KB_MATRIX_RAW(7, 4), &scancode), NULL);
+	zassert_equal(scancode.prefix, KB_SCANCODE_PREFIX_E0, NULL);
+	zassert_equal(scancode.code, 0x4DU, NULL);
+}
+
+ZTEST(keyboard_protocol, test_arrow_translation)
+{
+	struct kb_translator translator;
+	struct kb_translation output;
+
+	kb_translator_init(&translator);
+	zassert_equal(kb_translate_scancode(&translator, KB_SCANCODE_PREFIX_E0,
+		0x4BU, false, &output), 1, NULL);
+	zassert_equal(output.type, KB_TRANSLATION_EVENT, NULL);
+	zassert_equal(output.value, KB_EVENT_ARROWLEFT, NULL);
+	zassert_equal(kb_translate_scancode(&translator, KB_SCANCODE_PREFIX_E0,
+		0x48U, false, &output), 1, NULL);
+	zassert_equal(output.value, KB_EVENT_ARROWUP, NULL);
+	zassert_equal(kb_translate_scancode(&translator, KB_SCANCODE_PREFIX_E0,
+		0x50U, false, &output), 1, NULL);
+	zassert_equal(output.value, KB_EVENT_ARROWDOWN, NULL);
+	zassert_equal(kb_translate_scancode(&translator, KB_SCANCODE_PREFIX_E0,
+		0x4DU, false, &output), 1, NULL);
+	zassert_equal(output.value, KB_EVENT_ARROWRIGHT, NULL);
+
+	/* Set 2-style extended releases must be accepted without generating events. */
+	zassert_ok(kb_translate_scancode(&translator, KB_SCANCODE_PREFIX_E0,
+		0x4BU, true, &output), NULL);
+	zassert_equal(output.type, KB_TRANSLATION_NONE, NULL);
 }
 
 ZTEST(keyboard_protocol, test_controller_key_names)

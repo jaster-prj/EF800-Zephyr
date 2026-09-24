@@ -46,6 +46,16 @@ config EF800_MAIN_LCD_STATUS_TIMEOUT_US
 	  A bounded timeout keeps a missing or disconnected LCD from blocking the
 	  MainApplication forever.
 
+config EF800_MAIN_RUNTIME_RTC_PERIOD_MS
+	int "Runtime RTC sample period (ms)"
+	default 1000
+	range 100 60000
+
+config EF800_MAIN_RUNTIME_BATTERY_PERIOD_MS
+	int "Runtime battery sample period (ms)"
+	default 10000
+	range 1000 600000
+
 endmenu
 
 source "Kconfig.zephyr"

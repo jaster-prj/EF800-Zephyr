@@ -159,20 +159,6 @@
 		bias-pull-up;
 	};
 
-	i2c1_sda_pg13: i2c1_sda_pg13 {
-		pinmux = <STM32_PINMUX('G', 13, AF4)>;
-		bias-pull-up;
-		drive-open-drain;
-		slew-rate = "high-speed";
-	};
-
-	i2c1_scl_pg14: i2c1_scl_pg14 {
-		pinmux = <STM32_PINMUX('G', 14, AF4)>;
-		bias-pull-up;
-		drive-open-drain;
-		slew-rate = "high-speed";
-	};
-
 	usb_otg_fs_dm_pa11: usb_otg_fs_dm_pa11 {
 		pinmux = <STM32_PINMUX('A', 11, AF10)>;
 	};

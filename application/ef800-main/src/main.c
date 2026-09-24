@@ -22,6 +22,7 @@
 #include "ef800_persistence.h"
 #include "ef800_persistence_legacy.h"
 #include "ef800_position.h"
+#include "ef800_runtime_state.h"
 #include "ef800_ports.h"
 #include "ef800_port_uart.h"
 #include "ef800_console.h"
@@ -55,9 +56,12 @@ static volatile uint8_t keyboard_pending_command;
 static bool keyboard_uart_initialized;
 static bool keyboard_debug_active;
 
+static void keyboard_uart_isr(const struct device *dev, void *user_data);
+
 static struct ef800_mcp23017 mcp23017;
 static struct ef800_t6963 lcd;
 static struct ef800_max17043 fuel_gauge;
+static struct ef800_runtime_state runtime_state;
 static struct ef800_persistence persistence;
 static struct ef800_workspace workspace;
 static struct ef800_port_assignment_service port_assignments;
@@ -75,6 +79,8 @@ static char measurement_code[EF800_MEASUREMENT_TEXT_MAX + 1U] = "02";
 static bool boot_metadata_valid;
 static bool lcd_ready;
 static bool fuel_gauge_ready;
+static bool runtime_state_ready;
+static char header_title[17];
 static uint8_t menu_selection;
 static uint8_t selected_port_index;
 static uint8_t selected_builder_id;
@@ -483,9 +489,9 @@ static int port_uart_check_ready(uint8_t port_id, uint32_t connection)
 	return device != NULL && device_is_ready(device) ? 0 : -ENODEV;
 }
 
-#if DT_HAS_COMPAT_STATUS_OKAY(maxim_max17043)
+#if DT_HAS_COMPAT_STATUS_OKAY(maxim_max17048)
 static const struct i2c_dt_spec fuel_gauge_i2c =
-	I2C_DT_SPEC_GET(DT_COMPAT_GET_ANY_STATUS_OKAY(maxim_max17043));
+	I2C_DT_SPEC_GET(DT_COMPAT_GET_ANY_STATUS_OKAY(maxim_max17048));
 #endif
 
 static const struct ef800_t6963_config lcd_config = {
@@ -601,7 +607,7 @@ static int keyboard_send_virtual_key(uint8_t action, const char *name)
 	return result;
 }
 
-static void display_line(uint8_t row, const char *text)
+static void display_raw_line(uint8_t row, const char *text)
 {
 	char line[STATUS_LINE_SIZE];
 	int length;
@@ -618,10 +624,46 @@ static void display_line(uint8_t row, const char *text)
 	(void)ef800_t6963_write_string(&lcd, line);
 }
 
+static void display_header(const char *title)
+{
+	struct ef800_runtime_snapshot snapshot;
+	char line[LCD_COLUMNS + 1U];
+	char clock_text[6];
+
+	memset(line, ' ', sizeof(line) - 1U);
+	line[sizeof(line) - 1U] = '\0';
+	if (title != NULL) {
+		snprintk(header_title, sizeof(header_title), "%.16s", title);
+	}
+	memcpy(line, header_title, strlen(header_title));
+	if (runtime_state_ready &&
+		ef800_runtime_state_snapshot(&runtime_state, &snapshot) == 0 &&
+		snapshot.rtc_has_value) {
+		snprintk(clock_text, sizeof(clock_text), "%02d:%02d",
+			snapshot.local_time.tm_hour, snapshot.local_time.tm_min);
+		memcpy(&line[17], clock_text, sizeof(clock_text) - 1U);
+	}
+	display_raw_line(0U, line);
+}
+
+static void draw_header_separator(void)
+{
+	(void)ef800_t6963_draw_horizontal_line(&lcd, 8U);
+}
+
+static void display_line(uint8_t row, const char *text)
+{
+	if (row == 0U) {
+		display_header(text);
+		return;
+	}
+	display_raw_line(row, text);
+}
+
 static void display_banner(void)
 {
-	display_line(0U, "EF800 MainApplication");
-	display_line(1U, "Zephyr runtime/menu foundation");
+	display_header("EF800");
+	display_line(1U, "MainApplication");
 	display_line(6U, "Keyboard startup...");
 }
 
@@ -638,7 +680,8 @@ static void display_menu_entries(const char *title, const char *const *items,
 		snprintk(line, sizeof(line), "Workspace: none");
 	}
 	display_line(1U, line);
-	for (size_t index = 0U; index < 4U; ++index) {
+	display_line(2U, "");
+	for (size_t index = 0U; index < 5U; ++index) {
 		if (index < count) {
 			snprintk(line, sizeof(line), "%c %s [%s]",
 				index == menu_selection ? '>' : ' ', items[index],
@@ -646,7 +689,7 @@ static void display_menu_entries(const char *title, const char *const *items,
 		} else {
 			line[0] = '\0';
 		}
-		display_line((uint8_t)(4U + index), line);
+		display_line((uint8_t)(3U + index), line);
 	}
 }
 
@@ -1190,10 +1233,12 @@ static void move_menu_selection(int direction)
 		menu_selection = 0U;
 		return;
 	}
-	if (direction < 0 && menu_selection > 0U) {
-		--menu_selection;
-	} else if (direction > 0 && menu_selection + 1U < count) {
-		++menu_selection;
+	if (direction < 0) {
+		menu_selection = menu_selection == 0U ?
+			(uint8_t)(count - 1U) : menu_selection - 1U;
+	} else if (direction > 0) {
+		menu_selection = menu_selection + 1U >= count ?
+			0U : menu_selection + 1U;
 	}
 	display_active_menu();
 }
@@ -1248,7 +1293,7 @@ static void return_from_child_menu(void)
 static void return_from_position_editor(void)
 {
 	position_editor.active = false;
-	(void)ef800_t6963_clear_text(&lcd);
+	(void)ef800_t6963_clear_text_body(&lcd);
 	active_menu = APPLICATION_MENU_MAIN;
 	menu_selection = 1U;
 	display_menu();
@@ -1925,7 +1970,7 @@ static void draw_battery_icon(uint8_t soc)
 						      outline[index][1], true);
 	}
 			for (uint16_t x = 229U; x <= 233U; ++x) {
-				bool filled = soc >= (uint8_t)((x - 228U) * 20U);
+		bool filled = soc > (uint8_t)((x - 228U) * 20U);
 				for (uint16_t y = 2U; y <= 4U; ++y) {
 					(void)ef800_t6963_write_pixel(&lcd, x, y, filled);
 				}
@@ -1937,66 +1982,19 @@ static void draw_battery_icon(uint8_t soc)
 
 static void update_lcd_status(void)
 {
-	char line[STATUS_LINE_SIZE];
-	struct rtc_time time;
-	struct ef800_max17043_status battery;
-	int ret = 0;
-	int rtc_ret;
+	struct ef800_runtime_snapshot snapshot;
+	static uint8_t last_soc = UINT8_MAX;
 
-	if (!lcd_ready) {
+	if (!lcd_ready || !runtime_state_ready ||
+		ef800_runtime_state_snapshot(&runtime_state, &snapshot) != 0) {
 		return;
 	}
 
-	rtc_ret = ef800_main_rtc_get_local_time(&time);
-	if (rtc_ret == 0) {
-		snprintk(line, sizeof(line), "Local %04d-%02d-%02d %02d:%02d:%02d",
-			time.tm_year + 1900, time.tm_mon + 1, time.tm_mday,
-			time.tm_hour, time.tm_min, time.tm_sec);
-	} else {
-		snprintk(line, sizeof(line), "RTC unavailable (%d)", rtc_ret);
-	}
-	display_line(2U, line);
-
-	if (fuel_gauge_ready) {
-		ret = ef800_max17043_read(&fuel_gauge, &battery);
-		if (ret == 0) {
-			snprintk(line, sizeof(line), "Battery %u%% %lumV",
-				battery.soc_percent,
-				(unsigned long)(battery.voltage_uv / 1000U));
-		} else {
-			snprintk(line, sizeof(line), "Battery read failed (%d)", ret);
-		}
-	} else {
-		snprintk(line, sizeof(line), "Battery unavailable");
-	}
-	display_line(3U, line);
-
-	if (fuel_gauge_ready && ret == 0) {
-		static uint8_t last_soc = UINT8_MAX;
-
-		if (battery.soc_percent != last_soc) {
-			draw_battery_icon(battery.soc_percent);
-			last_soc = battery.soc_percent;
-		}
-	}
-
-	/* The old LcdHelper keeps a compact local-time clock in the header. */
-	if (rtc_ret == 0 &&
-		(time.tm_hour >= 0 && time.tm_min >= 0)) {
-		static int last_hour = -1;
-		static int last_minute = -1;
-
-		if (time.tm_hour != last_hour || time.tm_min != last_minute) {
-			char clock_text[16];
-			uint8_t hour = (uint8_t)time.tm_hour;
-			uint8_t minute = (uint8_t)time.tm_min;
-			snprintk(clock_text, sizeof(clock_text), "%02u:%02u",
-				hour, minute);
-			(void)ef800_t6963_text_cursor(&lcd, 17U, 0U);
-			(void)ef800_t6963_write_string(&lcd, clock_text);
-			last_hour = time.tm_hour;
-			last_minute = time.tm_min;
-		}
+	display_header(NULL);
+	if (snapshot.battery_has_value &&
+		snapshot.battery_soc_percent != last_soc) {
+		draw_battery_icon(snapshot.battery_soc_percent);
+		last_soc = snapshot.battery_soc_percent;
 	}
 }
 
@@ -2033,8 +2031,8 @@ static void display_time_editor(void)
 	if (!lcd_ready) {
 		return;
 	}
-	(void)ef800_t6963_clear_text(&lcd);
-	display_line(0U, "EF800 RTC setup");
+	(void)ef800_t6963_clear_text_body(&lcd);
+	display_header("RTC setup");
 	snprintk(line, sizeof(line), "%04d-%02d-%02d %02d:%02d:%02d",
 		time_editor.local.tm_year + 1900, time_editor.local.tm_mon + 1,
 		time_editor.local.tm_mday, time_editor.local.tm_hour,
@@ -2161,9 +2159,10 @@ static void finish_time_editor(void)
 
 	if (ret == 0) {
 		LOG_INF("RTC updated from local time editor");
+		ef800_runtime_state_refresh_rtc(&runtime_state);
 		display_line(6U, "RTC updated successfully");
 		time_editor.active = false;
-		(void)ef800_t6963_clear_text(&lcd);
+		(void)ef800_t6963_clear_text_body(&lcd);
 		display_banner();
 		active_menu = APPLICATION_MENU_SETTINGS;
 		menu_selection = 0U;
@@ -2182,7 +2181,7 @@ static void handle_time_editor_key(uint8_t key)
 
 	if (key == 0x1BU) {
 		time_editor.active = false;
-		(void)ef800_t6963_clear_text(&lcd);
+		(void)ef800_t6963_clear_text_body(&lcd);
 		display_banner();
 		active_menu = APPLICATION_MENU_SETTINGS;
 		menu_selection = 0U;
@@ -2567,6 +2566,8 @@ static bool wait_for_keyboard_startup(void)
 int main(void)
 {
 	uint8_t byte;
+	bool mcp_controls_ready = false;
+	bool keyboard_rx_armed = false;
 	int result;
 	uint16_t mcp_port;
 
@@ -2644,13 +2645,32 @@ result = ef800_mcp23017_open(&mcp23017,
 		result = gpio_pin_configure_dt(&keyboard_reset, GPIO_OUTPUT_INACTIVE);
 	}
 	if (result == 0) {
+		if (!device_is_ready(keyboard_uart)) {
+			result = -ENODEV;
+			LOG_ERR("Keyboard UART is not ready");
+		} else {
+			result = configure_keyboard_uart();
+		}
+	}
+	if (result == 0) {
+		ef800_keyboard_host_init(&keyboard_host);
+		k_msgq_purge(&keyboard_rx_msgq);
+		keyboard_uart_initialized = true;
+		uart_irq_callback_user_data_set(keyboard_uart, keyboard_uart_isr, NULL);
+		uart_irq_rx_enable(keyboard_uart);
+		/* RX is live before reset release so the controller's one-shot 0xaa is kept. */
 		k_msleep(10U);
 		result = gpio_pin_set_dt(&keyboard_reset, 1);
+		keyboard_rx_armed = result == 0;
 	}
 	if (result != 0) {
 		LOG_WRN("MCP23017 controls unavailable: %d", result);
 	} else if (ef800_mcp23017_read(&mcp23017, &mcp_port) == 0) {
+		mcp_controls_ready = true;
 		LOG_INF("MCP23017 controls initialized (port=0x%04x)", mcp_port);
+	} else {
+		mcp_controls_ready = true;
+		LOG_WRN("MCP23017 controls initialized but port readback failed");
 	}
 
 	if (power_down.port == NULL) {
@@ -2664,18 +2684,23 @@ result = ef800_mcp23017_open(&mcp23017,
 		LOG_INF("PB5 keyboard power-down output initialized inactive");
 	}
 
-	result = ef800_t6963_init(&lcd, &lcd_config);
-	if (result == 0) {
-		result = ef800_t6963_initialize(&lcd);
-	}
-	if (result != 0) {
-		LOG_WRN("T6963 LCD unavailable; continuing without display: %d", result);
+	if (!mcp_controls_ready) {
+		LOG_WRN("T6963 LCD skipped: MCP23017 reset and FS controls are unavailable");
 	} else {
-		lcd_ready = true;
-		display_banner();
+		result = ef800_t6963_init(&lcd, &lcd_config);
+		if (result == 0) {
+			result = ef800_t6963_initialize(&lcd);
+		}
+		if (result != 0) {
+			LOG_WRN("T6963 LCD unavailable; continuing without display: %d", result);
+		} else {
+			lcd_ready = true;
+			draw_header_separator();
+			display_banner();
+		}
 	}
 
-#if DT_HAS_COMPAT_STATUS_OKAY(maxim_max17043)
+#if DT_HAS_COMPAT_STATUS_OKAY(maxim_max17048)
 	result = ef800_max17043_init(&fuel_gauge, &fuel_gauge_i2c);
 	if (result != 0) {
 		LOG_WRN("MAX17043 unavailable; continuing without battery status: %d",
@@ -2684,32 +2709,25 @@ result = ef800_mcp23017_open(&mcp23017,
 		fuel_gauge_ready = true;
 	}
 #else
-	LOG_INF("MAX17043 disabled: no enabled fuel_gauge node");
+	LOG_INF("MAX17043-compatible fuel gauge disabled: no enabled MAX17048 node");
 #endif
 
+	ef800_runtime_state_init(&runtime_state, &fuel_gauge, fuel_gauge_ready);
+	runtime_state_ready = true;
+	ef800_runtime_state_start(&runtime_state);
+	k_msleep(20U);
 	update_lcd_status();
 
-	if (!device_is_ready(keyboard_uart)) {
-		LOG_ERR("Keyboard UART is not ready");
-		return 0;
-	}
-	result = configure_keyboard_uart();
-	if (result != 0) {
-		LOG_ERR("Keyboard UART configuration failed: %d", result);
-		return 0;
-	}
-
-	ef800_keyboard_host_init(&keyboard_host);
-	keyboard_uart_initialized = true;
-	uart_irq_callback_user_data_set(keyboard_uart, keyboard_uart_isr, NULL);
-	uart_irq_rx_enable(keyboard_uart);
-	if (wait_for_keyboard_startup()) {
+	if (keyboard_rx_armed && wait_for_keyboard_startup()) {
 		display_line(6U, "Keyboard ready");
+	} else if (!keyboard_rx_armed) {
+		LOG_WRN("Keyboard disabled: reset remains asserted because UART setup failed");
 	}
 	display_menu();
 
 	while (true) {
 		static bool msc_requested;
+		static int64_t next_status_update_ms;
 		static enum ef800_storage_owner storage_owner =
 			EF800_STORAGE_OWNER_FAT;
 		bool requested = ef800_main_usb_msd_requested();
@@ -2737,6 +2755,10 @@ result = ef800_mcp23017_open(&mcp23017,
 		while (k_msgq_get(&keyboard_rx_msgq, &byte, K_NO_WAIT) == 0) {
 			process_keyboard_byte(byte, k_uptime_get_32());
 		}
-		update_lcd_status();
+		if (k_uptime_get() >= next_status_update_ms) {
+			update_lcd_status();
+			next_status_update_ms = k_uptime_get() +
+				CONFIG_EF800_MAIN_RUNTIME_RTC_PERIOD_MS;
+		}
 	}
 }

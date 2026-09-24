@@ -18,7 +18,7 @@ static const struct ef800_port_descriptor ports[] = {
 	},
 	{
 		.id = 2U,
-		.title = "Serial Port",
+		.title = "RS232 Port",
 		.shortcut = '2',
 		.capabilities = EF800_PORT_CAP_SERIAL |
 			EF800_PORT_CAP_SERIAL_FLOW_CONTROL,

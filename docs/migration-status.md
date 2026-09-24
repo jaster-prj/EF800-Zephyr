@@ -165,6 +165,19 @@ large software porting phase.
   key cleanup, and physical-keyboard resumption.
 - Validate the status LED, MCP23017 wiring, DS3231, MAX17043, LCD electrical
   timing/polarity, and the confirmed UART routes.
+- The production image now uses the same PG13/PG14 open-drain, high-speed I2C
+  pinctrl as hwdebug. On target hardware, confirm MCP23017 (`0x24`), DS3231
+  (`0x68`), and MAX17043 (`0x36`) transactions after a bootloader handoff.
+- MainApplication arms LPUART1 receive before releasing the MCP23017 keyboard
+  reset output so the controller's one-shot `0xaa` startup indication is not
+  lost. Confirm that sequence on both cold boot and bootloader handoff.
+- T6963 initialization now reports control-line cleanup failures and waits
+  after reset release. Confirm the required reset recovery time and polarity
+  on the fitted display.
+- MainApplication restores the legacy persistent display header: a compact
+  clock, battery icon, and separator line are independent of the menu body.
+  RTC and battery sampling publish a mutex-protected runtime snapshot; only
+  the MainApplication thread renders that state to the LCD.
 - Capture complete logs. The fixed Zephyr shell remains on UART4, while the
   custom console/log routing can select a configured external target; verify
   both the documented USART1 console and any selected fallback route.

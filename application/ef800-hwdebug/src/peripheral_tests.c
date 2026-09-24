@@ -1121,6 +1121,8 @@ void hwdebug_display_test(void)
 {
 	struct ef800_t6963 lcd;
 	static const char text[] = "EF800 LCD TEST";
+	uint8_t readback[sizeof(text) - 1U];
+	uint8_t expected[sizeof(text) - 1U];
 	int ret;
 
 	hwdebug_test_begin("display/t6963-write");
@@ -1135,13 +1137,25 @@ void hwdebug_display_test(void)
 		ret = ef800_t6963_write_string(&lcd, text);
 	}
 	if (ret == 0) {
+		ret = ef800_t6963_read_text(&lcd, 0U, 0U, readback,
+					    sizeof(readback));
+	}
+	if (ret == 0) {
+		for (size_t index = 0U; index < sizeof(expected); ++index) {
+			expected[index] = (uint8_t)text[index] - ' ';
+		}
+		if (memcmp(readback, expected, sizeof(readback)) != 0) {
+			ret = -EPROTO;
+		}
+	}
+	if (ret == 0) {
 		ret = ef800_t6963_create_line(&lcd, 0, 16, 239, 16);
 	}
 	if (ret == 0) {
 		ret = ef800_t6963_create_line(&lcd, 0, 32, 239, 32);
 	}
 	if (ret != 0) {
-		hwdebug_test_fail("T6963 write-only test failed", ret);
+		hwdebug_test_fail("T6963 write/readback test failed", ret);
 	}
 	hwdebug_test_pass();
 }

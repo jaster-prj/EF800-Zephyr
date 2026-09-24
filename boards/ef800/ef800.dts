@@ -111,6 +111,20 @@
 };
 
 &pinctrl {
+	i2c1_sda_pg13: i2c1_sda_pg13 {
+		pinmux = <STM32_PINMUX('G', 13, AF4)>;
+		bias-pull-up;
+		drive-open-drain;
+		slew-rate = "high-speed";
+	};
+
+	i2c1_scl_pg14: i2c1_scl_pg14 {
+		pinmux = <STM32_PINMUX('G', 14, AF4)>;
+		bias-pull-up;
+		drive-open-drain;
+		slew-rate = "high-speed";
+	};
+
 	uart4_tx_pc10: uart4_tx_pc10 {
 		pinmux = <STM32_PINMUX('C', 10, AF8)>;
 		bias-pull-up;

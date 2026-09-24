@@ -79,6 +79,7 @@ static int read_data_bus(struct ef800_t6963 *lcd, uint8_t *value)
 static int read_cycle_locked(struct ef800_t6963 *lcd, uint8_t *value)
 {
 	int ret;
+	int cleanup_ret;
 
 	ret = set_data_direction(lcd, false);
 	if (ret == 0) {
@@ -95,15 +96,25 @@ static int read_cycle_locked(struct ef800_t6963 *lcd, uint8_t *value)
 		ret = read_data_bus(lcd, value);
 	}
 
-	(void)set_pin(&lcd->config.ce, 1);
-	(void)set_pin(&lcd->config.rd, 1);
-	(void)set_data_direction(lcd, true);
+	cleanup_ret = set_pin(&lcd->config.ce, 1);
+	int next_ret = set_pin(&lcd->config.rd, 1);
+	if (cleanup_ret == 0) {
+		cleanup_ret = next_ret;
+	}
+	next_ret = set_data_direction(lcd, true);
+	if (cleanup_ret == 0) {
+		cleanup_ret = next_ret;
+	}
+	if (ret == 0) {
+		ret = cleanup_ret;
+	}
 	return ret;
 }
 
 static int read_status_locked(struct ef800_t6963 *lcd, uint8_t *status)
 {
 	int ret;
+	int cleanup_ret;
 
 	ret = set_pin(&lcd->config.cd, 1);
 	if (ret != 0) {
@@ -122,9 +133,18 @@ static int read_status_locked(struct ef800_t6963 *lcd, uint8_t *status)
 		ret = read_data_bus(lcd, status);
 	}
 
-	(void)set_pin(&lcd->config.ce, 1);
-	(void)set_pin(&lcd->config.rd, 1);
-	(void)set_data_direction(lcd, true);
+	cleanup_ret = set_pin(&lcd->config.ce, 1);
+	int next_ret = set_pin(&lcd->config.rd, 1);
+	if (cleanup_ret == 0) {
+		cleanup_ret = next_ret;
+	}
+	next_ret = set_data_direction(lcd, true);
+	if (cleanup_ret == 0) {
+		cleanup_ret = next_ret;
+	}
+	if (ret == 0) {
+		ret = cleanup_ret;
+	}
 	return ret;
 }
 
@@ -152,6 +172,7 @@ static int write_cycle_locked(struct ef800_t6963 *lcd, uint8_t value,
 				      bool command)
 {
 	int ret;
+	int cleanup_ret;
 
 	ret = set_data_direction(lcd, true);
 	if (ret == 0) {
@@ -167,8 +188,14 @@ static int write_cycle_locked(struct ef800_t6963 *lcd, uint8_t value,
 		ret = set_pin(&lcd->config.ce, 0);
 	}
 	k_busy_wait(1U);
-	(void)set_pin(&lcd->config.ce, 1);
-	(void)set_pin(&lcd->config.wr, 1);
+	cleanup_ret = set_pin(&lcd->config.ce, 1);
+	int next_ret = set_pin(&lcd->config.wr, 1);
+	if (cleanup_ret == 0) {
+		cleanup_ret = next_ret;
+	}
+	if (ret == 0) {
+		ret = cleanup_ret;
+	}
 	return ret;
 }
 
@@ -384,13 +411,27 @@ int ef800_t6963_initialize(struct ef800_t6963 *lcd)
 	}
 
 	/* T6963 control lines are active low except CD. */
-	(void)set_pin(&lcd->config.cd, 1);
-	(void)set_pin(&lcd->config.wr, 1);
-	(void)set_pin(&lcd->config.rd, 1);
-	(void)set_pin(&lcd->config.ce, 1);
-	/* Match the legacy controller startup: leave all control lines inactive. */
-	(void)set_pin(&lcd->config.fs, 1);
-	(void)set_pin(&lcd->config.reset, 1);
+	ret = set_pin(&lcd->config.cd, 1);
+	if (ret == 0) {
+		ret = set_pin(&lcd->config.wr, 1);
+	}
+	if (ret == 0) {
+		ret = set_pin(&lcd->config.rd, 1);
+	}
+	if (ret == 0) {
+		ret = set_pin(&lcd->config.ce, 1);
+	}
+	if (ret == 0) {
+		ret = set_pin(&lcd->config.fs, 1);
+	}
+	if (ret == 0) {
+		ret = set_pin(&lcd->config.reset, 1);
+	}
+	if (ret != 0) {
+		goto unlock;
+	}
+	/* The controller needs recovery time after its MCP-backed reset releases. */
+	k_msleep(10U);
 	ret = write_data_bus(lcd, 0xFFU);
 	if (ret != 0) {
 		goto unlock;
@@ -643,6 +684,15 @@ int ef800_t6963_clear_text(struct ef800_t6963 *lcd)
 	return clear_region(lcd, 0U, (uint32_t)lcd->columns * lcd->rows);
 }
 
+int ef800_t6963_clear_text_body(struct ef800_t6963 *lcd)
+{
+	if (lcd == NULL || lcd->rows < 2U) {
+		return -EINVAL;
+	}
+	return clear_region(lcd, lcd->columns,
+		(uint32_t)lcd->columns * (lcd->rows - 1U));
+}
+
 int ef800_t6963_clear_graphic(struct ef800_t6963 *lcd)
 {
 	uint32_t size;
@@ -829,6 +879,24 @@ int ef800_t6963_create_line(struct ef800_t6963 *lcd,
 			error += dx;
 			y0 += sy;
 		}
+	}
+	k_mutex_unlock(&lcd->lock);
+	return ret;
+}
+
+int ef800_t6963_draw_horizontal_line(struct ef800_t6963 *lcd, uint16_t y)
+{
+	uint8_t value;
+	int ret;
+
+	if (lcd == NULL || !lcd->ready || y >= lcd->config.pixels_vertical) {
+		return -EINVAL;
+	}
+	value = (uint8_t)(BIT(lcd->config.font_width) - 1U);
+	k_mutex_lock(&lcd->lock, K_FOREVER);
+	ret = set_address_locked(lcd, graphic_address(lcd, 0U, y));
+	for (uint8_t column = 0U; ret == 0 && column < lcd->columns; ++column) {
+		ret = write_display_data_locked(lcd, value);
 	}
 	k_mutex_unlock(&lcd->lock);
 	return ret;

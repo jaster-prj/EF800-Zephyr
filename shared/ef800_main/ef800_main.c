@@ -78,6 +78,7 @@ static bool ds3231_ready;
 static bool storage_mounted;
 static bool usb_vbus_initialized;
 static struct ef800_time_settings time_settings;
+K_MUTEX_DEFINE(rtc_lock);
 
 #define EF800_MAIN_USER_NODE DT_PATH(zephyr_user)
 #if DT_NODE_HAS_PROP(EF800_MAIN_USER_NODE, usb_vbus_gpios)
@@ -546,7 +547,9 @@ int ef800_main_rtc_get_time(struct rtc_time *time)
 	if (!ds3231_ready || time == NULL) {
 		return -ENODEV;
 	}
+	k_mutex_lock(&rtc_lock, K_FOREVER);
 	ret = rtc_get_time(ds3231, &driver_time);
+	k_mutex_unlock(&rtc_lock);
 	if (ret != 0) {
 		return ret;
 	}
@@ -570,7 +573,9 @@ int ef800_main_rtc_set_utc_time(const struct rtc_time *utc)
 	if (ret != 0) {
 		return ret;
 	}
+	k_mutex_lock(&rtc_lock, K_FOREVER);
 	ret = rtc_set_time(ds3231, &driver_time);
+	k_mutex_unlock(&rtc_lock);
 	if (ret != 0) {
 		return ret;
 	}

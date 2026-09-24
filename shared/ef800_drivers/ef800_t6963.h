@@ -47,6 +47,7 @@ int ef800_t6963_read_text(struct ef800_t6963 *lcd, uint8_t column,
 int ef800_t6963_write_pixel(struct ef800_t6963 *lcd,
 				    uint16_t x, uint16_t y, bool value);
 int ef800_t6963_clear_text(struct ef800_t6963 *lcd);
+int ef800_t6963_clear_text_body(struct ef800_t6963 *lcd);
 int ef800_t6963_clear_graphic(struct ef800_t6963 *lcd);
 int ef800_t6963_clear_character_generator(struct ef800_t6963 *lcd);
 int ef800_t6963_graphic_cursor(struct ef800_t6963 *lcd,
@@ -63,6 +64,7 @@ int ef800_t6963_set_cursor_pointer(struct ef800_t6963 *lcd,
 int ef800_t6963_set_mode(struct ef800_t6963 *lcd, char mode, char cgram);
 int ef800_t6963_create_line(struct ef800_t6963 *lcd,
 					int x0, int y0, int x1, int y1);
+int ef800_t6963_draw_horizontal_line(struct ef800_t6963 *lcd, uint16_t y);
 int ef800_t6963_create_circle(struct ef800_t6963 *lcd,
 					  int center_x, int center_y, int radius);
 
