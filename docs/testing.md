@@ -1,5 +1,9 @@
 # EF800 Testing
 
+The authoritative migration state and release gates are maintained in
+`docs/migration-status.md`. This document describes test execution and the
+boundary between native and hardware validation.
+
 ## Native Tests
 
 Native tests run on `native_sim` and do not require EF800 hardware:
@@ -16,6 +20,9 @@ Native tests run on `native_sim` and do not require EF800 hardware:
 - `tests/shared/core`: focused shared-component tests covering boot target
   priority, FAT/MSC ownership transitions, metadata serialization and
   corruption rejection, and invalid arguments.
+
+The current native baseline is 31 test cases. The older 24- and 26-test
+figures belong to superseded bring-up notes.
 
 Bootloader recovery behavior is also covered by the firmware control-flow
 contract: the failure limit applies only while MainApplication is the selected
@@ -50,6 +57,11 @@ The following require a powered target and cannot be proven by `native_sim`:
 - FAT-to-MSC ownership transitions with the real QSPI disk
 - Workspace and keyboard-firmware transfer through MSC
 - Keyboard-controller firmware update transport
+- MCP23017, DS3231, fuel gauge, T6963, status LED, UART routing, and physical
+  keyboard electrical behavior
+- Bootloader-to-Main handoff, IWDG feeding, and controlled Backup fallback
+- QSPI raw protocol qualification, existing FAT contents, and power-loss
+  behavior
 
 Hardware validation must keep FAT and MSC mutually exclusive. The required
 sequence is `FAT unmount -> MSC enable` and `MSC disable -> FAT mount`.

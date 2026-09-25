@@ -219,7 +219,8 @@ docker exec -w /workspace EF800_Devcontainer /opt/venv/bin/west twister -T appli
 ```
 
 All four firmware builds and the native tests must pass before considering a
-porting increment complete. The current closeout baseline is 24 native tests.
+porting increment complete. The current closeout baseline is 31 native test
+cases. Keep `docs/migration-status.md` authoritative when the suite changes.
 
 ## Image Contract
 
@@ -246,10 +247,12 @@ the second-level bootloader.
 
 ## Hardware Gates
 
-Keep MainApplication FAT mounting and bootloader update storage disabled until
-the fitted QSPI part, capacity, erase geometry, maximum frequency, and existing
-FAT volume are verified. Do not allow the MainApplication to mount the QSPI FAT
-volume while the backup application exposes the same disk through USB MSC.
+Keep MainApplication FAT mounting, bootloader update storage, and USB sharing
+release-gated until the fitted QSPI part, capacity, erase geometry, maximum
+frequency, and existing FAT volume are fully verified. The current recoverable
+bring-up target has mounted FAT successfully, but this is not production
+qualification. Never allow MainApplication to mount the QSPI FAT volume while
+BackupApplication exposes the same disk through USB MSC.
 
 Hardware changes must also validate the MCP23017 wiring, USB-select polarity,
 keyboard reset and UART protocol, T6963 timing and polarity, board oscillator,

@@ -95,9 +95,11 @@ legacy image. The external QSPI flash is configured as the identified
 erase geometry, and existing FAT contents still require hardware validation
 before production flashing.
 
-The connected STM32L496 engineering target was erased and verified blank after
-its option bytes were captured. See `docs/stm32l496-target-snapshot.md` for the
-raw option-byte values, recovery-image hashes, and erase record.
+The connected STM32L496 engineering target was erased and verified blank during
+initial recovery preparation, then later used for controlled bootloader and
+MainApplication bring-up. See `docs/stm32l496-target-snapshot.md` for the
+historical option-byte values, recovery-image hashes, and erase record. See
+`docs/migration-status.md` for current migration state.
 
 See `docs/` for the migration contract and hardware assumptions.
 

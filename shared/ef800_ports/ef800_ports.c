@@ -599,6 +599,90 @@ int ef800_port_assignment_set(struct ef800_port_assignment_service *service,
 							 builder_id, connection);
 }
 
+int ef800_port_assignment_move_debug(
+	struct ef800_port_assignment_service *service, uint8_t port_id,
+	uint32_t connection)
+{
+	struct ef800_port_assignment_state old_state = {0};
+	struct ef800_port_assignment_state destination_state = {0};
+	bool have_old = false;
+	bool have_destination = false;
+	int result;
+
+	if (service == NULL ||
+		port_id == 0U || port_id > EF800_PORT_COUNT ||
+		!ef800_port_connection_is_valid(port_id, connection) ||
+		!ef800_port_device_supports_connection(EF800_PORT_BUILDER_DEBUG,
+									connection) ||
+		!ef800_port_builder_allowed_on_port(port_id,
+									EF800_PORT_BUILDER_DEBUG)) {
+		return -EINVAL;
+	}
+
+	for (size_t index = 0U; index < EF800_PORT_COUNT; ++index) {
+		const struct ef800_port_assignment_state *state =
+			&service->states[index];
+
+		if (state->assigned && state->builder_id == EF800_PORT_BUILDER_DEBUG) {
+			old_state = *state;
+			have_old = true;
+		}
+		if (state->port_id == port_id && state->assigned) {
+			destination_state = *state;
+			have_destination = true;
+		}
+	}
+
+	if (have_old && old_state.port_id == port_id &&
+		old_state.connection == connection) {
+		return 0;
+	}
+	if (have_old) {
+		service->states[old_state.port_id - 1U].assigned = false;
+		service->states[old_state.port_id - 1U].builder_id =
+			EF800_PORT_BUILDER_NONE;
+		service->states[old_state.port_id - 1U].connection =
+			EF800_PORT_CONNECTION_NONE;
+	}
+	result = ef800_port_assignment_set_with_connection(service, port_id,
+									EF800_PORT_BUILDER_DEBUG,
+									connection);
+	if (result == -ENOTSUP) {
+		if (have_destination && destination_state.port_id != port_id) {
+			service->states[port_id - 1U] = destination_state;
+		}
+		service->states[port_id - 1U].builder_id = EF800_PORT_BUILDER_DEBUG;
+		service->states[port_id - 1U].connection = connection;
+		service->states[port_id - 1U].assigned = true;
+		return 0;
+	}
+	if (result != 0) {
+		if (have_old) {
+			service->states[old_state.port_id - 1U] = old_state;
+		}
+		if (have_destination) {
+			service->states[destination_state.port_id - 1U] = destination_state;
+		}
+		return result;
+	}
+
+	if (have_old && old_state.port_id != port_id) {
+		result = ef800_port_assignment_remove(service, old_state.port_id);
+		if (result != 0) {
+			(void)ef800_port_assignment_remove(service, port_id);
+			if (have_destination) {
+				(void)ef800_port_assignment_set_with_connection(service,
+					destination_state.port_id, destination_state.builder_id,
+					destination_state.connection);
+			}
+			(void)ef800_port_assignment_set_with_connection(service,
+				old_state.port_id, old_state.builder_id, old_state.connection);
+			return result;
+		}
+	}
+	return 0;
+}
+
 uint32_t ef800_port_assignment_default_connection(uint8_t port_id,
 								  uint8_t builder_id)
 {

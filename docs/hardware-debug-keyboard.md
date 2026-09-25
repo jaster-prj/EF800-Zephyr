@@ -87,8 +87,10 @@ update storage disabled until the QSPI hardware gates are verified.
 
 ## Console preparation
 
-Open a terminal on MainApplication USART1 at `115200 8N1` and capture the
-complete session log. Disable terminal-local echo if commands appear twice.
+Open a terminal on the normal MainApplication UART4/CP2102 console (`COM7`) at
+`115200 8N1` and capture the complete session log. Disable terminal-local echo
+if commands appear twice. USART1 is a product port and is not the fixed shell
+console in the current board configuration.
 
 Reset the target and wait for the normal boot output and the keyboard startup
 completion message. The debug commands should not be used before the keyboard
@@ -276,6 +278,9 @@ state start from the same clean state. Capture the console log for any failed
 cleanup.
 
 ## Native and firmware verification
+
+The authoritative current test count and migration gates are in
+`docs/migration-status.md`.
 
 Run the native protocol suite before hardware testing:
 

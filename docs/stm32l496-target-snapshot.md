@@ -2,8 +2,9 @@
 
 This document records the STM32L496 engineering target connected through the
 ST-LINK probe on 2026-09-02. The target was deliberately erased after the
-legacy firmware captures had been checked. It is currently blank and no
-firmware was restored.
+legacy firmware captures had been checked. The erase and blank-check state are
+historical; the target was later used for controlled Zephyr bootloader and
+MainApplication bring-up. See `docs/migration-status.md` for current status.
 
 ## Connection
 
@@ -142,6 +143,7 @@ Sequential reads from both internal flash bank starts also returned all
 0x08080000: FFFFFFFF FFFFFFFF FFFFFFFF FFFFFFFF ...
 ```
 
-The target is intentionally left blank. Do not flash the current bootloader,
-backup, main, or hardware-debug images until their watchdog behavior and the
-remaining hardware gates have been validated.
+At the time of this snapshot the target was intentionally left blank. This is
+not a current-state instruction; current flashing must follow the fixed image
+layout, probe checks, and safety gates in `docs/migration-status.md` and
+`AGENTS.md`.

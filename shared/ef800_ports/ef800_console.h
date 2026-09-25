@@ -16,5 +16,12 @@ int ef800_console_set_target_with_config(
 	uint8_t port_id, const struct ef800_measurement_serial_config *config);
 uint8_t ef800_console_get_target(void);
 int ef800_console_write(const uint8_t *data, size_t length);
+int ef800_console_read(uint8_t *data);
+int ef800_console_usb_start(void);
+void ef800_console_set_transport_ready(bool ready);
+
+/* Queue output until a usable DebugConsole transport is selected. */
+size_t ef800_console_pending(void);
+uint32_t ef800_console_dropped(void);
 
 #endif /* EF800_CONSOLE_H */

@@ -8,6 +8,7 @@
 #include <zephyr/storage/disk_access.h>
 
 #include "ef800_watchdog.h"
+#include "ef800_console.h"
 
 static K_THREAD_STACK_DEFINE(watchdog_stack, 512);
 static struct k_thread watchdog_thread;
@@ -101,6 +102,9 @@ static int ef800_usb_start(void)
 
 int main(void)
 {
+	(void)ef800_console_init(true);
+	printk("ef800 backup application: console=%u\r\n",
+	       ef800_console_get_target());
 	backup_watchdog_start();
 #if CONFIG_EF800_BACKUP_USB_MSC
 	const struct device *const udc = DEVICE_DT_GET(EF800_USB_UDC_NODE);

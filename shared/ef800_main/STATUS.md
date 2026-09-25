@@ -36,9 +36,10 @@ Initialized by this increment:
 - MainApplication Settings port-assignment UI with connection-mode selection,
   fixed-port protection, removal, and storage errors shown without blocking the
   main loop.
-- The routing increment is verified in the current working tree. See
-  `docs/migration-checkpoint.md` for the remaining hardware and QSPI/USB
-  ownership gates.
+- The routing increment, runtime status snapshot, legacy-style display header,
+  and controlled MainApplication hardware path are verified in the current
+  working tree. See `docs/migration-status.md` for the remaining hardware and
+  QSPI/USB ownership gates.
 - Shell commands on the console UART:
   - `rtc get`
   - `rtc set YYYY-MM-DDTHH:MM:SS offset_hours_or_HH:MM dst`
@@ -51,4 +52,5 @@ Still not ported:
 - Production validation of the fitted QSPI part and existing FAT contents.
 - DS3231 alarm/update workflows and board-specific alarm/interrupt wiring.
 - Hardware validation of T6963 bus timing, pixel bit order, and control-line
-  polarity.
+  polarity remains open. The current target run proves controller readiness,
+  not complete electrical qualification.

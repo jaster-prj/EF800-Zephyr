@@ -97,6 +97,10 @@ uint32_t ef800_port_assignment_default_connection(uint8_t port_id,
 								 uint8_t builder_id);
 int ef800_port_assignment_set(struct ef800_port_assignment_service *service,
 				      uint8_t port_id, uint8_t builder_id);
+/* Move the unique DebugDevice assignment to a new port. */
+int ef800_port_assignment_move_debug(
+	struct ef800_port_assignment_service *service, uint8_t port_id,
+	uint32_t connection);
 int ef800_port_assignment_remove(struct ef800_port_assignment_service *service,
 					 uint8_t port_id);
 bool ef800_port_assignment_is_assigned(

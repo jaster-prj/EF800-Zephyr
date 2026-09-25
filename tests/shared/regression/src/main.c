@@ -899,6 +899,33 @@ ZTEST(keyboard_protocol, test_port_uart_routes_and_ownership)
 						 EF800_PORT_CONNECTION_USB_MSD), NULL);
 	zassert_false(ef800_port_uart_is_claimed(&registry, 4U), NULL);
 }
+
+ZTEST(keyboard_protocol, test_debug_assignment_move)
+{
+	struct ef800_persistence_fake fake;
+	struct ef800_persistence storage;
+	struct ef800_port_assignment_service service;
+
+	ef800_persistence_fake_init(&fake);
+	zassert_ok(ef800_persistence_init(&storage, &fake.backend), NULL);
+	zassert_ok(ef800_port_assignment_init(&service, &storage), NULL);
+	zassert_ok(ef800_port_assignment_set(&service, 3U,
+						 EF800_PORT_BUILDER_DEBUG), NULL);
+	zassert_ok(ef800_port_assignment_move_debug(&service, 1U,
+								 EF800_PORT_CONNECTION_SERIAL), NULL);
+	zassert_false(ef800_port_assignment_is_assigned(&service, 3U), NULL);
+	zassert_equal(ef800_port_assignment_get_builder(&service, 3U),
+				      EF800_PORT_BUILDER_NONE, NULL);
+	zassert_equal(ef800_port_assignment_get_builder(&service, 1U),
+				      EF800_PORT_BUILDER_DEBUG, NULL);
+	zassert_equal(ef800_port_assignment_get_connection(&service, 1U),
+				      EF800_PORT_CONNECTION_SERIAL, NULL);
+	zassert_equal(ef800_port_assignment_move_debug(&service, 4U,
+								 EF800_PORT_CONNECTION_USB_CDC), 0, NULL);
+	zassert_false(ef800_port_assignment_is_assigned(&service, 1U), NULL);
+	zassert_equal(ef800_port_assignment_get_builder(&service, 4U),
+				      EF800_PORT_BUILDER_DEBUG, NULL);
+}
 #endif
 
 #if defined(EF800_TEST_METADATA)

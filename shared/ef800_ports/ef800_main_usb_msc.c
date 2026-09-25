@@ -76,15 +76,23 @@ int ef800_main_usb_msc_start(void)
 int ef800_main_usb_msc_stop(void)
 {
 	int ret;
+	int shutdown_ret;
 
 	if (!usb_msc_active) {
 		return 0;
 	}
-	ret = usbd_shutdown(&ef800_main_usbd);
-	if (ret == 0) {
-		usb_msc_active = false;
+	/* Disable the controller before shutdown so the MSC worker stops issuing
+	 * endpoint traffic while the QSPI disk ownership is transferred. */
+	ret = usbd_disable(&ef800_main_usbd);
+	if (ret != 0 && ret != -EALREADY) {
+		return ret;
 	}
-	return ret;
+	shutdown_ret = usbd_shutdown(&ef800_main_usbd);
+	if (shutdown_ret != 0) {
+		return shutdown_ret;
+	}
+	usb_msc_active = false;
+	return 0;
 }
 
 bool ef800_main_usb_msc_is_active(void)

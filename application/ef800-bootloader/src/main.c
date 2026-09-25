@@ -142,7 +142,7 @@ static FUNC_NORETURN void jumpApplication(const struct flash_area *area, uintptr
 
 int main(void)
 {
-	int console_result = ef800_console_init(false);
+	int console_result = ef800_console_init(true);
 	printk("ef800 bootloader: main (console=%u, init=%d)\r\n",
 		ef800_console_get_target(), console_result);
 	/* Start/feed the option-byte IWDG before slow flash and metadata work. */

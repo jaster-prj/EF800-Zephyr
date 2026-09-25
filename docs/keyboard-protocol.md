@@ -17,6 +17,21 @@ Keyboard data uses PS/2-style make/break sequences:
 optional 0xE0/0xE1 prefix, optional 0xF0 release prefix, scancode
 ```
 
+The current EF800 compatibility map uses translated Set-2-style make values
+with the existing EF800 `0xE0 0xF0 <code>` release framing. The navigation keys
+are:
+
+```text
+Left   make E0 4B   break E0 F0 4B
+Up     make E0 48   break E0 F0 48
+Down   make E0 50   break E0 F0 50
+Right  make E0 4D   break E0 F0 4D
+```
+
+These values are an EF800 compatibility contract. They are not a declaration
+that every current key uses native PS/2 Set 2 make values; ordinary legacy
+character mappings remain preserved from the Mbed controller protocol.
+
 The byte values and translated event map are shared in
 `shared/keyboard_protocol/` and are based on
 `mbedos/mbed-uart-keyboard` plus the controller source.

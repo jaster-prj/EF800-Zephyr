@@ -9,14 +9,67 @@
 #include <zephyr/devicetree.h>
 #include <zephyr/drivers/uart.h>
 #include <zephyr/sys/printk-hooks.h>
+#include <zephyr/kernel.h>
 #include "ef800_metadata.h"
 #include "ef800_update.h"
 
 #define EF800_CONSOLE_DEFAULT_BAUDRATE 9600U
 #define EF800_CONSOLE_BOARD_BAUDRATE 115200U
+#define EF800_CONSOLE_PENDING_SIZE 512U
 
 static const struct device *console_uart;
 static uint8_t console_port;
+static bool console_ready;
+static bool transport_ready;
+static struct k_spinlock console_lock;
+static uint8_t pending_buffer[EF800_CONSOLE_PENDING_SIZE];
+static size_t pending_start;
+static size_t pending_length;
+static uint32_t pending_dropped;
+
+static void pending_put_locked(uint8_t value)
+{
+	if (pending_length == EF800_CONSOLE_PENDING_SIZE) {
+		pending_start = (pending_start + 1U) % EF800_CONSOLE_PENDING_SIZE;
+		pending_length--;
+		pending_dropped++;
+	}
+	pending_buffer[(pending_start + pending_length) % EF800_CONSOLE_PENDING_SIZE] = value;
+	pending_length++;
+}
+
+static void pending_write_locked(const uint8_t *data, size_t length)
+{
+	for (size_t index = 0U; index < length; ++index) {
+		pending_put_locked(data[index]);
+	}
+}
+
+static size_t pending_flush_locked(void)
+{
+	size_t flushed = 0U;
+
+	while (pending_length != 0U) {
+		uint8_t value = pending_buffer[pending_start];
+
+		if (console_uart == NULL || !device_is_ready(console_uart)) {
+			break;
+		}
+		uart_poll_out(console_uart, value);
+		pending_start = (pending_start + 1U) % EF800_CONSOLE_PENDING_SIZE;
+		pending_length--;
+		flushed++;
+	}
+	return flushed;
+}
+
+static int console_read_locked(uint8_t *data)
+{
+	if (data == NULL || console_uart == NULL || !device_is_ready(console_uart)) {
+		return -ENODEV;
+	}
+	return uart_poll_in(console_uart, data);
+}
 
 static const struct device *uart_for_port(uint8_t port_id)
 {
@@ -101,9 +154,9 @@ static int configure_uart(uint8_t port_id, const struct device *uart,
 
 static int console_putchar(int character)
 {
-	if (console_uart != NULL && device_is_ready(console_uart)) {
-		uart_poll_out(console_uart, (unsigned char)character);
-	}
+	uint8_t value = (uint8_t)character;
+
+	(void)ef800_console_write(&value, sizeof(value));
 	return character;
 }
 
@@ -143,8 +196,17 @@ int ef800_console_set_target_with_config(
 	if (ret != 0) {
 		return ret;
 	}
+	k_spinlock_key_t key = k_spin_lock(&console_lock);
+
 	console_uart = uart;
 	console_port = port_id;
+	console_ready = true;
+	transport_ready = port_id != 4U;
+	if (port_id == 4U) {
+		transport_ready = false;
+	}
+	(void)pending_flush_locked();
+	k_spin_unlock(&console_lock, key);
 	return 0;
 }
 
@@ -155,16 +217,27 @@ int ef800_console_init(bool usb_debug_available)
 	uint8_t port_id;
 	int ret;
 
+	/* Capture printk output produced while metadata and the target are prepared. */
+	__printk_hook_install(console_putchar);
 	ret = read_metadata(&metadata, &valid);
 	if (!valid) {
 		ef800_boot_metadata_init(&metadata);
 	}
 	port_id = ef800_console_port_select(&metadata, usb_debug_available);
+	if (port_id == 4U) {
+	#if defined(CONFIG_USBD_CDC_ACM_CLASS)
+		ret = ef800_console_usb_start();
+		if (ret != 0) {
+			port_id = EF800_CONSOLE_SAFE_PORT;
+		}
+	#else
+		port_id = EF800_CONSOLE_SAFE_PORT;
+	#endif
+	}
 	ret = ef800_console_set_target(port_id);
 	if (ret != 0 && port_id != 0U) {
 		ret = ef800_console_set_target(0U);
 	}
-	__printk_hook_install(console_putchar);
 	return ret;
 }
 
@@ -178,11 +251,56 @@ int ef800_console_write(const uint8_t *data, size_t length)
 	if (data == NULL && length != 0U) {
 		return -EINVAL;
 	}
-	if (console_uart == NULL || !device_is_ready(console_uart)) {
-		return -ENODEV;
+	k_spinlock_key_t key = k_spin_lock(&console_lock);
+
+	if (!console_ready || !transport_ready || console_uart == NULL ||
+		!device_is_ready(console_uart)) {
+		pending_write_locked(data, length);
+		k_spin_unlock(&console_lock, key);
+		return (int)length;
 	}
+	(void)pending_flush_locked();
 	for (size_t index = 0U; index < length; ++index) {
 		uart_poll_out(console_uart, data[index]);
 	}
+	k_spin_unlock(&console_lock, key);
 	return (int)length;
+}
+
+void ef800_console_set_transport_ready(bool ready)
+{
+	k_spinlock_key_t key = k_spin_lock(&console_lock);
+
+	transport_ready = ready;
+	if (ready) {
+		(void)pending_flush_locked();
+	}
+	k_spin_unlock(&console_lock, key);
+}
+
+int ef800_console_read(uint8_t *data)
+{
+	k_spinlock_key_t key = k_spin_lock(&console_lock);
+	int ret = console_read_locked(data);
+
+	k_spin_unlock(&console_lock, key);
+	return ret;
+}
+
+size_t ef800_console_pending(void)
+{
+	k_spinlock_key_t key = k_spin_lock(&console_lock);
+	size_t length = pending_length;
+
+	k_spin_unlock(&console_lock, key);
+	return length;
+}
+
+uint32_t ef800_console_dropped(void)
+{
+	k_spinlock_key_t key = k_spin_lock(&console_lock);
+	uint32_t dropped = pending_dropped;
+
+	k_spin_unlock(&console_lock, key);
+	return dropped;
 }

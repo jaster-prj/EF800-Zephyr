@@ -133,6 +133,13 @@
 	pinctrl-0 = <&usb_otg_fs_dm_pa11 &usb_otg_fs_dp_pa12>;
 	pinctrl-names = "default";
 	status = "okay";
+
+	cdc_acm_uart0: cdc_acm_uart0 {
+		compatible = "zephyr,cdc-acm-uart";
+		label = "EF800 USB CDC ACM";
+		rx-fifo-size = <256>;
+		tx-fifo-size = <256>;
+	};
 };
 
 /* Use the standard Zephyr DS3231 MFD/RTC split without changing the board DTS. */

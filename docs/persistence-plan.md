@@ -84,16 +84,18 @@ production Mbed file dump are still open validation tasks.
 The first connected STM32L496 engineering target was handled separately from
 the normal first-flash procedure: its legacy captures were checked, its option
 bytes were recorded, and its complete 1 MiB internal flash was explicitly
-erased. The target remains blank. See `docs/stm32l496-target-snapshot.md`.
+erased. It was later used for controlled bootloader/MainApplication bring-up.
+The erase is historical evidence; see `docs/stm32l496-target-snapshot.md` and
+the current state in `docs/migration-status.md`.
 
 ### Phase 2: Hardware bring-up before more hardware-dependent features
 
-- Validate boot handoff, watchdog failure accounting, and controlled backup
-  fallback.
-- Validate the keyboard controller, UART framing, matrix scanning, reset, and
-  physical-keyboard resumption.
-- Validate the console, MCP23017, DS3231, MAX17043, T6963, status LED, and
-  confirmed UART routes.
+- Bootloader handoff, IWDG feeding, MCP23017, DS3231, T6963 initialization,
+  keyboard reset/RX startup, and normal MainApplication keyboard parsing have
+  been exercised on the recoverable target.
+- The physical matrix, all arrow keys, full watchdog fallback accounting, fuel
+  gauge, T6963 electrical timing/polarity, status LED behavior, and confirmed
+  UART routes remain hardware gates.
 - Capture complete logs and resolve the fixed USART1 shell versus dynamic
   external console/log routing behavior.
 - Confirm Port 2 flow-control pins, Port 3 alternate modes, and BlueNRG SPI1

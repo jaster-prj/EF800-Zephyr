@@ -335,7 +335,11 @@ storage from this image. BackupApplication in the normal image set exposes the
 same unverified external flash through MSC and remains subject to the migration
 hardware gates.
 
-## Latest bench result
+## Historical bench result
+
+This section records the early 2026-09-03 hwdebug investigation. It is retained
+as forensic evidence and is not the current target state. Current migration
+status is maintained in `docs/migration-status.md`.
 
 On 2026-09-03 the recoverable L496 target was connected through ST-LINK
 `0672FF504955857567234934` at 3.25 V. The target was identified as device ID

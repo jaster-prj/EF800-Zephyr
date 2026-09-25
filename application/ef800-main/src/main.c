@@ -26,6 +26,7 @@
 #include "ef800_ports.h"
 #include "ef800_port_uart.h"
 #include "ef800_console.h"
+#include "ef800_shell_transport.h"
 #include "ef800_metadata.h"
 #include "ef800_main_usb_msc.h"
 #include "ef800_storage_owner.h"
@@ -96,6 +97,7 @@ enum application_menu {
 	APPLICATION_MENU_PORTS,
 	APPLICATION_MENU_PORT_DEVICES,
 	APPLICATION_MENU_PORT_CONNECTIONS,
+	APPLICATION_MENU_PORT_DEBUG_CONFIRMATION,
 	APPLICATION_MENU_MEASUREMENTS,
 	APPLICATION_MENU_MEASUREMENT_ACTIONS,
 	APPLICATION_MENU_MEASUREMENT_EDITOR,
@@ -189,6 +191,7 @@ static void display_position_editor(void);
 static void display_port_assignment_ports(void);
 static void display_port_assignment_devices(void);
 static void display_port_assignment_connections(void);
+static void display_port_debug_confirmation(void);
 static void display_measurement_devices(void);
 static void display_measurement_actions(void);
 static void display_measurement_editor(void);
@@ -262,7 +265,7 @@ static int sync_boot_metadata(void)
 	result = ef800_metadata_write_current(&boot_metadata);
 	if (result == 0) {
 		boot_metadata_valid = true;
-		(void)ef800_console_init(false);
+		(void)ef800_console_init(true);
 	}
 	return result;
 }
@@ -307,7 +310,7 @@ static int reconcile_port_uart_state(void)
 	if (result != 0) {
 		return result;
 	}
-	console_port = ef800_console_port_select(&desired, false);
+	console_port = ef800_console_port_select(&desired, true);
 	result = set_console_for_port(console_port);
 	if (result != 0 && console_port != EF800_CONSOLE_SAFE_PORT) {
 		console_port = EF800_CONSOLE_SAFE_PORT;
@@ -892,6 +895,7 @@ static const struct ef800_port_connection_descriptor *connection_at_selection(
 static void display_port_assignment_connections(void)
 {
 	const struct ef800_port_descriptor *port = ef800_port_at(selected_port_index);
+	const struct ef800_port_connection_descriptor *selected_connection;
 	char line[STATUS_LINE_SIZE];
 	size_t row = 3U;
 	size_t connection_index = 0U;
@@ -908,6 +912,7 @@ static void display_port_assignment_connections(void)
 		ef800_port_device_get(selected_builder_id)->title);
 	display_line(2U, line);
 	count = port_assignment_connection_count();
+	selected_connection = connection_at_selection(menu_selection);
 	first = menu_selection >= 3U ? menu_selection - 3U : 0U;
 	for (size_t index = 0U; index < ef800_port_connection_count(port->id); ++index) {
 		const struct ef800_port_connection_descriptor *connection =
@@ -926,8 +931,27 @@ static void display_port_assignment_connections(void)
 	snprintk(line, sizeof(line), "Connections %u-%u of %u",
 		(unsigned)(first + 1U), (unsigned)MIN(first + 4U, count),
 		(unsigned)count);
-	display_line(1U, line);
-	display_line(7U, "ENTER select  ESC back");
+	display_line(6U, line);
+	snprintk(line, sizeof(line), "ENTER assign: %s  ESC back",
+		selected_connection == NULL ? "none" : selected_connection->name);
+	display_line(7U, line);
+}
+
+static void display_port_debug_confirmation(void)
+{
+	char line[STATUS_LINE_SIZE];
+	const struct ef800_port_descriptor *port = ef800_port_at(selected_port_index);
+
+	for (uint8_t row = 0U; row < 8U; ++row) {
+		display_line(row, "");
+	}
+	if (port == NULL) {
+		return;
+	}
+	snprintk(line, sizeof(line), "Assign DebugDevice to Port %u?", port->id);
+	display_line(2U, line);
+	display_line(4U, "Yes: Enter");
+	display_line(5U, "No: Esc");
 }
 
 static const char *measurement_device_title(uint8_t port_id)
@@ -1177,6 +1201,9 @@ static void display_active_menu(void)
 	case APPLICATION_MENU_PORT_CONNECTIONS:
 		display_port_assignment_connections();
 		break;
+	case APPLICATION_MENU_PORT_DEBUG_CONFIRMATION:
+		display_port_debug_confirmation();
+		break;
 	case APPLICATION_MENU_MEASUREMENTS:
 		display_measurement_devices();
 		break;
@@ -1213,6 +1240,8 @@ static size_t active_menu_count(void)
 		return port_assignment_device_count();
 	case APPLICATION_MENU_PORT_CONNECTIONS:
 		return port_assignment_connection_count();
+	case APPLICATION_MENU_PORT_DEBUG_CONFIRMATION:
+		return 1U;
 	case APPLICATION_MENU_MEASUREMENTS:
 		return measurement_port_count;
 	case APPLICATION_MENU_MEASUREMENT_ACTIONS:
@@ -1271,6 +1300,10 @@ static void return_from_child_menu(void)
 		menu_selection = selected_port_index;
 		display_port_assignment_ports();
 	} else if (active_menu == APPLICATION_MENU_PORT_CONNECTIONS) {
+		active_menu = APPLICATION_MENU_PORT_DEVICES;
+		menu_selection = 0U;
+		display_port_assignment_devices();
+	} else if (active_menu == APPLICATION_MENU_PORT_DEBUG_CONFIRMATION) {
 		active_menu = APPLICATION_MENU_PORT_DEVICES;
 		menu_selection = 0U;
 		display_port_assignment_devices();
@@ -1544,18 +1577,40 @@ static void display_port_assignment_result(const char *operation, int result)
 	display_line(6U, line);
 }
 
+static bool usb_assignment_changed(uint8_t port_id, uint8_t old_builder_id,
+	uint32_t old_connection, uint8_t new_builder_id, uint32_t new_connection)
+{
+	if (port_id == 4U && (old_builder_id != new_builder_id ||
+		old_connection != new_connection)) {
+		return true;
+	}
+	return (old_builder_id == EF800_PORT_BUILDER_MSD &&
+		old_connection == EF800_PORT_CONNECTION_USB_MSD) ||
+		(new_builder_id == EF800_PORT_BUILDER_MSD &&
+		new_connection == EF800_PORT_CONNECTION_USB_MSD);
+}
+
+static void display_usb_reboot_hint(void)
+{
+	LOG_WRN("USB assignment changed; reboot device in 3 seconds");
+	display_line(6U, "USB changed; reboot in 3 seconds");
+}
+
 static int set_port_assignment_runtime(uint8_t port_id, uint8_t builder_id,
 						uint32_t connection)
 {
-	int result = ef800_port_assignment_set_with_connection(&port_assignments,
-													 port_id, builder_id,
-													 connection);
+	int result;
+
+	result = builder_id == EF800_PORT_BUILDER_DEBUG ?
+		ef800_port_assignment_move_debug(&port_assignments, port_id,
+									connection) :
+		ef800_port_assignment_set_with_connection(&port_assignments, port_id,
+									builder_id, connection);
 
 	if (result == -ENOTSUP) {
 		/* Internal metadata remains available during QSPI bring-up. */
 		result = ef800_port_assignment_import_with_connection(&port_assignments,
-													 port_id, builder_id,
-													 connection);
+											 port_id, builder_id, connection);
 	}
 	return result;
 }
@@ -1610,6 +1665,9 @@ static void activate_port_assignment_entry(void)
 		if (result == 0) {
 			result = persist_port_assignment_metadata();
 		}
+		if (result == 0) {
+			result = reconcile_port_uart_state();
+		}
 		if (result != 0 && old_builder_id != EF800_PORT_BUILDER_NONE) {
 			(void)restore_port_assignment(port->id, old_builder_id, old_connection);
 			(void)ef800_port_uart_claim(&port_uart_registry, port->id,
@@ -1620,6 +1678,9 @@ static void activate_port_assignment_entry(void)
 			active_menu = APPLICATION_MENU_PORTS;
 			menu_selection = selected_port_index;
 			display_port_assignment_ports();
+			if (port->id == 4U) {
+				display_usb_reboot_hint();
+			}
 		}
 		return;
 	}
@@ -1629,6 +1690,12 @@ static void activate_port_assignment_entry(void)
 		return;
 	}
 	selected_builder_id = device->builder_id;
+	if (selected_builder_id == EF800_PORT_BUILDER_DEBUG) {
+		active_menu = APPLICATION_MENU_PORT_DEBUG_CONFIRMATION;
+		menu_selection = 0U;
+		display_port_debug_confirmation();
+		return;
+	}
 	menu_selection = 0U;
 	active_menu = APPLICATION_MENU_PORT_CONNECTIONS;
 	display_port_assignment_connections();
@@ -1641,6 +1708,8 @@ static void commit_port_assignment_connection(void)
 		connection_at_selection(menu_selection);
 	uint8_t old_builder_id;
 	uint32_t old_connection;
+	uint8_t old_debug_port = 0U;
+	uint32_t old_debug_connection = EF800_PORT_CONNECTION_NONE;
 	int result;
 
 	if (port == NULL || connection == NULL) {
@@ -1649,6 +1718,46 @@ static void commit_port_assignment_connection(void)
 	}
 	old_builder_id = ef800_port_assignment_get_builder(&port_assignments, port->id);
 	old_connection = ef800_port_assignment_get_connection(&port_assignments, port->id);
+	for (uint8_t port_id = 1U; port_id <= EF800_PORT_COUNT; ++port_id) {
+		if (ef800_port_assignment_get_builder(&port_assignments, port_id) ==
+			EF800_PORT_BUILDER_DEBUG) {
+			old_debug_port = port_id;
+			old_debug_connection = ef800_port_assignment_get_connection(
+				&port_assignments, port_id);
+			break;
+		}
+	}
+	if (selected_builder_id == EF800_PORT_BUILDER_DEBUG) {
+		result = set_port_assignment_runtime(port->id, selected_builder_id,
+								 connection->capability);
+		if (result == 0) {
+			result = persist_port_assignment_metadata();
+		}
+		if (result == 0) {
+			result = reconcile_port_uart_state();
+		}
+		if (result != 0) {
+			(void)restore_port_assignment(port->id, old_builder_id, old_connection);
+			if (old_debug_port != 0U && old_debug_port != port->id) {
+				(void)restore_port_assignment(old_debug_port,
+					EF800_PORT_BUILDER_DEBUG, old_debug_connection);
+			}
+		}
+		display_port_assignment_result(result == 0 ? "DebugConsole moved" :
+			"DebugConsole move failed", result);
+		if (result == 0) {
+			active_menu = APPLICATION_MENU_PORTS;
+			menu_selection = selected_port_index;
+			display_port_assignment_ports();
+			if (usb_assignment_changed(port->id, old_builder_id, old_connection,
+								   EF800_PORT_BUILDER_DEBUG,
+								   connection->capability) ||
+				(old_debug_port == 4U && old_debug_port != port->id)) {
+				display_usb_reboot_hint();
+			}
+		}
+		return;
+	}
 	if (old_builder_id != EF800_PORT_BUILDER_NONE) {
 		result = ef800_port_uart_release(&port_uart_registry, port->id,
 							 old_builder_id, old_connection);
@@ -1673,10 +1782,17 @@ static void commit_port_assignment_connection(void)
 		result = persist_port_assignment_metadata();
 	}
 	if (result == 0) {
+		result = reconcile_port_uart_state();
+	}
+	if (result == 0) {
 		char line[STATUS_LINE_SIZE];
 		snprintk(line, sizeof(line), "Assigned %s to port %u",
 			ef800_port_device_get(selected_builder_id)->title, port->id);
 		display_port_assignment_result(line, 0);
+		if (usb_assignment_changed(port->id, old_builder_id, old_connection,
+								 selected_builder_id, connection->capability)) {
+			display_usb_reboot_hint();
+		}
 		active_menu = APPLICATION_MENU_PORTS;
 		menu_selection = selected_port_index;
 		display_port_assignment_ports();
@@ -1753,6 +1869,30 @@ static void activate_menu_entry(void)
 		return;
 	}
 	if (active_menu == APPLICATION_MENU_PORT_CONNECTIONS) {
+		commit_port_assignment_connection();
+		return;
+	}
+	if (active_menu == APPLICATION_MENU_PORT_DEBUG_CONFIRMATION) {
+		const uint32_t connection = ef800_port_assignment_default_connection(
+			ef800_port_at(selected_port_index)->id, EF800_PORT_BUILDER_DEBUG);
+		size_t index = 0U;
+
+		for (size_t item = 0U; item < ef800_port_connection_count(
+			ef800_port_at(selected_port_index)->id); ++item) {
+			const struct ef800_port_connection_descriptor *candidate =
+				ef800_port_connection_at(ef800_port_at(selected_port_index)->id, item);
+
+			if (candidate != NULL && candidate->capability == connection) {
+				break;
+			}
+			if (candidate != NULL && ef800_port_device_supports_connection(
+				EF800_PORT_BUILDER_DEBUG, candidate->capability)) {
+				++index;
+			}
+		}
+		menu_selection = index;
+		selected_builder_id = EF800_PORT_BUILDER_DEBUG;
+		active_menu = APPLICATION_MENU_PORT_CONNECTIONS;
 		commit_port_assignment_connection();
 		return;
 	}
@@ -2572,7 +2712,8 @@ int main(void)
 	uint16_t mcp_port;
 
 	/* Keep standalone and bootloader handoff startup observable before slow init. */
-	(void)ef800_console_init(false);
+	(void)ef800_console_init(true);
+	(void)ef800_shell_init();
 	printk("ef800 main application: entry\r\n");
 
 	(void)ef800_main_foundation_init();
@@ -2613,6 +2754,18 @@ int main(void)
 				result = ef800_port_assignment_load_all(&port_assignments);
 				if (result != 0) {
 					LOG_WRN("Port assignments unavailable: %d", result);
+				}
+				/* Port 4 can be changed while MSC owns the volume, so its FAT
+				 * record may still contain the previous MSD assignment. NVS is
+				 * authoritative for that USB personality across the reboot. */
+				if (boot_metadata_valid) {
+					result = ef800_port_assignment_import_with_connection(
+						&port_assignments, 4U,
+						ef800_port_assignment_builder(boot_metadata.port_assignments, 4U),
+						ef800_port_assignment_connection(boot_metadata.port_assignments, 4U));
+					if (result != 0) {
+						LOG_WRN("Port 4 metadata assignment unavailable: %d", result);
+					}
 				}
 			}
 			result = reconcile_port_uart_state();
@@ -2727,6 +2880,7 @@ result = ef800_mcp23017_open(&mcp23017,
 
 	while (true) {
 		static bool msc_requested;
+		static bool msc_removal_pending;
 		static int64_t next_status_update_ms;
 		static enum ef800_storage_owner storage_owner =
 			EF800_STORAGE_OWNER_FAT;
@@ -2742,11 +2896,12 @@ result = ef800_mcp23017_open(&mcp23017,
 				LOG_INF("QSPI ownership transferred to USB MSC");
 			}
 		} else if (storage_action == EF800_STORAGE_ACTION_MSC_TO_FAT) {
-			if (ef800_main_usb_msc_stop() == 0 &&
-				ef800_storage_mount() == 0) {
-				msc_requested = false;
-				storage_owner = EF800_STORAGE_OWNER_FAT;
-				LOG_INF("QSPI ownership returned to FAT");
+			/* USB device-next does not guarantee that usbd_msc worker state is
+			 * quiescent after shutdown. Never remount FAT while that worker may
+			 * still access endpoint or disk state. Apply this change after reboot. */
+			if (!msc_removal_pending) {
+				msc_removal_pending = true;
+				LOG_WRN("USB MSD removal requires reboot before FAT remount");
 			}
 		}
 		if (k_msgq_get(&keyboard_rx_msgq, &byte, K_MSEC(1000)) == 0) {

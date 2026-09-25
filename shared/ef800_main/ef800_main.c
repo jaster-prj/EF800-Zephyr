@@ -40,6 +40,7 @@ uint32_t get_fattime(void)
 }
 #include <ff.h>
 #include <zephyr/fs/fs.h>
+#include <zephyr/fs/fs_sys.h>
 
 LOG_MODULE_REGISTER(ef800_main, LOG_LEVEL_INF);
 
@@ -76,6 +77,13 @@ static bool status_led_initialized;
 static bool mcp23017_detected;
 static bool ds3231_ready;
 static bool storage_mounted;
+
+static bool storage_directory_exists(const char *path)
+{
+	struct fs_dirent entry;
+
+	return fs_stat(path, &entry) == 0 && entry.type == FS_DIR_ENTRY_DIR;
+}
 static bool usb_vbus_initialized;
 static struct ef800_time_settings time_settings;
 K_MUTEX_DEFINE(rtc_lock);
@@ -498,12 +506,22 @@ int ef800_storage_mount(void)
 	}
 
 	LOG_INF("QSPI FAT filesystem mounted at %s", storage_mount.mnt_point);
-	directory_result = fs_mkdir("/EF800:/.configuration");
-	if (directory_result != 0 && directory_result != -EEXIST) {
+	directory_result = storage_directory_exists("/EF800:/.configuration") ?
+		0 : fs_mkdir("/EF800:/.configuration");
+	if (directory_result == -EEXIST &&
+		storage_directory_exists("/EF800:/.configuration")) {
+		directory_result = 0;
+	}
+	if (directory_result != 0) {
 		LOG_WRN("Configuration directory unavailable: %d", directory_result);
 	}
-	directory_result = fs_mkdir("/EF800:/data");
-	if (directory_result != 0 && directory_result != -EEXIST) {
+	directory_result = storage_directory_exists("/EF800:/data") ?
+		0 : fs_mkdir("/EF800:/data");
+	if (directory_result == -EEXIST &&
+		storage_directory_exists("/EF800:/data")) {
+		directory_result = 0;
+	}
+	if (directory_result != 0) {
 		LOG_WRN("Data directory unavailable: %d", directory_result);
 	}
 	storage_mounted = true;
