@@ -80,6 +80,8 @@ static uint8_t command_payload_length(uint8_t command)
 		return 1U; /* ACK/RESEND, followed by data only on ACK. */
 	case CMD_KEYBOARD_ID:
 		return 2U; /* The legacy controller returns two ID bytes. */
+	case CMD_KEYBOARD_VERSION:
+		return 3U;
 	default:
 		return 1U;
 	}
@@ -105,6 +107,12 @@ static enum ef800_host_feed_result consume_command(
 		host->id[0] = host->parser_payload[0];
 		host->id[1] = host->parser_payload[1];
 		host->id_valid = true;
+	}
+	if (command == CMD_KEYBOARD_VERSION && host->parser_payload_length >= 3U) {
+		host->version[0] = host->parser_payload[0];
+		host->version[1] = host->parser_payload[1];
+		host->version[2] = host->parser_payload[2];
+		host->version_valid = true;
 	}
 	if (command == CMD_KEYBOARD_ACTIVATE && status == CMD_ACK) {
 		host->active = true;
@@ -310,5 +318,15 @@ bool ef800_keyboard_host_get_id(const struct ef800_keyboard_host *host,
 	}
 	id[0] = host->id[0];
 	id[1] = host->id[1];
+	return true;
+}
+
+bool ef800_keyboard_host_get_version(const struct ef800_keyboard_host *host,
+				uint8_t version[3])
+{
+	if (host == NULL || version == NULL || !host->version_valid) {
+		return false;
+	}
+	memcpy(version, host->version, 3U);
 	return true;
 }

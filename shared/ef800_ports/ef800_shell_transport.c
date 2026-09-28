@@ -22,6 +22,7 @@ struct ef800_shell_context {
 };
 
 static struct ef800_shell_context shell_context;
+static bool shell_binary_mode;
 
 static void shell_transport_notify_work(struct k_work *work)
 {
@@ -39,6 +40,10 @@ static void shell_transport_poll(struct ef800_shell_context *context)
 {
 	uint8_t value;
 	k_spinlock_key_t key = k_spin_lock(&context->lock);
+	if (shell_binary_mode) {
+		k_spin_unlock(&context->lock, key);
+		return;
+	}
 
 	while (context->rx_length < EF800_SHELL_RX_SIZE &&
 		ef800_console_read(&value) == 0) {
@@ -121,6 +126,10 @@ static int shell_transport_read(const struct shell_transport *transport,
 	if (data == NULL || count == NULL || context == NULL) {
 		return -EINVAL;
 	}
+	if (shell_binary_mode) {
+		*count = 0U;
+		return 0;
+	}
 	key = k_spin_lock(&context->lock);
 	*count = MIN(length, context->rx_length);
 	for (size_t index = 0U; index < *count; ++index) {
@@ -132,6 +141,9 @@ static int shell_transport_read(const struct shell_transport *transport,
 	k_spin_unlock(&context->lock, key);
 	while (*count < length) {
 		uint8_t value;
+		if (shell_binary_mode) {
+			break;
+		}
 		int result = ef800_console_read(&value);
 
 		if (result == 0) {
@@ -186,11 +198,28 @@ int ef800_shell_init(void)
 	return shell_init(&ef800_shell, NULL, flags, false, 0U);
 }
 
+void ef800_shell_set_binary_mode(bool enabled)
+{
+	k_spinlock_key_t key = k_spin_lock(&shell_context.lock);
+
+	shell_binary_mode = enabled;
+	if (enabled) {
+		shell_context.rx_start = 0U;
+		shell_context.rx_length = 0U;
+	}
+	k_spin_unlock(&shell_context.lock, key);
+}
+
 #else
 
 int ef800_shell_init(void)
 {
 	return 0;
+}
+
+void ef800_shell_set_binary_mode(bool enabled)
+{
+	ARG_UNUSED(enabled);
 }
 
 #endif

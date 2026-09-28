@@ -28,6 +28,7 @@ target_sources(app PRIVATE
 	${CMAKE_CURRENT_LIST_DIR}/../../shared/ef800_ports/ef800_console.c
 	${CMAKE_CURRENT_LIST_DIR}/../../shared/ef800_ports/ef800_log_backend.c
 	${CMAKE_CURRENT_LIST_DIR}/../../shared/ef800_ports/ef800_shell_transport.c
+	${CMAKE_CURRENT_LIST_DIR}/../../shared/ef800_ports/ef800_mcumgr_transport.c
 	${CMAKE_CURRENT_LIST_DIR}/../../shared/ef800_ports/ef800_console_usb.c
 	${CMAKE_CURRENT_LIST_DIR}/../../shared/ef800_watchdog/ef800_watchdog.c
 	${CMAKE_CURRENT_LIST_DIR}/../../shared/ef800_update/ef800_update.c

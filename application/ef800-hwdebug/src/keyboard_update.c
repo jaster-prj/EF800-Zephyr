@@ -15,6 +15,8 @@
 #include "flash.h"
 #include "keyboard_protocol.h"
 #include "peripheral_tests.h"
+#include "ef800_keyboard_package.h"
+#include "ef800_update.h"
 
 #define KB_UPDATE_PATH_MAX 64U
 #define KB_UPDATE_MAX_SIZE (256U * 1024U)
@@ -29,7 +31,9 @@
 #define KB_ROM_ADDRESS 0x08000000U
 #define KB_ROM_DEVICE_ID 0x0435U
 #define KB_RX_MAGIC 0x424B4645U
-#define KB_RX_PATH "/EF800:/fwu/EF800_KEYBOARD.bin"
+#define KB_RX_PATH "/EF800:/fwu/EF800_KEYBOARD.pkg"
+#define KB_PACKAGE_MAX_SIZE (EF800_KEYBOARD_PACKAGE_HEADER_SIZE + \
+	EF800_KEYBOARD_PACKAGE_LIMIT)
 
 static const struct device *const update_uart = DEVICE_DT_GET(DT_NODELABEL(lpuart1));
 static const struct device *const console_uart = DEVICE_DT_GET(DT_CHOSEN(zephyr_console));
@@ -104,6 +108,53 @@ static int receive_console_magic(void)
 	return 0;
 }
 
+static int validate_keyboard_package(void)
+{
+	struct fs_file_t file;
+	struct ef800_keyboard_package_header header;
+	struct fs_dirent entry;
+	uint8_t buffer[256];
+	uint32_t crc = 0U;
+	uint32_t remaining;
+	int ret;
+
+	ret = fs_stat(KB_RX_PATH, &entry);
+	if (ret != 0 || entry.type != FS_DIR_ENTRY_FILE ||
+		entry.size < EF800_KEYBOARD_PACKAGE_HEADER_SIZE) {
+		return -EINVAL;
+	}
+	fs_file_t_init(&file);
+	ret = fs_open(&file, KB_RX_PATH, FS_O_READ);
+	if (ret != 0) {
+		return ret;
+	}
+	ret = fs_read(&file, &header, sizeof(header)) == sizeof(header) &&
+		ef800_keyboard_package_valid(&header, entry.size) ? 0 : -EINVAL;
+	if (ret == 0) {
+		remaining = header.image_size;
+		while (remaining != 0U) {
+			size_t count = MIN(sizeof(buffer), remaining);
+			if (fs_read(&file, buffer, count) != (ssize_t)count) {
+				ret = -EIO;
+				break;
+			}
+			crc = ef800_crc32_update(crc, buffer, count);
+			remaining -= count;
+		}
+		if (ret == 0 && crc != header.image_crc32) {
+			ret = -EBADMSG;
+		}
+	}
+	(void)fs_close(&file);
+	if (ret == 0) {
+		hwdebug_console_printf("\r\nkeyboard receive: package valid version=%u.%u.%u "
+			"target=0x%04x size=%u\r\n", header.version_major,
+			header.version_minor, header.version_patch, header.target_id,
+			(unsigned int)header.image_size);
+	}
+	return ret;
+}
+
 void hwdebug_keyboard_receive(void)
 {
 	struct fs_file_t file;
@@ -141,7 +192,7 @@ void hwdebug_keyboard_receive(void)
 	for (size_t i = 0U; i < sizeof(reserved); ++i) {
 		if (receive_console_byte(&reserved[i], 3000U) != 0) goto done;
 	}
-	if (size == 0U || size > KB_UPDATE_MAX_SIZE) {
+	if (size == 0U || size > KB_PACKAGE_MAX_SIZE) {
 		hwdebug_console_puts("keyboard receive: invalid size\r\n");
 		goto done;
 	}
@@ -170,9 +221,21 @@ void hwdebug_keyboard_receive(void)
 	}
 	(void)fs_close(&file);
 	crc ^= 0xFFFFFFFFU;
-	uart_poll_out(console_uart, crc == expected_crc ? 'K' : 'E');
-	hwdebug_console_printf("\r\nkeyboard receive: %s size=%u\r\n",
-		crc == expected_crc ? "complete" : "CRC failed", (unsigned int)size);
+	if (crc != expected_crc) {
+		uart_poll_out(console_uart, 'E');
+		hwdebug_console_printf("\r\nkeyboard receive: CRC failed size=%u\r\n",
+			(unsigned int)size);
+		goto done;
+	}
+	ret = validate_keyboard_package();
+	uart_poll_out(console_uart, ret == 0 ? 'K' : 'E');
+	if (ret != 0) {
+		hwdebug_console_printf("\r\nkeyboard receive: package validation failed=%d; "
+			"file retained\r\n", ret);
+	} else {
+		hwdebug_console_printf("keyboard receive: package upload successful "
+			"size=%u\r\n", (unsigned int)size);
+	}
 done:
 	uart_irq_rx_enable(console_uart);
 }

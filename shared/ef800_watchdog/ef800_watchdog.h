@@ -5,6 +5,8 @@
 #include <stdbool.h>
 
 int ef800_watchdog_start(unsigned int timeout_ms);
+/* Attach to an IWDG started by the resident bootloader without reconfiguring it. */
+int ef800_watchdog_inherit(void);
 int ef800_watchdog_feed(void);
 bool ef800_watchdog_available(void);
 

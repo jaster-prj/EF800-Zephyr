@@ -3,6 +3,7 @@
 /dts-v1/;
 #include <st/l4/stm32l431Xc.dtsi>
 #include <zephyr/dt-bindings/gpio/gpio.h>
+#include <zephyr/dt-bindings/pinctrl/stm32-pinctrl.h>
 
 / {
 	model = "Jaster EF800 keyboard controller";
@@ -14,6 +15,11 @@
 		zephyr,sram = &sram0;
 		zephyr,flash = &flash0;
 	};
+
+	aliases {
+		watchdog0 = &iwdg;
+	};
+
 
 	keyboard {
 		compatible = "jaster,ef800-keyboard";
@@ -41,9 +47,47 @@
 	};
 };
 
+&pinctrl {
+	usart3_tx_pb10: usart3_tx_pb10 {
+		pinmux = <STM32_PINMUX('B', 10, AF7)>;
+		bias-pull-up;
+		drive-push-pull;
+	};
+
+	usart3_rx_pb11: usart3_rx_pb11 {
+		pinmux = <STM32_PINMUX('B', 11, AF7)>;
+		bias-pull-up;
+	};
+};
+
+&flash0 {
+	partitions {
+		compatible = "fixed-partitions";
+		#address-cells = <1>;
+		#size-cells = <1>;
+
+		keyboard_boot_partition: partition@0 {
+			label = "keyboard-bootloader";
+			reg = <0x00000000 0x00008000>;
+		};
+		keyboard_app_partition: partition@8000 {
+			label = "keyboard-application";
+			reg = <0x00008000 0x00038000>;
+		};
+	};
+};
+
 &usart3 {
 		pinctrl-0 = <&usart3_tx_pb10 &usart3_rx_pb11>;
 		pinctrl-names = "default";
 		current-speed = <115200>;
 		status = "okay";
+};
+
+&iwdg {
+	status = "okay";
+};
+
+&sram0 {
+	reg = <0x20000000 0x0000F000>;
 };

@@ -293,3 +293,42 @@ The closeout gate is the native suite, all four pristine firmware builds, and
 `verify-images.sh`. The physical debug-keyboard test passes when semantic names
 exercise normal application behavior, held modifiers work, unknown names are
 silent, debug stop releases every virtual key, and physical input resumes.
+## DebugConsole keyboard package upload
+
+When USB MSD is unavailable, use the MCUmgr filesystem transport on the
+selected DebugConsole. MCUmgr owns the DebugConsole binary stream while the
+transport is active; the interactive shell is paused during this operation.
+
+The package is uploaded to:
+
+```text
+/EF800:/fwu/EF800_KEYBOARD.pkg
+```
+
+The MCUmgr host must use raw serial SMP at `115200 8N1` on the selected
+DebugConsole. The equivalent host operation is:
+
+```text
+fs upload EF800_KEYBOARD.pkg /EF800:/fwu/EF800_KEYBOARD.pkg
+```
+
+After the upload completes, reset MainApplication to validate and process the
+package. The package header and payload CRC are checked before the keyboard
+controller update starts.
+
+The old `keyboard upload`/`EFKB` command is retained only as a legacy
+diagnostic path and must not be used for production transfer testing.
+
+The package path remains:
+
+```text
+/EF800:/fwu/EF800_KEYBOARD.pkg
+```
+
+The hwdebug image returns `K` only after both the transfer CRC and the package
+header/payload CRC have passed. It returns `E` and retains the file when either
+validation fails. Successful console output includes:
+
+```text
+keyboard receive: package upload successful
+```

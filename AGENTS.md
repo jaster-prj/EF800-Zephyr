@@ -121,10 +121,13 @@ L431 keyboard probe: 0672FF504955857567234934, device ID 0x435
 L496 main/debug probe: 066FFF504982494867074032, device ID 0x461
 ```
 
-Do not flash an image built for one MCU onto the other. A Nucleo ST-LINK may
-report a very low target voltage when its target board is not powered by the
-Nucleo; this does not replace checking that the EF800 PCB has its own valid
-power and VTREF.
+Do not flash an image built for one MCU onto the other. The NUCLEO-L496ZG
+ST-LINK Programmer Voltage output is not usable for the EF800 main/debug
+target: the EF800 PCB voltage is not reported to the debugger, and the tool
+may show an unusably low value such as `0.03V` even when the PCB is powered.
+Use the detected device ID/name to identify the MCU, and verify EF800 PCB
+power and VTREF at the hardware instead of relying on the Programmer Voltage
+field. A Nucleo ST-LINK voltage reading does not replace those checks.
 
 Flash the temporary `ef800-hwdebug` image at `0x08000000`:
 
@@ -199,7 +202,7 @@ keyboard test
 ```
 
 Expected baseline results are `lpuart test ... PASS`, raw version bytes
-`a0 f1 01 00 00`, raw ID bytes `a0 f2 ab 83`, and `keyboard/protocol PASS`.
+`a0 f1 01 01 01`, raw ID bytes `a0 f2 ab 83`, and `keyboard/protocol PASS`.
 The `keyboard baud-test` command is optional and should be run separately;
 first establish that the normal `115200` protocol passes.
 

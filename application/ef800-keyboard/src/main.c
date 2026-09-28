@@ -17,8 +17,13 @@
 #include "keyboard_protocol.h"
 #include "keyboard_translation.h"
 #include "keyboard_key_names.h"
+#include "ef800_keyboard_boot.h"
+#include "ef800_watchdog.h"
 
-static void jump_to_system_bootloader(void);
+#define EF800_KEYBOARD_VERSION_MAJOR 1U
+#define EF800_KEYBOARD_VERSION_MINOR 1U
+#define EF800_KEYBOARD_VERSION_PATCH 1U
+
 static int configure_protocol_uart(uint32_t baudrate);
 
 static int baud_selector_to_rate(uint8_t selector, uint32_t *rate)
@@ -507,7 +512,8 @@ static void process_command_byte(uint8_t byte, uint64_t now_ms)
 		keyboard_active = false;
 		send_ack(CMD_KEYBOARD_BOOTLOADER);
 		k_sleep(K_MSEC(10));
-		jump_to_system_bootloader();
+		ef800_keyboard_boot_request_system(ef800_keyboard_boot_state_get());
+		sys_reboot(SYS_REBOOT_COLD);
 		break;
 	case CMD_KEYBOARD_BAUDRATE:
 		keyboard_auto = false;
@@ -552,9 +558,10 @@ static void process_command_byte(uint8_t byte, uint64_t now_ms)
 			break;
 	}
 	case CMD_KEYBOARD_VERSION: {
-			/* Firmware version 1.0.0, encoded as SemVer major/minor/patch. */
+			/* Firmware version 1.1.1, encoded as SemVer major/minor/patch. */
 			const uint8_t response[] = { CMD_RETURN, CMD_KEYBOARD_VERSION,
-				1U, 0U, 0U };
+				EF800_KEYBOARD_VERSION_MAJOR, EF800_KEYBOARD_VERSION_MINOR,
+				EF800_KEYBOARD_VERSION_PATCH };
 			uart_send(response, sizeof(response));
 			break;
 	}
@@ -586,27 +593,6 @@ static void uart_isr(const struct device *dev, void *user_data)
 	}
 	while (uart_fifo_read(dev, &byte, 1U) == 1) {
 		(void)k_msgq_put(&rx_msgq, &byte, K_NO_WAIT);
-	}
-}
-
-static void jump_to_system_bootloader(void)
-{
-#if defined(CONFIG_CPU_CORTEX_M)
-	const uint32_t *const vector_table = (const uint32_t *)0x1FFF0000UL;
-	void (*const entry)(void) = (void (*)(void))vector_table[1];
-
-	__disable_irq();
-	SysTick->CTRL = 0U;
-	SysTick->LOAD = 0U;
-	SysTick->VAL = 0U;
-	SCB->VTOR = (uint32_t)vector_table;
-	__DSB();
-	__ISB();
-	__set_MSP(vector_table[0]);
-	entry();
-#endif
-	for (;;) {
-		/* The system bootloader does not return. */
 	}
 }
 
@@ -678,7 +664,14 @@ int main(void)
 	uint8_t byte;
 	uint64_t now_ms;
 
+	struct ef800_keyboard_boot_state *boot_state =
+		ef800_keyboard_boot_state_get();
+	uint8_t healthy_scans = 0U;
+
 	if (init_gpio() != 0 || init_uart() != 0) {
+		return 0;
+	}
+	if (ef800_watchdog_inherit() != 0) {
 		return 0;
 	}
 
@@ -688,12 +681,16 @@ int main(void)
 	}
 
 	while (true) {
+		(void)ef800_watchdog_feed();
 		now_ms = k_uptime_get();
 		expire_command(now_ms);
 		while (k_msgq_get(&rx_msgq, &byte, K_NO_WAIT) == 0) {
 			process_command_byte(byte, now_ms);
 		}
 		scan_keyboard(now_ms);
+		if (healthy_scans < 3U && ++healthy_scans == 3U) {
+			ef800_keyboard_boot_confirm(boot_state);
+		}
 		repeat_if_due(now_ms);
 		k_msleep(KB_SCAN_PERIOD_MS);
 	}

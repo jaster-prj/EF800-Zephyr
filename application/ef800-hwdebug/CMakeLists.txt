@@ -17,6 +17,7 @@ target_sources(app PRIVATE
 	${CMAKE_CURRENT_LIST_DIR}/../../shared/ef800_drivers/ef800_mcp23017.c
 	${CMAKE_CURRENT_LIST_DIR}/../../shared/ef800_drivers/ef800_max17043.c
 	${CMAKE_CURRENT_LIST_DIR}/../../shared/ef800_drivers/ef800_t6963.c
+	${CMAKE_CURRENT_LIST_DIR}/../../shared/ef800_update/ef800_update.c
 	${ZEPHYR_HAL_STM32_MODULE_DIR}/stm32cube/stm32l4xx/drivers/src/stm32l4xx_hal_gpio.c
 	${ZEPHYR_HAL_STM32_MODULE_DIR}/stm32cube/stm32l4xx/drivers/src/stm32l4xx_hal_i2c.c
 	${ZEPHYR_HAL_STM32_MODULE_DIR}/stm32cube/stm32l4xx/drivers/src/stm32l4xx_hal_i2c_ex.c
@@ -27,4 +28,5 @@ target_sources(app PRIVATE
 target_include_directories(app PRIVATE
 	${CMAKE_CURRENT_LIST_DIR}/../../shared/ef800_drivers
 	${CMAKE_CURRENT_LIST_DIR}/../../shared/keyboard_protocol
+	${CMAKE_CURRENT_LIST_DIR}/../../shared/ef800_update
 )

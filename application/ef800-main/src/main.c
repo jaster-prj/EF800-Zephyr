@@ -11,6 +11,7 @@
 #include <zephyr/devicetree.h>
 #include <zephyr/drivers/uart.h>
 #include <zephyr/drivers/gpio.h>
+#include <zephyr/fs/fs.h>
 #include <zephyr/kernel.h>
 #include <zephyr/logging/log.h>
 #include <zephyr/shell/shell.h>
@@ -34,6 +35,8 @@
 #include "ef800_t6963.h"
 #include "ef800_workspace.h"
 #include "keyboard_host.h"
+#include "ef800_keyboard_package.h"
+#include "ef800_mcumgr_transport.h"
 
 LOG_MODULE_REGISTER(ef800_main_app, LOG_LEVEL_INF);
 
@@ -45,6 +48,19 @@ LOG_MODULE_REGISTER(ef800_main_app, LOG_LEVEL_INF);
 #define LCD_NODE EF800_USER_NODE
 #define LCD_COLUMNS 40U
 #define STATUS_LINE_SIZE 80U
+#define EF800_KEYBOARD_PACKAGE_PATH "/EF800:/fwu/EF800_KEYBOARD.pkg"
+#define EF800_KEYBOARD_UPLOAD_MAX_SIZE \
+	(EF800_KEYBOARD_PACKAGE_HEADER_SIZE + EF800_KEYBOARD_PACKAGE_LIMIT)
+#define EF800_KEYBOARD_ROM_ACK 0x79U
+#define EF800_KEYBOARD_ROM_NACK 0x1FU
+#define EF800_KEYBOARD_ROM_GET_ID 0x02U
+#define EF800_KEYBOARD_ROM_READ_MEMORY 0x11U
+#define EF800_KEYBOARD_ROM_EXTENDED_ERASE 0x44U
+#define EF800_KEYBOARD_ROM_WRITE_MEMORY 0x31U
+#define EF800_KEYBOARD_ROM_PAGE_SIZE 2048U
+#define EF800_KEYBOARD_ROM_CHUNK 128U
+#define EF800_KEYBOARD_ROM_TIMEOUT_MS 1500U
+#define EF800_KEYBOARD_UPLOAD_ACK 0x06U
 
 static const struct device *const keyboard_uart =
 	DEVICE_DT_GET(KEYBOARD_UART_NODE);
@@ -56,6 +72,7 @@ static volatile bool keyboard_command_pending;
 static volatile uint8_t keyboard_pending_command;
 static bool keyboard_uart_initialized;
 static bool keyboard_debug_active;
+static bool keyboard_update_active;
 
 static void keyboard_uart_isr(const struct device *dev, void *user_data);
 
@@ -265,7 +282,6 @@ static int sync_boot_metadata(void)
 	result = ef800_metadata_write_current(&boot_metadata);
 	if (result == 0) {
 		boot_metadata_valid = true;
-		(void)ef800_console_init(true);
 	}
 	return result;
 }
@@ -273,6 +289,8 @@ static int sync_boot_metadata(void)
 static enum ef800_port_uart_id port_uart_id_for_console(uint8_t port_id)
 {
 	switch (port_id) {
+	case EF800_CONSOLE_NO_TARGET:
+		return EF800_PORT_UART_NONE;
 	case 1U:
 		return EF800_PORT_UART3;
 	case 3U:
@@ -311,10 +329,23 @@ static int reconcile_port_uart_state(void)
 		return result;
 	}
 	console_port = ef800_console_port_select(&desired, true);
-	result = set_console_for_port(console_port);
-	if (result != 0 && console_port != EF800_CONSOLE_SAFE_PORT) {
-		console_port = EF800_CONSOLE_SAFE_PORT;
-		result = ef800_console_set_target(console_port);
+	if (console_port == EF800_CONSOLE_NO_TARGET) {
+		ef800_console_clear_target();
+		result = 0;
+	} else {
+		result = set_console_for_port(console_port);
+	}
+	if (result != 0) {
+		ef800_console_clear_target();
+		console_port = EF800_CONSOLE_NO_TARGET;
+	}
+	{
+		char diagnostic[64];
+		int length = snprintk(diagnostic, sizeof(diagnostic),
+			"console reconcile target=%u result=%d\r\n", console_port, result);
+		if (length > 0) {
+			(void)ef800_console_write((const uint8_t *)diagnostic, (size_t)length);
+		}
 	}
 	if (result != 0) {
 		LOG_WRN("Console selection failed: %d", result);
@@ -531,6 +562,547 @@ static int configure_keyboard_uart(void)
 	};
 
 	return uart_configure(keyboard_uart, &config);
+}
+
+static int keyboard_update_uart(bool rom)
+{
+	const struct uart_config config = {
+		.baudrate = KB_UART_BAUDRATE,
+		.parity = rom ? UART_CFG_PARITY_EVEN : UART_CFG_PARITY_NONE,
+		.stop_bits = UART_CFG_STOP_BITS_1,
+		.data_bits = UART_CFG_DATA_BITS_8,
+		.flow_ctrl = UART_CFG_FLOW_CTRL_NONE,
+	};
+
+	return uart_configure(keyboard_uart, &config);
+}
+
+static int cmd_keyboard_upload(const struct shell *shell, size_t argc,
+	char **argv);
+
+static int keyboard_upload_read(uint8_t *value, uint32_t timeout_ms)
+{
+	int64_t deadline = k_uptime_get() + timeout_ms;
+
+	while (k_uptime_get() < deadline) {
+		if (ef800_console_read(value) == 0) {
+			return 0;
+		}
+		k_msleep(1U);
+	}
+	return -ETIMEDOUT;
+}
+
+static int keyboard_upload_read_u32(uint32_t *value)
+{
+	uint8_t bytes[4];
+
+	for (size_t i = 0U; i < sizeof(bytes); ++i) {
+		if (keyboard_upload_read(&bytes[i], 3000U) != 0) {
+			return -ETIMEDOUT;
+		}
+	}
+	*value = (uint32_t)bytes[0] | ((uint32_t)bytes[1] << 8) |
+		((uint32_t)bytes[2] << 16) | ((uint32_t)bytes[3] << 24);
+	return 0;
+}
+
+static int keyboard_upload_read_magic(uint8_t magic[4])
+{
+	static const uint8_t expected[] = {0x45U, 0x46U, 0x4BU, 0x42U};
+	uint8_t value;
+	size_t matched = 0U;
+
+	while (matched < ARRAY_SIZE(expected)) {
+		if (keyboard_upload_read(&value, 3000U) != 0) {
+			return -ETIMEDOUT;
+		}
+		if (value == expected[matched]) {
+			magic[matched++] = value;
+		} else {
+			matched = value == expected[0] ? 1U : 0U;
+			if (matched != 0U) {
+				magic[0] = value;
+			}
+		}
+	}
+	return 0;
+}
+
+static int keyboard_upload_validate_file(void)
+{
+	struct fs_file_t file;
+	struct fs_dirent entry;
+	struct ef800_keyboard_package_header header;
+	uint8_t buffer[256];
+	uint32_t crc = 0U;
+	uint32_t remaining;
+	int result;
+
+	result = fs_stat(EF800_KEYBOARD_PACKAGE_PATH, &entry);
+	if (result != 0 || entry.type != FS_DIR_ENTRY_FILE ||
+		entry.size < EF800_KEYBOARD_PACKAGE_HEADER_SIZE) {
+		return -EINVAL;
+	}
+	fs_file_t_init(&file);
+	result = fs_open(&file, EF800_KEYBOARD_PACKAGE_PATH, FS_O_READ);
+	if (result != 0) {
+		return result;
+	}
+	result = fs_read(&file, &header, sizeof(header)) == sizeof(header) &&
+		ef800_keyboard_package_valid(&header, entry.size) ? 0 : -EINVAL;
+	if (result == 0) {
+		remaining = header.image_size;
+		while (remaining != 0U) {
+			size_t count = MIN(sizeof(buffer), remaining);
+			if (fs_read(&file, buffer, count) != (ssize_t)count) {
+				result = -EIO;
+				break;
+			}
+			crc = ef800_crc32_update(crc, buffer, count);
+			remaining -= count;
+		}
+		if (result == 0 && crc != header.image_crc32) {
+			result = -EBADMSG;
+		}
+	}
+	(void)fs_close(&file);
+	return result;
+}
+
+static int cmd_keyboard_upload(const struct shell *shell, size_t argc,
+	char **argv)
+{
+	struct fs_file_t file;
+	uint8_t buffer[256];
+	uint8_t header[4];
+	uint8_t reserved[4];
+	uint32_t size;
+	uint32_t expected_crc;
+	uint32_t crc = 0U;
+	uint32_t received = 0U;
+	int result = 0;
+
+	ARG_UNUSED(argc);
+	ARG_UNUSED(argv);
+	if (keyboard_update_active || !ef800_storage_is_mounted() ||
+		ef800_main_usb_msd_requested()) {
+		shell_error(shell, "keyboard upload unavailable: storage busy");
+		return -EBUSY;
+	}
+	keyboard_update_active = true;
+	ef800_shell_set_binary_mode(true);
+	(void)ef800_console_write((const uint8_t *)"keyboard upload: ready\r\n",
+		strlen("keyboard upload: ready\r\n"));
+	/* Let the shell worker finish consuming the command line before the
+	 * transport switches to the raw package stream. */
+	k_msleep(100U);
+	{
+		uint8_t acknowledgment;
+
+		if (keyboard_upload_read(&acknowledgment, 3000U) != 0 ||
+			acknowledgment != EF800_KEYBOARD_UPLOAD_ACK) {
+			result = -EPROTO;
+			goto done;
+		}
+		(void)ef800_console_write((const uint8_t *)"A", 1U);
+	}
+	if (keyboard_upload_read_magic(header) != 0) {
+		(void)ef800_console_write((const uint8_t *)"H", 1U);
+		result = -EPROTO;
+		goto done;
+	}
+	if (memcmp(header, (uint8_t[]){0x45U, 0x46U, 0x4BU, 0x42U},
+		sizeof(header)) != 0) {
+		(void)ef800_console_write((const uint8_t *)"M", 1U);
+		result = -EPROTO;
+		goto done;
+	}
+	if (keyboard_upload_read_u32(&size) != 0 ||
+		keyboard_upload_read_u32(&expected_crc) != 0) {
+		(void)ef800_console_write((const uint8_t *)"D", 1U);
+		result = -EPROTO;
+		goto done;
+	}
+	for (size_t i = 0U; i < sizeof(reserved); ++i) {
+		if (keyboard_upload_read(&reserved[i], 3000U) != 0) {
+			result = -ETIMEDOUT;
+			goto done;
+		}
+	}
+	if (size == 0U || size > EF800_KEYBOARD_UPLOAD_MAX_SIZE) {
+		result = -EFBIG;
+		goto done;
+	}
+	fs_file_t_init(&file);
+	(void)fs_mkdir("/EF800:/fwu");
+	result = fs_open(&file, EF800_KEYBOARD_PACKAGE_PATH,
+		FS_O_CREATE | FS_O_WRITE | FS_O_TRUNC);
+	if (result != 0) {
+		goto done;
+	}
+	(void)ef800_console_write((const uint8_t *)"M", 1U);
+	while (received < size) {
+		size_t count = MIN(sizeof(buffer), size - received);
+		for (size_t i = 0U; i < count; ++i) {
+			if (keyboard_upload_read(&buffer[i], 3000U) != 0) {
+				result = -ETIMEDOUT;
+				goto close_file;
+			}
+		}
+		if (fs_write(&file, buffer, count) != (ssize_t)count) {
+			result = -EIO;
+			goto close_file;
+		}
+		crc = ef800_crc32_update(crc, buffer, count);
+		received += count;
+	}
+	(void)fs_close(&file);
+	(void)ef800_console_write((const uint8_t *)"R", 1U);
+	if (crc != expected_crc || keyboard_upload_validate_file() != 0) {
+		result = -EBADMSG;
+		(void)ef800_console_write((const uint8_t *)"E", 1U);
+		goto done;
+	}
+	(void)ef800_console_write((const uint8_t *)"K", 1U);
+	shell_print(shell, "keyboard package upload successful (%u bytes)", size);
+	goto done;
+
+close_file:
+	(void)fs_close(&file);
+done:
+	ef800_shell_set_binary_mode(false);
+	keyboard_update_active = false;
+	if (result != 0) {
+		(void)ef800_console_write((const uint8_t *)"E", 1U);
+		shell_error(shell, "keyboard package upload failed: %d; file retained",
+			result);
+	}
+	return result;
+}
+
+static int keyboard_update_read_byte(uint8_t *byte, uint32_t timeout_ms)
+{
+	int64_t deadline = k_uptime_get() + timeout_ms;
+
+	while (k_uptime_get() < deadline) {
+		if (uart_poll_in(keyboard_uart, byte) == 0) {
+			return 0;
+		}
+		k_msleep(1U);
+	}
+	return -ETIMEDOUT;
+}
+
+static int keyboard_update_send(const uint8_t *data, size_t length)
+{
+	for (size_t i = 0U; i < length; ++i) {
+		uart_poll_out(keyboard_uart, data[i]);
+	}
+	return 0;
+}
+
+static int keyboard_update_expect(uint8_t expected)
+{
+	uint8_t response;
+	int result = keyboard_update_read_byte(&response,
+		EF800_KEYBOARD_ROM_TIMEOUT_MS);
+
+	if (result != 0) {
+		return result;
+	}
+	return response == expected ? 0 :
+		(response == EF800_KEYBOARD_ROM_NACK ? -EIO : -EPROTO);
+}
+
+static uint8_t keyboard_update_xor(const uint8_t *data, size_t length)
+{
+	uint8_t value = 0U;
+
+	for (size_t i = 0U; i < length; ++i) {
+		value ^= data[i];
+	}
+	return value;
+}
+
+static int keyboard_update_rom_command(uint8_t command)
+{
+	uint8_t frame[] = { command, (uint8_t)~command };
+	int result = keyboard_update_send(frame, sizeof(frame));
+
+	return result == 0 ? keyboard_update_expect(EF800_KEYBOARD_ROM_ACK) : result;
+}
+
+static int keyboard_update_rom_address(uint32_t address)
+{
+	uint8_t frame[5] = {
+		(uint8_t)(address >> 24), (uint8_t)(address >> 16),
+		(uint8_t)(address >> 8), (uint8_t)address, 0U,
+	};
+
+	frame[4] = keyboard_update_xor(frame, 4U);
+	return keyboard_update_send(frame, sizeof(frame)) == 0 ?
+		keyboard_update_expect(EF800_KEYBOARD_ROM_ACK) : -EIO;
+}
+
+static int keyboard_update_rom_identify(void)
+{
+	uint8_t count;
+	uint8_t id[2];
+
+	if (keyboard_update_rom_command(EF800_KEYBOARD_ROM_GET_ID) != 0 ||
+		keyboard_update_read_byte(&count, EF800_KEYBOARD_ROM_TIMEOUT_MS) != 0 ||
+		count != 1U ||
+		keyboard_update_read_byte(&id[0], EF800_KEYBOARD_ROM_TIMEOUT_MS) != 0 ||
+		keyboard_update_read_byte(&id[1], EF800_KEYBOARD_ROM_TIMEOUT_MS) != 0 ||
+		keyboard_update_expect(EF800_KEYBOARD_ROM_ACK) != 0) {
+		return -EPROTO;
+	}
+	LOG_INF("keyboard update: ROM device id=0x%02x%02x", id[0], id[1]);
+	return ((uint16_t)id[0] << 8 | id[1]) ==
+		EF800_KEYBOARD_PACKAGE_TARGET ? 0 : -ENODEV;
+}
+
+static int keyboard_update_rom_erase(void)
+{
+	uint8_t frame[2U + 112U * 2U + 1U];
+	uint8_t *cursor = frame;
+
+	if (keyboard_update_rom_command(EF800_KEYBOARD_ROM_EXTENDED_ERASE) != 0) {
+		return -EIO;
+	}
+	*cursor++ = 0U;
+	*cursor++ = 111U;
+	for (uint16_t page = 16U; page < 128U; ++page) {
+		*cursor++ = (uint8_t)(page >> 8);
+		*cursor++ = (uint8_t)page;
+	}
+	*cursor = keyboard_update_xor(frame, (size_t)(cursor - frame));
+	if (keyboard_update_send(frame, sizeof(frame)) != 0) {
+		return -EIO;
+	}
+	return keyboard_update_expect(EF800_KEYBOARD_ROM_ACK);
+}
+
+static int keyboard_update_rom_write(struct fs_file_t *file,
+	const struct ef800_keyboard_package_header *header)
+{
+	uint8_t data[EF800_KEYBOARD_ROM_CHUNK];
+	uint8_t frame[EF800_KEYBOARD_ROM_CHUNK + 2U];
+
+	for (uint32_t offset = 0U; offset < header->image_size;
+		offset += EF800_KEYBOARD_ROM_CHUNK) {
+		size_t length = MIN(EF800_KEYBOARD_ROM_CHUNK,
+			header->image_size - offset);
+		size_t padded = ROUND_UP(length, 8U);
+
+		if (fs_seek(file, header->header_size + offset, FS_SEEK_SET) != 0 ||
+			fs_read(file, data, length) != (ssize_t)length) {
+			return -EIO;
+		}
+		memset(data + length, 0xFF, sizeof(data) - length);
+		frame[0] = (uint8_t)(padded - 1U);
+		memcpy(&frame[1], data, padded);
+		frame[padded + 1U] = keyboard_update_xor(frame, padded + 1U);
+		if (keyboard_update_rom_command(EF800_KEYBOARD_ROM_WRITE_MEMORY) != 0 ||
+			keyboard_update_rom_address(EF800_KEYBOARD_PACKAGE_BASE + offset) != 0 ||
+			keyboard_update_send(frame, padded + 2U) != 0 ||
+			keyboard_update_expect(EF800_KEYBOARD_ROM_ACK) != 0) {
+			return -EIO;
+		}
+		if ((offset % 4096U) == 0U || offset + length == header->image_size) {
+			LOG_INF("keyboard update: flashed %u/%u bytes", offset + length,
+				header->image_size);
+		}
+	}
+	return 0;
+}
+
+static int keyboard_update_rom_verify(struct fs_file_t *file,
+	const struct ef800_keyboard_package_header *header)
+{
+	uint8_t expected[EF800_KEYBOARD_ROM_CHUNK];
+	uint8_t response[EF800_KEYBOARD_ROM_CHUNK];
+
+	LOG_INF("keyboard update: flash verification started");
+	for (uint32_t offset = 0U; offset < header->image_size;
+		offset += EF800_KEYBOARD_ROM_CHUNK) {
+		size_t length = MIN(EF800_KEYBOARD_ROM_CHUNK,
+			header->image_size - offset);
+		uint8_t size_frame[2] = { (uint8_t)(length - 1U),
+			(uint8_t)~(length - 1U) };
+
+		if (fs_seek(file, header->header_size + offset, FS_SEEK_SET) != 0 ||
+			fs_read(file, expected, length) != (ssize_t)length ||
+			keyboard_update_rom_command(EF800_KEYBOARD_ROM_READ_MEMORY) != 0 ||
+			keyboard_update_rom_address(EF800_KEYBOARD_PACKAGE_BASE + offset) != 0 ||
+			keyboard_update_send(size_frame, sizeof(size_frame)) != 0) {
+			return -EIO;
+		}
+		for (size_t i = 0U; i < length; ++i) {
+			if (keyboard_update_read_byte(&response[i],
+				EF800_KEYBOARD_ROM_TIMEOUT_MS) != 0) {
+				return -ETIMEDOUT;
+			}
+		}
+		if (memcmp(expected, response, length) != 0) {
+			return -EBADMSG;
+		}
+	}
+	LOG_INF("keyboard update: flash verification successful");
+	return 0;
+}
+
+static int keyboard_update_read_package(struct fs_file_t *file,
+	struct ef800_keyboard_package_header *header, size_t file_size)
+{
+	uint8_t buffer[1024];
+	uint32_t crc = 0U;
+	uint32_t remaining;
+
+	if (fs_seek(file, 0, FS_SEEK_SET) != 0 ||
+		fs_read(file, header, sizeof(*header)) != sizeof(*header) ||
+		!ef800_keyboard_package_valid(header, file_size)) {
+		return -EINVAL;
+	}
+	if (fs_seek(file, header->header_size, FS_SEEK_SET) != 0) {
+		return -EIO;
+	}
+	remaining = header->image_size;
+	while (remaining != 0U) {
+		size_t count = MIN(sizeof(buffer), remaining);
+		if (fs_read(file, buffer, count) != (ssize_t)count) {
+			return -EIO;
+		}
+		crc = ef800_crc32_update(crc, buffer, count);
+		remaining -= count;
+	}
+	return crc == header->image_crc32 ? 0 : -EBADMSG;
+}
+
+static int keyboard_update_run(void)
+{
+	struct fs_dirent entry;
+	struct fs_file_t file;
+	struct ef800_keyboard_package_header header;
+	uint8_t response[5];
+	uint8_t vector[8];
+	int result;
+
+	if (keyboard_update_active || !ef800_storage_is_mounted() ||
+		ef800_main_usb_msd_requested()) {
+		return -EAGAIN;
+	}
+	result = fs_stat(EF800_KEYBOARD_PACKAGE_PATH, &entry);
+	if (result == -ENOENT) {
+		return 0;
+	}
+	if (result != 0 || entry.type != FS_DIR_ENTRY_FILE) {
+		LOG_ERR("keyboard update: new keyboard software detected but file is invalid");
+		return result != 0 ? result : -EINVAL;
+	}
+	LOG_INF("keyboard update: new keyboard software detected size=%u",
+		(unsigned int)entry.size);
+	fs_file_t_init(&file);
+	result = fs_open(&file, EF800_KEYBOARD_PACKAGE_PATH, FS_O_READ);
+	if (result != 0) {
+		return result;
+	}
+	keyboard_update_active = true;
+	result = keyboard_update_read_package(&file, &header, entry.size);
+	if (result != 0) {
+		LOG_ERR("keyboard update: package validation failed: %d", result);
+		goto cleanup;
+	}
+	if (fs_seek(&file, header.header_size, FS_SEEK_SET) != 0 ||
+		fs_read(&file, vector, sizeof(vector)) != sizeof(vector) ||
+		!ef800_vector_table_valid((const uint32_t *)vector,
+			EF800_KEYBOARD_PACKAGE_BASE, EF800_KEYBOARD_PACKAGE_LIMIT,
+			0x20000000U, 0x0000F000U)) {
+		result = -EINVAL;
+		goto cleanup;
+	}
+	LOG_INF("keyboard update: package version=%u.%u.%u base=0x%08x",
+		header.version_major, header.version_minor, header.version_patch,
+		header.image_base);
+	uart_irq_rx_disable(keyboard_uart);
+	k_msgq_purge(&keyboard_rx_msgq);
+	while (uart_poll_in(keyboard_uart, &response[0]) == 0) {
+	}
+	keyboard_update_uart(false);
+	if (keyboard_update_send((uint8_t[]){CMD_KEYBOARD_BOOTLOADER}, 1U) != 0) {
+		result = -EIO;
+		goto cleanup_uart;
+	}
+	for (size_t i = 0U; i < 3U; ++i) {
+		if (keyboard_update_read_byte(&response[i],
+			EF800_KEYBOARD_ROM_TIMEOUT_MS) != 0) {
+			result = -ETIMEDOUT;
+			goto cleanup_uart;
+		}
+	}
+	if (memcmp(response, (uint8_t[]){CMD_RETURN, CMD_KEYBOARD_BOOTLOADER,
+		CMD_ACK}, 3U) != 0) {
+		result = -EPROTO;
+		goto cleanup_uart;
+	}
+	LOG_INF("keyboard update: keyboard successful switch to system bootloader");
+	k_msleep(100U);
+	if (keyboard_update_uart(true) != 0 ||
+		keyboard_update_send((uint8_t[]){0x7FU}, 1U) != 0 ||
+		keyboard_update_expect(EF800_KEYBOARD_ROM_ACK) != 0 ||
+		keyboard_update_rom_identify() != 0 ||
+		keyboard_update_rom_erase() != 0 ||
+		keyboard_update_rom_write(&file, &header) != 0 ||
+		keyboard_update_rom_verify(&file, &header) != 0) {
+		result = -EIO;
+		goto cleanup_uart;
+	}
+	LOG_INF("keyboard update: successful flashed");
+	gpio_pin_set_dt(&keyboard_reset, 0);
+	k_msleep(20U);
+	keyboard_update_uart(false);
+	gpio_pin_set_dt(&keyboard_reset, 1);
+	k_msleep(100U);
+	if (keyboard_update_read_byte(&response[0],
+		EF800_KEYBOARD_ROM_TIMEOUT_MS) != 0 || response[0] != CMD_INITIALIZED ||
+		keyboard_update_send((uint8_t[]){CMD_KEYBOARD_VERSION}, 1U) != 0) {
+		result = -ETIMEDOUT;
+		goto cleanup_uart;
+	}
+	for (size_t i = 1U; i < sizeof(response); ++i) {
+		if (keyboard_update_read_byte(&response[i],
+			EF800_KEYBOARD_ROM_TIMEOUT_MS) != 0) {
+			result = -ETIMEDOUT;
+			goto cleanup_uart;
+		}
+	}
+	if (memcmp(response, (uint8_t[]){CMD_RETURN, CMD_KEYBOARD_VERSION,
+		header.version_major, header.version_minor, header.version_patch},
+		 sizeof(response)) != 0) {
+		result = -EPROTO;
+		goto cleanup_uart;
+	}
+	LOG_INF("keyboard update: keyboard restarted");
+	result = fs_unlink(EF800_KEYBOARD_PACKAGE_PATH);
+	if (result == 0) {
+		LOG_INF("keyboard update: update successful; package removed");
+	}
+
+cleanup_uart:
+	(void)keyboard_update_uart(false);
+	while (uart_poll_in(keyboard_uart, &response[0]) == 0) {
+	}
+	uart_irq_callback_user_data_set(keyboard_uart, keyboard_uart_isr, NULL);
+	uart_irq_rx_enable(keyboard_uart);
+	k_msgq_purge(&keyboard_rx_msgq);
+cleanup:
+	(void)fs_close(&file);
+	keyboard_update_active = false;
+	if (result != 0) {
+		LOG_ERR("keyboard update: failed phase result=%d; package retained", result);
+	}
+	return result;
 }
 
 static void keyboard_uart_send(const uint8_t *data, size_t length)
@@ -2547,6 +3119,8 @@ SHELL_STATIC_SUBCMD_SET_CREATE(keyboard_debug_commands,
 );
 
 SHELL_STATIC_SUBCMD_SET_CREATE(keyboard_commands,
+	SHELL_CMD_ARG(upload, NULL, "Upload EF800_KEYBOARD.pkg via DebugConsole",
+			cmd_keyboard_upload, 1, 0),
 	SHELL_CMD(debug, &keyboard_debug_commands, "Keyboard debug input", NULL),
 	SHELL_SUBCMD_SET_END
 );
@@ -2711,8 +3285,15 @@ int main(void)
 	int result;
 	uint16_t mcp_port;
 
-	/* Keep standalone and bootloader handoff startup observable before slow init. */
-	(void)ef800_console_init(true);
+	/* Buffer output until the persisted port assignments select DebugConsole. */
+	(void)ef800_console_prepare();
+	/* Select the persisted target before slow foundation/QSPI initialization;
+	 * reconciliation below will correct it after all assignments are loaded. */
+	(void)ef800_console_init(false);
+	{
+		static const char diagnostic[] = "console initial target selected\r\n";
+		(void)ef800_console_write((const uint8_t *)diagnostic, sizeof(diagnostic) - 1U);
+	}
 	(void)ef800_shell_init();
 	printk("ef800 main application: entry\r\n");
 
@@ -2771,6 +3352,14 @@ int main(void)
 			result = reconcile_port_uart_state();
 			if (result != 0) {
 				LOG_WRN("Port routing initialization incomplete: %d", result);
+			}
+			if (result == 0 && ef800_storage_is_mounted()) {
+				result = ef800_mcumgr_transport_init();
+				if (result != 0) {
+					LOG_WRN("MCUmgr DebugConsole transport unavailable: %d", result);
+				} else {
+					LOG_INF("MCUmgr raw FS transport active on DebugConsole; shell input is paused");
+				}
 			}
 		}
 	}
@@ -2836,6 +3425,12 @@ result = ef800_mcp23017_open(&mcp23017,
 	} else {
 		LOG_INF("PB5 keyboard power-down output initialized inactive");
 	}
+	if (keyboard_rx_armed) {
+		result = keyboard_update_run();
+		if (result != 0 && result != -EAGAIN) {
+			LOG_ERR("keyboard update startup attempt failed: %d", result);
+		}
+	}
 
 	if (!mcp_controls_ready) {
 		LOG_WRN("T6963 LCD skipped: MCP23017 reset and FS controls are unavailable");
@@ -2889,6 +3484,7 @@ result = ef800_mcp23017_open(&mcp23017,
 			ef800_storage_owner_action(storage_owner, requested);
 
 		if (storage_action == EF800_STORAGE_ACTION_FAT_TO_MSC) {
+			ef800_mcumgr_transport_stop();
 			if (ef800_storage_unmount() == 0 &&
 				ef800_main_usb_msc_start() == 0) {
 				msc_requested = true;

@@ -164,6 +164,7 @@ ZTEST(keyboard_protocol, test_host_streaming_parser)
 	uint8_t key;
 	uint32_t event;
 	uint8_t id[2];
+	uint8_t version[3];
 
 	ef800_keyboard_host_init(&host);
 	zassert_equal(ef800_keyboard_host_feed(&host, CMD_INITIALIZED),
@@ -193,6 +194,21 @@ ZTEST(keyboard_protocol, test_host_streaming_parser)
 	zassert_true(ef800_keyboard_host_get_id(&host, id), NULL);
 	zassert_equal(id[0], 0xABU, NULL);
 	zassert_equal(id[1], 0x83U, NULL);
+
+	zassert_equal(ef800_keyboard_host_feed(&host, CMD_RETURN),
+			      EF800_HOST_FEED_NONE, NULL);
+	zassert_equal(ef800_keyboard_host_feed(&host, CMD_KEYBOARD_VERSION),
+			      EF800_HOST_FEED_NONE, NULL);
+	zassert_equal(ef800_keyboard_host_feed(&host, 1U),
+			      EF800_HOST_FEED_NONE, NULL);
+	zassert_equal(ef800_keyboard_host_feed(&host, 1U),
+			      EF800_HOST_FEED_NONE, NULL);
+	zassert_equal(ef800_keyboard_host_feed(&host, 0U),
+			      EF800_HOST_FEED_COMMAND, NULL);
+	zassert_true(ef800_keyboard_host_get_version(&host, version), NULL);
+	zassert_equal(version[0], 1U, NULL);
+	zassert_equal(version[1], 1U, NULL);
+	zassert_equal(version[2], 0U, NULL);
 
 	/* A stale partial frame must be dropped before the next key. */
 	zassert_equal(ef800_keyboard_host_feed_at(&host, CMD_RETURN, 100U),
@@ -963,7 +979,7 @@ ZTEST(keyboard_protocol, test_boot_metadata_assignments_and_console_fallback)
 	zassert_equal(ef800_port_assignment_connection(metadata.port_assignments, 2U),
 			      EF800_PORT_CONNECTION_SERIAL_FLOW_CONTROL, NULL);
 	zassert_equal(ef800_console_port_select(&metadata, false),
-			      EF800_CONSOLE_SAFE_PORT, NULL);
+			      EF800_CONSOLE_NO_TARGET, NULL);
 	zassert_ok(ef800_boot_metadata_set_console(&metadata, 1U), NULL);
 	zassert_equal(ef800_console_port_select(&metadata, false), 1U, NULL);
 	metadata.crc32 = ef800_boot_metadata_crc(&metadata);

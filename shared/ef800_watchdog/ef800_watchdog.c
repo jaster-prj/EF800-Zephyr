@@ -43,7 +43,7 @@ int ef800_watchdog_start(unsigned int timeout_ms)
 	}
 	watchdog_channel = wdt_install_timeout(watchdog, &timeout);
 	if (watchdog_channel == -EALREADY) {
-		/* The bootloader already started IWDG; keep feeding that instance. */
+		/* The resident bootloader started IWDG; keep feeding that instance. */
 		watchdog_inherited = true;
 		LL_IWDG_ReloadCounter(IWDG);
 		return 0;
@@ -70,6 +70,21 @@ int ef800_watchdog_feed(void)
 		return 0;
 	}
 	return watchdog_channel >= 0 ? wdt_feed(watchdog, watchdog_channel) : -EAGAIN;
+#else
+	return -ENODEV;
+#endif
+}
+
+int ef800_watchdog_inherit(void)
+{
+#if DT_HAS_ALIAS(watchdog0) && DT_NODE_HAS_STATUS(DT_ALIAS(watchdog0), okay)
+	if (!device_is_ready(watchdog)) {
+		return -ENODEV;
+	}
+	/* IWDG cannot be stopped on STM32L4; only reload the inherited instance. */
+	watchdog_inherited = true;
+	LL_IWDG_ReloadCounter(IWDG);
+	return 0;
 #else
 	return -ENODEV;
 #endif

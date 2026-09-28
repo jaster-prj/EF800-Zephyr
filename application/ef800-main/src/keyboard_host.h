@@ -28,7 +28,7 @@ struct ef800_keyboard_host {
 	uint8_t parser_state;
 	uint8_t parser_prefix;
 	uint8_t parser_command;
-	uint8_t parser_payload[2];
+	uint8_t parser_payload[3];
 	uint8_t parser_payload_length;
 	uint8_t parser_payload_used;
 	uint32_t parser_timestamp_ms;
@@ -40,6 +40,8 @@ struct ef800_keyboard_host {
 	uint8_t typematic;
 	uint8_t id[2];
 	bool id_valid;
+	uint8_t version[3];
+	bool version_valid;
 	uint8_t last_command;
 	uint8_t last_command_status;
 	uint32_t last_event;
@@ -82,5 +84,7 @@ bool ef800_keyboard_host_is_ready(const struct ef800_keyboard_host *host);
 bool ef800_keyboard_host_is_active(const struct ef800_keyboard_host *host);
 bool ef800_keyboard_host_get_id(const struct ef800_keyboard_host *host,
 				uint8_t id[2]);
+bool ef800_keyboard_host_get_version(const struct ef800_keyboard_host *host,
+				uint8_t version[3]);
 
 #endif /* EF800_KEYBOARD_HOST_H */

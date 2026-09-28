@@ -27,6 +27,8 @@ static size_t pending_start;
 static size_t pending_length;
 static uint32_t pending_dropped;
 
+static int console_putchar(int character);
+
 static void pending_put_locked(uint8_t value)
 {
 	if (pending_length == EF800_CONSOLE_PENDING_SIZE) {
@@ -172,6 +174,31 @@ static int read_metadata(struct ef800_boot_metadata *metadata, bool *valid)
 	return 0;
 }
 
+int ef800_console_prepare(void)
+{
+	k_spinlock_key_t key;
+
+	__printk_hook_install(console_putchar);
+	key = k_spin_lock(&console_lock);
+	console_uart = NULL;
+	console_port = EF800_CONSOLE_NO_TARGET;
+	console_ready = false;
+	transport_ready = false;
+	k_spin_unlock(&console_lock, key);
+	return 0;
+}
+
+void ef800_console_clear_target(void)
+{
+	k_spinlock_key_t key = k_spin_lock(&console_lock);
+
+	console_uart = NULL;
+	console_port = EF800_CONSOLE_NO_TARGET;
+	console_ready = false;
+	transport_ready = false;
+	k_spin_unlock(&console_lock, key);
+}
+
 int ef800_console_set_target(uint8_t port_id)
 {
 	return ef800_console_set_target_with_config(port_id, NULL);
@@ -217,27 +244,31 @@ int ef800_console_init(bool usb_debug_available)
 	uint8_t port_id;
 	int ret;
 
-	/* Capture printk output produced while metadata and the target are prepared. */
+	/* The caller may have already buffered output during early startup. Do not
+	 * clear that buffer while selecting the persisted initial target. */
 	__printk_hook_install(console_putchar);
 	ret = read_metadata(&metadata, &valid);
 	if (!valid) {
 		ef800_boot_metadata_init(&metadata);
 	}
 	port_id = ef800_console_port_select(&metadata, usb_debug_available);
+	if (port_id == EF800_CONSOLE_NO_TARGET) {
+		return 0;
+	}
 	if (port_id == 4U) {
 	#if defined(CONFIG_USBD_CDC_ACM_CLASS)
 		ret = ef800_console_usb_start();
 		if (ret != 0) {
-			port_id = EF800_CONSOLE_SAFE_PORT;
+			port_id = EF800_CONSOLE_NO_TARGET;
 		}
 	#else
-		port_id = EF800_CONSOLE_SAFE_PORT;
+		port_id = EF800_CONSOLE_NO_TARGET;
 	#endif
 	}
-	ret = ef800_console_set_target(port_id);
-	if (ret != 0 && port_id != 0U) {
-		ret = ef800_console_set_target(0U);
+	if (port_id == EF800_CONSOLE_NO_TARGET) {
+		return 0;
 	}
+	ret = ef800_console_set_target(port_id);
 	return ret;
 }
 

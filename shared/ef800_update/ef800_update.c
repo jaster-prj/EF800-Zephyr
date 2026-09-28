@@ -1,6 +1,7 @@
 /* SPDX-License-Identifier: Apache-2.0 */
 
 #include "ef800_update.h"
+#include "ef800_keyboard_package.h"
 
 #include <errno.h>
 #include <stddef.h>
@@ -230,6 +231,19 @@ bool ef800_vector_table_valid(const uint32_t vector[2], uintptr_t image_address,
 	return true;
 }
 
+bool ef800_keyboard_package_valid(
+	const struct ef800_keyboard_package_header *header, size_t file_size)
+{
+	return header != NULL && header->magic == EF800_KEYBOARD_PACKAGE_MAGIC &&
+		header->format == EF800_KEYBOARD_PACKAGE_FORMAT &&
+		header->header_size == EF800_KEYBOARD_PACKAGE_HEADER_SIZE &&
+		header->target_id == EF800_KEYBOARD_PACKAGE_TARGET &&
+		header->image_base == EF800_KEYBOARD_PACKAGE_BASE &&
+		header->image_size != 0U &&
+		header->image_size <= EF800_KEYBOARD_PACKAGE_LIMIT &&
+		file_size == (size_t)header->header_size + header->image_size;
+}
+
 bool ef800_update_header_valid(const struct ef800_update_header *header,
 				       size_t file_size, uintptr_t image_address,
 				       size_t image_partition_size)
@@ -397,7 +411,7 @@ uint8_t ef800_console_port_select(const struct ef800_boot_metadata *metadata,
 	uint8_t port_id;
 
 	if (metadata == NULL) {
-		return EF800_CONSOLE_SAFE_PORT;
+		return EF800_CONSOLE_NO_TARGET;
 	}
 	if (metadata->console_target != EF800_CONSOLE_TARGET_NONE &&
 		ef800_console_target_valid(metadata->console_target)) {
@@ -411,7 +425,7 @@ uint8_t ef800_console_port_select(const struct ef800_boot_metadata *metadata,
 		EF800_PORT_BUILDER_NONE) {
 		return EF800_CONSOLE_FALLBACK_PORT;
 	}
-	return EF800_CONSOLE_SAFE_PORT;
+	return EF800_CONSOLE_NO_TARGET;
 }
 
 int ef800_boot_metadata_set_console(struct ef800_boot_metadata *metadata,

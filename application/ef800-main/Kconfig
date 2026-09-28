@@ -56,6 +56,11 @@ config EF800_MAIN_RUNTIME_BATTERY_PERIOD_MS
 	default 10000
 	range 1000 600000
 
+config EF800_MCUMGR_SERIAL_TRANSPORT
+	bool
+	default y
+	select MCUMGR_TRANSPORT_SERIAL_HAS_RAW_BINARY_NON_SMP_OVER_CONSOLE
+
 endmenu
 
 source "Kconfig.zephyr"

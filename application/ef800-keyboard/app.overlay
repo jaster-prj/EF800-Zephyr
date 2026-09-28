@@ -1,15 +1,6 @@
-#include <zephyr/dt-bindings/pinctrl/stm32-pinctrl.h>
-
-&pinctrl {
-	usart3_tx_pb10: usart3_tx_pb10 {
-		pinmux = <STM32_PINMUX('B', 10, AF7)>;
-		bias-pull-up;
-		drive-push-pull;
-	};
-
-	usart3_rx_pb11: usart3_rx_pb11 {
-		pinmux = <STM32_PINMUX('B', 11, AF7)>;
-		bias-pull-up;
+/ {
+	chosen {
+		zephyr,code-partition = &keyboard_app_partition;
 	};
 };
 

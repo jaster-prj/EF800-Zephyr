@@ -50,7 +50,6 @@ static void log_init_backend(const struct log_backend *const backend)
 	data->log_format = LOG_OUTPUT_TEXT;
 	data->in_panic = false;
 	log_output_ctx_set(&ef800_log_output, data);
-	(void)ef800_console_init(false);
 }
 
 static void log_panic(const struct log_backend *const backend)

@@ -17,6 +17,20 @@ Keyboard data uses PS/2-style make/break sequences:
 optional 0xE0/0xE1 prefix, optional 0xF0 release prefix, scancode
 ```
 
+The firmware version request is `0xF1`. The response contains a one-byte
+SemVer component for major, minor, and patch:
+
+```text
+F1                 request
+A0 F1 major minor patch
+```
+
+The current keyboard application version is `1.1.1`, so the response is:
+
+```text
+A0 F1 01 01 01
+```
+
 The current EF800 compatibility map uses translated Set-2-style make values
 with the existing EF800 `0xE0 0xF0 <code>` release framing. The navigation keys
 are:

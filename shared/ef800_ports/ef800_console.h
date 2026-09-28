@@ -8,8 +8,11 @@
 
 #include "ef800_measurement.h"
 
-/* Select and configure the application console from the internal metadata
- * record. Port zero means the board's compile-time Zephyr console. */
+/* Install the output hook while the application port assignments are loaded. */
+int ef800_console_prepare(void);
+void ef800_console_clear_target(void);
+
+/* Select and configure a console after the application assignments are known. */
 int ef800_console_init(bool usb_debug_available);
 int ef800_console_set_target(uint8_t port_id);
 int ef800_console_set_target_with_config(

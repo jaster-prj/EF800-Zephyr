@@ -19,7 +19,7 @@
 
 #define EF800_CONSOLE_TARGET_NONE 0U
 #define EF800_CONSOLE_FALLBACK_PORT 3U
-#define EF800_CONSOLE_SAFE_PORT 0U
+#define EF800_CONSOLE_NO_TARGET 0xffU
 
 /* Stable device IDs shared by the three L496 images. */
 #define EF800_PORT_BUILDER_NONE 0U
