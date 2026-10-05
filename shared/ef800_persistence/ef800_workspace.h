@@ -9,6 +9,7 @@
 #define EF800_WORKSPACE_CONFIGURATION_FILE ".workspace"
 #define EF800_WORKSPACE_EXTENSION ".dat"
 #define EF800_WORKSPACE_NAME_MAX 48U
+#define EF800_WORKSPACE_SNAPSHOT_MAX 4096U
 
 typedef int (*ef800_workspace_list_callback)(const char *name, void *context);
 
@@ -26,6 +27,8 @@ int ef800_workspace_create(struct ef800_workspace *workspace, const char *name);
 int ef800_workspace_select(struct ef800_workspace *workspace, const char *name);
 int ef800_workspace_append(struct ef800_workspace *workspace,
 			   const void *data, size_t length);
+int ef800_workspace_snapshot(const struct ef800_workspace *workspace,
+				void *destination, size_t capacity, size_t *length);
 int ef800_workspace_list(struct ef800_workspace *workspace,
 			const ef800_workspace_list_callback callback, void *context);
 

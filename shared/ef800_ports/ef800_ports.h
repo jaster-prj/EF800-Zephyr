@@ -13,8 +13,8 @@
 
 #define EF800_PORT_COUNT 5U
 #define EF800_PORT_DEVICE_COUNT 5U
-#define EF800_PORT_ASSIGNMENT_VERSION 1U
-#define EF800_PORT_ASSIGNMENT_RECORD_SIZE 10U
+#define EF800_PORT_ASSIGNMENT_VERSION 2U
+#define EF800_PORT_ASSIGNMENT_RECORD_SIZE 16U
 #define EF800_PORT_ASSIGNMENT_FILE_PREFIX "port_assignment_"
 
 enum ef800_port_capability {
@@ -50,6 +50,7 @@ struct ef800_port_device_descriptor {
 struct ef800_port_assignment_state {
 	uint8_t port_id;
 	uint8_t builder_id;
+	uint32_t plugin_id;
 	uint8_t connection;
 	bool assigned;
 };
@@ -93,6 +94,9 @@ int ef800_port_assignment_import_with_connection(
 int ef800_port_assignment_set_with_connection(
 	struct ef800_port_assignment_service *service, uint8_t port_id,
 	uint8_t builder_id, uint32_t connection);
+int ef800_port_assignment_set_plugin_with_connection(
+	struct ef800_port_assignment_service *service, uint8_t port_id,
+	uint32_t plugin_id, uint32_t connection);
 uint32_t ef800_port_assignment_default_connection(uint8_t port_id,
 								 uint8_t builder_id);
 int ef800_port_assignment_set(struct ef800_port_assignment_service *service,
@@ -106,6 +110,8 @@ int ef800_port_assignment_remove(struct ef800_port_assignment_service *service,
 bool ef800_port_assignment_is_assigned(
 	const struct ef800_port_assignment_service *service, uint8_t port_id);
 uint8_t ef800_port_assignment_get_builder(
+	const struct ef800_port_assignment_service *service, uint8_t port_id);
+uint32_t ef800_port_assignment_get_plugin_id(
 	const struct ef800_port_assignment_service *service, uint8_t port_id);
 uint32_t ef800_port_assignment_get_connection(
 	const struct ef800_port_assignment_service *service, uint8_t port_id);

@@ -284,7 +284,7 @@ static uint16_t assignment_checksum(const uint8_t *buffer)
 {
 	uint16_t checksum = 0xFFFFU;
 
-	for (size_t index = 0U; index < 8U; ++index) {
+	for (size_t index = 0U; index < 14U; ++index) {
 		checksum ^= (uint16_t)buffer[index] << 8;
 		for (uint8_t bit = 0U; bit < 8U; ++bit) {
 			checksum = (checksum & 0x8000U) != 0U ?
@@ -312,19 +312,23 @@ int ef800_port_assignment_encode(const struct ef800_port_assignment_state *state
 {
 	const struct ef800_port_descriptor *port;
 	const struct ef800_port_device_descriptor *device;
+	uint32_t plugin_id;
 
 	if (state == NULL || buffer == NULL || length == NULL ||
 		capacity < EF800_PORT_ASSIGNMENT_RECORD_SIZE || !state->assigned) {
 		return -EINVAL;
 	}
+	plugin_id = state->plugin_id != 0U ? state->plugin_id : state->builder_id;
 	port = ef800_port_get(state->port_id);
 	device = ef800_port_device_get(state->builder_id);
-	if (!ef800_port_device_is_compatible(port, device) ||
+	if (plugin_id == EF800_PORT_BUILDER_NONE ||
+		(state->builder_id != 0U && !ef800_port_device_is_compatible(port, device)) ||
 		!ef800_port_connection_is_valid(state->port_id, state->connection) ||
-		!ef800_port_assignment_record_valid(state->port_id, state->builder_id,
-										 state->connection) ||
-		!ef800_port_device_supports_connection(state->builder_id,
-								 state->connection)) {
+		(state->builder_id != 0U &&
+			(!ef800_port_assignment_record_valid(state->port_id, state->builder_id,
+											 state->connection) ||
+			 !ef800_port_device_supports_connection(state->builder_id,
+											 state->connection)))) {
 		return -EINVAL;
 	}
 
@@ -334,10 +338,13 @@ int ef800_port_assignment_encode(const struct ef800_port_assignment_state *state
 	buffer[2] = EF800_PORT_ASSIGNMENT_VERSION;
 	buffer[3] = EF800_PORT_ASSIGNMENT_RECORD_SIZE;
 	buffer[4] = state->port_id;
-	buffer[5] = state->builder_id;
-	buffer[6] = state->connection;
-	/* Byte 7 is reserved and must remain zero. */
-	sys_put_le16(assignment_checksum(buffer), &buffer[8]);
+	buffer[5] = 0U;
+	buffer[6] = 0U;
+	buffer[7] = 0U;
+	sys_put_le32(plugin_id, &buffer[8]);
+	sys_put_le32(state->connection, &buffer[12]);
+	/* The record is self-describing; the full record is covered by its checksum. */
+	sys_put_le16(assignment_checksum(buffer), &buffer[14]);
 	*length = EF800_PORT_ASSIGNMENT_RECORD_SIZE;
 	return 0;
 }
@@ -352,22 +359,26 @@ int ef800_port_assignment_decode(const uint8_t *buffer, size_t length,
 		buffer[0] != 'P' || buffer[1] != 'A' ||
 		buffer[2] != EF800_PORT_ASSIGNMENT_VERSION ||
 		buffer[3] != EF800_PORT_ASSIGNMENT_RECORD_SIZE ||
-		buffer[7] != 0U ||
-		sys_get_le16(&buffer[8]) != assignment_checksum(buffer)) {
+		buffer[5] != 0U || buffer[6] != 0U || buffer[7] != 0U ||
+		sys_get_le16(&buffer[14]) != assignment_checksum(buffer)) {
 		return -EINVAL;
 	}
 
 	decoded.port_id = buffer[4];
-	decoded.builder_id = buffer[5];
-	decoded.connection = buffer[6];
+	decoded.plugin_id = sys_get_le32(&buffer[8]);
+	decoded.builder_id = decoded.plugin_id <= UINT8_MAX ?
+		(uint8_t)decoded.plugin_id : EF800_PORT_BUILDER_NONE;
+	decoded.connection = (uint8_t)sys_get_le32(&buffer[12]);
 	decoded.assigned = true;
-	if (!ef800_port_device_is_compatible(ef800_port_get(decoded.port_id),
-								     ef800_port_device_get(decoded.builder_id)) ||
+	if (decoded.plugin_id == 0U ||
 		!ef800_port_connection_is_valid(decoded.port_id, decoded.connection) ||
-		!ef800_port_assignment_record_valid(decoded.port_id, decoded.builder_id,
+		(decoded.builder_id != EF800_PORT_BUILDER_NONE &&
+		 (!ef800_port_device_is_compatible(ef800_port_get(decoded.port_id),
+									 ef800_port_device_get(decoded.builder_id)) ||
+		  !ef800_port_assignment_record_valid(decoded.port_id, decoded.builder_id,
 										 decoded.connection) ||
-		!ef800_port_device_supports_connection(decoded.builder_id,
-									 decoded.connection)) {
+		  !ef800_port_device_supports_connection(decoded.builder_id,
+										 decoded.connection)))) {
 		return -EINVAL;
 	}
 	*state = decoded;
@@ -404,6 +415,7 @@ int ef800_port_assignment_init(struct ef800_port_assignment_service *service,
 		service->states[index].port_id = ports[index].id;
 	}
 	service->states[4].builder_id = EF800_PORT_BUILDER_BLUENRG;
+	service->states[4].plugin_id = EF800_PORT_BUILDER_BLUENRG;
 	service->states[4].connection = EF800_PORT_CONNECTION_SPI;
 	service->states[4].assigned = true;
 	return 0;
@@ -433,12 +445,14 @@ int ef800_port_assignment_load(struct ef800_port_assignment_service *service,
 	if (ret == -ENOENT) {
 		if (port_id == 5U) {
 			current->builder_id = EF800_PORT_BUILDER_BLUENRG;
+			current->plugin_id = EF800_PORT_BUILDER_BLUENRG;
 			current->connection = EF800_PORT_CONNECTION_SPI;
 			current->assigned = true;
 			return 0;
 		}
 		current->assigned = false;
 		current->builder_id = EF800_PORT_BUILDER_NONE;
+		current->plugin_id = EF800_PORT_BUILDER_NONE;
 		current->connection = 0U;
 		return 0;
 	}
@@ -540,6 +554,7 @@ int ef800_port_assignment_set_with_connection(
 	struct ef800_port_assignment_state next = {
 		.port_id = port_id,
 		.builder_id = builder_id,
+		.plugin_id = builder_id,
 		.connection = connection,
 		.assigned = true,
 	};
@@ -584,6 +599,40 @@ int ef800_port_assignment_set_with_connection(
 	ret = ef800_persistence_write(service->storage,
 					      EF800_PERSISTENCE_CONFIGURATION, name,
 					      buffer, length);
+	if (ret == 0) {
+		*current = next;
+	}
+	return ret;
+}
+
+int ef800_port_assignment_set_plugin_with_connection(
+	struct ef800_port_assignment_service *service, uint8_t port_id,
+	uint32_t plugin_id, uint32_t connection)
+{
+	struct ef800_port_assignment_state *current;
+	struct ef800_port_assignment_state next = {
+		.port_id = port_id,
+		.builder_id = plugin_id <= UINT8_MAX ? (uint8_t)plugin_id : 0U,
+		.plugin_id = plugin_id,
+		.connection = (uint8_t)connection,
+		.assigned = true,
+	};
+	uint8_t buffer[EF800_PORT_ASSIGNMENT_RECORD_SIZE];
+	char name[32];
+	size_t length;
+	int ret;
+
+	current = assignment_state(service, port_id);
+	if (current == NULL || service->storage == NULL || plugin_id == 0U ||
+		!ef800_port_connection_is_valid(port_id, connection)) {
+		return -EINVAL;
+	}
+	ret = ef800_port_assignment_encode(&next, buffer, sizeof(buffer), &length);
+	if (ret != 0 || assignment_file_name(port_id, name, sizeof(name)) != 0) {
+		return ret != 0 ? ret : -ENAMETOOLONG;
+	}
+	ret = ef800_persistence_write(service->storage,
+		EF800_PERSISTENCE_CONFIGURATION, name, buffer, length);
 	if (ret == 0) {
 		*current = next;
 	}
@@ -725,6 +774,7 @@ int ef800_port_assignment_remove(struct ef800_port_assignment_service *service,
 	if (ret == 0) {
 		current->assigned = false;
 		current->builder_id = EF800_PORT_BUILDER_NONE;
+		current->plugin_id = EF800_PORT_BUILDER_NONE;
 		current->connection = 0U;
 	}
 	return ret;
@@ -746,6 +796,17 @@ uint8_t ef800_port_assignment_get_builder(
 		assignment_state_const(service, port_id);
 
 	return state != NULL && state->assigned ? state->builder_id :
+		EF800_PORT_BUILDER_NONE;
+}
+
+uint32_t ef800_port_assignment_get_plugin_id(
+	const struct ef800_port_assignment_service *service, uint8_t port_id)
+{
+	const struct ef800_port_assignment_state *state =
+		assignment_state_const(service, port_id);
+
+	return state != NULL && state->assigned ?
+		(state->plugin_id != 0U ? state->plugin_id : state->builder_id) :
 		EF800_PORT_BUILDER_NONE;
 }
 

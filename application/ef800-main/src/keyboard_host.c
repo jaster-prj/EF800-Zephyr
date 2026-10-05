@@ -276,6 +276,7 @@ int ef800_keyboard_host_get_event(struct ef800_keyboard_host *host,
 	return 0;
 }
 
+
 uint8_t ef800_keyboard_host_key_count(
 	const struct ef800_keyboard_host *host)
 {

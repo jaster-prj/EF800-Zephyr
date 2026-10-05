@@ -917,6 +917,28 @@ ZTEST(keyboard_protocol, test_port_uart_routes_and_ownership)
 	zassert_false(ef800_port_uart_is_claimed(&registry, 4U), NULL);
 }
 
+ZTEST(keyboard_protocol, test_external_plugin_assignment_record)
+{
+	struct ef800_port_assignment_state state = {
+		.port_id = 2U,
+		.builder_id = 0U,
+		.plugin_id = 0x12345678U,
+		.connection = EF800_PORT_CONNECTION_SERIAL,
+		.assigned = true,
+	};
+	struct ef800_port_assignment_state decoded;
+	uint8_t record[EF800_PORT_ASSIGNMENT_RECORD_SIZE];
+	size_t length;
+
+	zassert_ok(ef800_port_assignment_encode(&state, record, sizeof(record),
+		&length), NULL);
+	zassert_equal(length, EF800_PORT_ASSIGNMENT_RECORD_SIZE, NULL);
+	zassert_ok(ef800_port_assignment_decode(record, length, &decoded), NULL);
+	zassert_equal(decoded.plugin_id, state.plugin_id, NULL);
+	zassert_equal(decoded.builder_id, EF800_PORT_BUILDER_NONE, NULL);
+	zassert_equal(decoded.connection, state.connection, NULL);
+}
+
 ZTEST(keyboard_protocol, test_debug_assignment_move)
 {
 	struct ef800_persistence_fake fake;

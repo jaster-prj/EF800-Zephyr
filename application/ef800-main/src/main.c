@@ -38,6 +38,8 @@
 #include "keyboard_host.h"
 #include "ef800_keyboard_package.h"
 #include "ef800_mcumgr_transport.h"
+#include "ef800_plugin_host.h"
+#include "ef800_measurement_plugin.h"
 
 LOG_MODULE_REGISTER(ef800_main_app, LOG_LEVEL_INF);
 
@@ -85,6 +87,7 @@ static struct ef800_persistence persistence;
 static struct ef800_workspace workspace;
 static struct ef800_port_assignment_service port_assignments;
 static struct ef800_port_uart_registry port_uart_registry;
+static struct ef800_plugin_registry plugin_registry;
 static struct ef800_boot_metadata boot_metadata;
 static struct ef800_measurement_zephyr_transport measurement_transports[EF800_PORT_COUNT];
 static uint8_t measurement_port_ids[EF800_PORT_COUNT];
@@ -103,6 +106,7 @@ static char header_title[17];
 static uint8_t menu_selection;
 static uint8_t selected_port_index;
 static uint8_t selected_builder_id;
+static uint32_t selected_plugin_id;
 
 enum application_menu {
 	APPLICATION_MENU_MAIN = 0,
@@ -119,6 +123,7 @@ enum application_menu {
 	APPLICATION_MENU_MEASUREMENTS,
 	APPLICATION_MENU_MEASUREMENT_ACTIONS,
 	APPLICATION_MENU_MEASUREMENT_EDITOR,
+	APPLICATION_MENU_CALCULATIONS,
 };
 
 #define WORKSPACE_LIST_MAX 16U
@@ -186,10 +191,11 @@ static const char *const menu_items[] = {
 	"Workspace",
 	"Position",
 	"Measurement",
+	"Calculation",
 	"Settings",
 };
 
-static const char *const menu_shortcuts[] = {"w", "s", "m", "e"};
+static const char *const menu_shortcuts[] = {"w", "s", "m", "c", "e"};
 static const char *const settings_items[] = {
 	"Set time",
 	"Port assignment",
@@ -213,8 +219,10 @@ static void display_port_debug_confirmation(void);
 static void display_measurement_devices(void);
 static void display_measurement_actions(void);
 static void display_measurement_editor(void);
+static void display_calculation_menu(void);
 static void handle_measurement_editor_key(uint8_t key);
 static int trigger_measurement(bool fixed);
+static int send_measurement_input(uint32_t input);
 static void start_measurement_editor(void);
 static const struct device *port_uart_device(enum ef800_port_uart_id uart_id);
 static int port_uart_check_ready(uint8_t port_id, uint32_t connection);
@@ -453,6 +461,29 @@ static int claim_loaded_port_assignments(void)
 				if (first_error == 0) {
 					first_error = result;
 				}
+			}
+		} else if (ef800_plugin_registry_find(&plugin_registry, builder_id) != NULL &&
+			ef800_plugin_registry_find(&plugin_registry, builder_id)->info.kind ==
+			EF800_PLUGIN_KIND_MEASUREMENT) {
+			struct ef800_measurement_serial_config config;
+			const struct ef800_port_uart_route *route =
+				ef800_port_uart_for_connection(port->id, connection);
+			const struct device *device = route == NULL ? NULL :
+				port_uart_device(route->uart_id);
+
+			if (route == NULL || device == NULL) {
+				if (first_error == 0) {
+					first_error = -ENODEV;
+				}
+				continue;
+			}
+			result = ef800_plugin_host_serial_config(builder_id, NULL, &config);
+			if (result == 0) {
+				result = ef800_measurement_zephyr_init_with_config(
+					&measurement_transports[port->id - 1U], device, &config);
+			}
+			if (result != 0 && first_error == 0) {
+				first_error = result;
 			}
 		}
 	}
@@ -1352,12 +1383,55 @@ static size_t compatible_device_count(const struct ef800_port_descriptor *port)
 	return count;
 }
 
+static bool plugin_hardware_matches_port(
+	const struct ef800_plugin_registry_entry *plugin,
+	const struct ef800_port_descriptor *port)
+{
+	return plugin != NULL && port != NULL &&
+		plugin->info.required_hardware != 0U &&
+		(port->capabilities & plugin->info.required_hardware) ==
+		plugin->info.required_hardware;
+}
+
+static bool selected_plugin_supports_connection(uint32_t connection)
+{
+	const struct ef800_plugin_registry_entry *plugin =
+		ef800_plugin_registry_find(&plugin_registry, selected_plugin_id);
+	uint32_t hardware;
+
+	if (plugin == NULL) {
+		return false;
+	}
+	switch (connection) {
+	case EF800_PORT_CONNECTION_SERIAL:
+		hardware = EF800_PLUGIN_HARDWARE_SERIAL;
+		break;
+	case EF800_PORT_CONNECTION_SERIAL_FLOW_CONTROL:
+		hardware = EF800_PLUGIN_HARDWARE_SERIAL_FLOW_CONTROL;
+		break;
+	default:
+		return false;
+	}
+	return (plugin->info.required_hardware & hardware) == hardware;
+}
+
 static size_t port_assignment_device_count(void)
 {
 	const struct ef800_port_descriptor *port =
 		ef800_port_at(selected_port_index);
 
-	return compatible_device_count(port) + (port != NULL && !port->fixed ? 1U : 0U);
+	size_t count = compatible_device_count(port) +
+		(port != NULL && !port->fixed ? 1U : 0U);
+	for (size_t index = 0U; index < ef800_plugin_registry_count(&plugin_registry);
+		++index) {
+		const struct ef800_plugin_registry_entry *plugin =
+			ef800_plugin_registry_at(&plugin_registry, index);
+		if (plugin != NULL && plugin->info.kind == EF800_PLUGIN_KIND_MEASUREMENT &&
+			plugin->measurement == NULL && plugin_hardware_matches_port(plugin, port)) {
+			++count;
+		}
+	}
+	return count;
 }
 
 static const struct ef800_port_device_descriptor *device_at_selection(
@@ -1375,6 +1449,28 @@ static const struct ef800_port_device_descriptor *device_at_selection(
 			if (compatible_index++ == selection) {
 				return device;
 			}
+		}
+	}
+	return NULL;
+}
+
+static const struct ef800_plugin_registry_entry *plugin_at_selection(
+	const struct ef800_port_descriptor *port, size_t selection)
+{
+	size_t builtins = compatible_device_count(port);
+
+	if (port == NULL || selection < builtins) {
+		return NULL;
+	}
+	selection -= builtins;
+	for (size_t index = 0U; index < ef800_plugin_registry_count(&plugin_registry);
+		++index) {
+		const struct ef800_plugin_registry_entry *plugin =
+			ef800_plugin_registry_at(&plugin_registry, index);
+		if (plugin != NULL && plugin->info.kind == EF800_PLUGIN_KIND_MEASUREMENT &&
+			plugin->measurement == NULL && plugin_hardware_matches_port(plugin, port) &&
+			selection-- == 0U) {
+			return plugin;
 		}
 	}
 	return NULL;
@@ -1435,8 +1531,10 @@ static size_t port_assignment_connection_count(void)
 	for (size_t index = 0U; index < ef800_port_connection_count(port->id); ++index) {
 		const struct ef800_port_connection_descriptor *connection =
 			ef800_port_connection_at(port->id, index);
-		if (connection != NULL && ef800_port_device_supports_connection(
-			selected_builder_id, connection->capability)) {
+		if (connection != NULL && (selected_plugin_id != 0U ?
+			selected_plugin_supports_connection(connection->capability) :
+			ef800_port_device_supports_connection(selected_builder_id,
+				connection->capability))) {
 			++count;
 		}
 	}
@@ -1455,8 +1553,10 @@ static const struct ef800_port_connection_descriptor *connection_at_selection(
 	for (size_t index = 0U; index < ef800_port_connection_count(port->id); ++index) {
 		const struct ef800_port_connection_descriptor *connection =
 			ef800_port_connection_at(port->id, index);
-		if (connection != NULL && ef800_port_device_supports_connection(
-			selected_builder_id, connection->capability) &&
+		if (connection != NULL && (selected_plugin_id != 0U ?
+			selected_plugin_supports_connection(connection->capability) :
+			ef800_port_device_supports_connection(selected_builder_id,
+				connection->capability)) &&
 			compatible_index++ == selection) {
 			return connection;
 		}
@@ -1480,7 +1580,8 @@ static void display_port_assignment_connections(void)
 	display_line(0U, "Port connection");
 	snprintk(line, sizeof(line), "Port %u: %s", port->id, port->title);
 	display_line(1U, line);
-	snprintk(line, sizeof(line), "Device: %s",
+	snprintk(line, sizeof(line), "Device: %s", selected_plugin_id != 0U ?
+		(ef800_plugin_registry_find(&plugin_registry, selected_plugin_id)->info.name) :
 		ef800_port_device_get(selected_builder_id)->title);
 	display_line(2U, line);
 	count = port_assignment_connection_count();
@@ -1541,7 +1642,10 @@ static int load_measurement_ports(void)
 	for (uint8_t port_id = 1U; port_id <= EF800_PORT_COUNT; ++port_id) {
 		uint8_t builder = ef800_port_assignment_get_builder(&port_assignments, port_id);
 
-		if (ef800_device_plugin_find(builder) != NULL &&
+		if ((ef800_device_plugin_find(builder) != NULL ||
+			ef800_plugin_registry_find(&plugin_registry, builder) != NULL) &&
+			ef800_plugin_registry_state_for(&plugin_registry, builder) ==
+			EF800_PLUGIN_REGISTRY_READY &&
 			measurement_transports[port_id - 1U].uart != NULL) {
 			measurement_port_ids[measurement_port_count++] = port_id;
 		}
@@ -1575,9 +1679,10 @@ static void display_measurement_actions(void)
 {
 	static const char *const actions[] = {
 		"Trigger measurement", "Save measurement", "Discard measurement",
-		"Fixed measurement",
+		"Fixed measurement", "Device up", "Device down", "Device enter",
 	};
 	char line[STATUS_LINE_SIZE];
+	size_t first = menu_selection >= 3U ? menu_selection - 3U : 0U;
 
 	display_line(0U, "Measurement");
 	snprintk(line, sizeof(line), "Port %u: %s", selected_measurement_port,
@@ -1593,10 +1698,15 @@ static void display_measurement_actions(void)
 	} else {
 		display_line(2U, "No pending measurement");
 	}
-	for (size_t index = 0U; index < ARRAY_SIZE(actions); ++index) {
-		snprintk(line, sizeof(line), "%c %s", index == menu_selection ? '>' : ' ',
-			actions[index]);
-		display_line((uint8_t)(3U + index), line);
+	for (size_t row = 0U; row < 4U; ++row) {
+		size_t index = first + row;
+		if (index < ARRAY_SIZE(actions)) {
+			snprintk(line, sizeof(line), "%c %s",
+				index == menu_selection ? '>' : ' ', actions[index]);
+		} else {
+			line[0] = '\0';
+		}
+		display_line((uint8_t)(3U + row), line);
 	}
 	display_line(7U, "ENTER select  ESC back");
 }
@@ -1635,11 +1745,19 @@ static int trigger_measurement(bool fixed)
 	uint8_t builder = ef800_port_assignment_get_builder(&port_assignments,
 		selected_measurement_port);
 	struct ef800_measurement_data data;
+	const struct ef800_plugin_registry_entry *plugin =
+		ef800_plugin_registry_find(&plugin_registry, builder);
 	int result;
 
-	result = ef800_device_plugin_measure(builder,
-		&measurement_transports[selected_measurement_port - 1U].transport,
-		&data);
+	if (plugin != NULL && plugin->measurement == NULL) {
+		result = ef800_plugin_host_measure(builder,
+			&measurement_transports[selected_measurement_port - 1U].transport,
+			&data);
+	} else {
+		result = ef800_device_plugin_measure(builder,
+			&measurement_transports[selected_measurement_port - 1U].transport,
+			&data);
+	}
 	if (result != 0) {
 		return result;
 	}
@@ -1655,6 +1773,33 @@ static int trigger_measurement(bool fixed)
 	measurement_pending = true;
 	measurement_fixed = fixed;
 	return 0;
+}
+
+static int send_measurement_input(uint32_t input)
+{
+	uint8_t builder = ef800_port_assignment_get_builder(&port_assignments,
+		selected_measurement_port);
+	const struct ef800_plugin_registry_entry *plugin =
+		ef800_plugin_registry_find(&plugin_registry, builder);
+	const struct ef800_measurement_transport *transport =
+		&measurement_transports[selected_measurement_port - 1U].transport;
+
+	if (plugin != NULL && plugin->measurement == NULL) {
+		return ef800_plugin_host_input(builder, transport, input);
+	}
+	if (builder == EF800_PORT_BUILDER_ELTA3) {
+		switch (input) {
+		case EF800_MEASUREMENT_INPUT_UP:
+			return ef800_elta3_up(transport);
+		case EF800_MEASUREMENT_INPUT_DOWN:
+			return ef800_elta3_down(transport);
+		case EF800_MEASUREMENT_INPUT_ENTER:
+			return ef800_elta3_enter(transport);
+		default:
+			return -EINVAL;
+		}
+	}
+	return -ENOTSUP;
 }
 
 static int save_measurement(void)
@@ -1746,6 +1891,59 @@ static void handle_measurement_editor_key(uint8_t key)
 	}
 }
 
+static size_t calculation_plugin_count(void)
+{
+	size_t count = 0U;
+
+	for (size_t index = 0U; index < ef800_plugin_registry_count(&plugin_registry);
+		++index) {
+		const struct ef800_plugin_registry_entry *entry =
+			ef800_plugin_registry_at(&plugin_registry, index);
+		if (entry != NULL && entry->state == EF800_PLUGIN_REGISTRY_READY &&
+			entry->info.kind == EF800_PLUGIN_KIND_CALCULATION) {
+			++count;
+		}
+	}
+	return count;
+}
+
+static const struct ef800_plugin_registry_entry *calculation_plugin_at(
+	size_t selection)
+{
+	for (size_t index = 0U; index < ef800_plugin_registry_count(&plugin_registry);
+		++index) {
+		const struct ef800_plugin_registry_entry *entry =
+			ef800_plugin_registry_at(&plugin_registry, index);
+		if (entry != NULL && entry->state == EF800_PLUGIN_REGISTRY_READY &&
+			entry->info.kind == EF800_PLUGIN_KIND_CALCULATION && selection-- == 0U) {
+			return entry;
+		}
+	}
+	return NULL;
+}
+
+static void display_calculation_menu(void)
+{
+	char line[STATUS_LINE_SIZE];
+	size_t first = menu_selection >= 3U ? menu_selection - 3U : 0U;
+
+	display_line(0U, "Calculation");
+	display_line(1U, calculation_plugin_count() == 0U ?
+		"No calculation plugins" : "Select calculation");
+	for (size_t row = 0U; row < 4U; ++row) {
+		const struct ef800_plugin_registry_entry *entry =
+			calculation_plugin_at(first + row);
+		if (entry == NULL) {
+			display_line((uint8_t)(3U + row), "");
+			continue;
+		}
+		snprintk(line, sizeof(line), "%c %s", first + row == menu_selection ?
+			'>' : ' ', entry->info.name);
+		display_line((uint8_t)(3U + row), line);
+	}
+	display_line(7U, "ENTER select  ESC back");
+}
+
 static void display_active_menu(void)
 {
 	switch (active_menu) {
@@ -1775,6 +1973,9 @@ static void display_active_menu(void)
 		break;
 	case APPLICATION_MENU_MEASUREMENT_EDITOR:
 		display_measurement_editor();
+		break;
+	case APPLICATION_MENU_CALCULATIONS:
+		display_calculation_menu();
 		break;
 	case APPLICATION_MENU_WORKSPACE_SELECT:
 	case APPLICATION_MENU_WORKSPACE_LIST:
@@ -1808,9 +2009,11 @@ static size_t active_menu_count(void)
 	case APPLICATION_MENU_MEASUREMENTS:
 		return measurement_port_count;
 	case APPLICATION_MENU_MEASUREMENT_ACTIONS:
-		return 4U;
+		return 7U;
 	case APPLICATION_MENU_MEASUREMENT_EDITOR:
 		return 0U;
+	case APPLICATION_MENU_CALCULATIONS:
+		return calculation_plugin_count();
 	case APPLICATION_MENU_MAIN:
 	default:
 		return ARRAY_SIZE(menu_items);
@@ -2249,10 +2452,23 @@ static void activate_port_assignment_entry(void)
 	}
 	device = device_at_selection(port, menu_selection);
 	if (device == NULL) {
+		const struct ef800_plugin_registry_entry *plugin =
+			plugin_at_selection(port, menu_selection);
+		if (plugin != NULL) {
+			selected_plugin_id = plugin->info.plugin_id;
+			selected_builder_id = 0U;
+			menu_selection = 0U;
+			active_menu = APPLICATION_MENU_PORT_CONNECTIONS;
+			display_port_assignment_connections();
+			return;
+		}
+	}
+	if (device == NULL) {
 		display_port_assignment_result("Invalid device selection", -EINVAL);
 		return;
 	}
 	selected_builder_id = device->builder_id;
+	selected_plugin_id = selected_builder_id;
 	if (selected_builder_id == EF800_PORT_BUILDER_DEBUG) {
 		active_menu = APPLICATION_MENU_PORT_DEBUG_CONFIRMATION;
 		menu_selection = 0U;
@@ -2399,6 +2615,11 @@ static void activate_menu_entry(void)
 			}
 			break;
 		case 3U:
+			active_menu = APPLICATION_MENU_CALCULATIONS;
+			menu_selection = 0U;
+			display_calculation_menu();
+			break;
+		case 4U:
 			active_menu = APPLICATION_MENU_SETTINGS;
 			menu_selection = 0U;
 			display_settings_menu();
@@ -2502,6 +2723,18 @@ static void activate_menu_entry(void)
 			measurement_pending = false;
 			measurement_fixed = false;
 			display_line(6U, "Measurement discarded");
+			break;
+		case 4U:
+			result = send_measurement_input(EF800_MEASUREMENT_INPUT_UP);
+			display_line(6U, result == 0 ? "Device up sent" : "Device up failed");
+			break;
+		case 5U:
+			result = send_measurement_input(EF800_MEASUREMENT_INPUT_DOWN);
+			display_line(6U, result == 0 ? "Device down sent" : "Device down failed");
+			break;
+		case 6U:
+			result = send_measurement_input(EF800_MEASUREMENT_INPUT_ENTER);
+			display_line(6U, result == 0 ? "Device enter sent" : "Device enter failed");
 			break;
 		default:
 			break;
@@ -3289,12 +3522,21 @@ int main(void)
 	printk("ef800 main application: entry\r\n");
 
 	(void)ef800_main_foundation_init();
+	ef800_plugin_registry_init(&plugin_registry);
+	result = ef800_plugin_registry_register_builtins(&plugin_registry);
+	if (result != 0) {
+		LOG_ERR("Built-in plugin registry initialization failed: %d", result);
+	}
 	result = ef800_persistence_init(&persistence,
 				       ef800_persistence_zephyr_backend());
 	if (result != 0) {
 		LOG_ERR("Persistence service initialization failed: %d", result);
 	} else {
 		if (ef800_storage_is_mounted()) {
+			result = ef800_plugin_host_init(&plugin_registry);
+			if (result != 0) {
+				LOG_WRN("External plugin discovery skipped: %d", result);
+			}
 			result = ef800_legacy_migrate_all(&persistence);
 			if (result != 0) {
 				LOG_WRN("Legacy Mbed settings migration incomplete: %d", result);

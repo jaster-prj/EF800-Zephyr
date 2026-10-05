@@ -201,6 +201,37 @@ int ef800_workspace_append(struct ef800_workspace *workspace,
 					workspace->filename, data, length);
 }
 
+int ef800_workspace_snapshot(const struct ef800_workspace *workspace,
+	void *destination, size_t capacity, size_t *length)
+{
+	struct ef800_persistence_entry entry;
+	int ret;
+
+	if (workspace == NULL || workspace->storage == NULL || destination == NULL ||
+		length == NULL || !workspace->selected) {
+		return workspace != NULL && workspace->storage != NULL &&
+			!workspace->selected ? -ENODEV : -EINVAL;
+	}
+	*length = 0U;
+	ret = ef800_persistence_stat(workspace->storage, EF800_PERSISTENCE_DATA,
+		workspace->filename, &entry);
+	if (ret != 0) {
+		return ret;
+	}
+	if (entry.type != EF800_PERSISTENCE_FILE) {
+		return -EISDIR;
+	}
+	if (entry.size > capacity) {
+		return -EFBIG;
+	}
+	ret = ef800_persistence_read(workspace->storage, EF800_PERSISTENCE_DATA,
+		workspace->filename, destination, capacity, length);
+	if (ret != 0) {
+		return ret;
+	}
+	return *length == entry.size ? 0 : -EIO;
+}
+
 struct workspace_list_context {
 	ef800_workspace_list_callback callback;
 	void *context;

@@ -293,6 +293,11 @@ bool ef800_storage_is_mounted(void)
 	return storage_mounted;
 }
 
+const struct fs_mount_t *ef800_storage_mount_descriptor(void)
+{
+	return &storage_mount;
+}
+
 static bool usb_vbus_present(void)
 {
 #if DT_NODE_HAS_PROP(EF800_MAIN_USER_NODE, usb_vbus_gpios)

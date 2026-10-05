@@ -1,0 +1,7 @@
+common:
+  tags: [shared, plugin]
+  harness: ztest
+tests:
+  ef800.shared.plugin:
+    platform_allow:
+      - native_sim

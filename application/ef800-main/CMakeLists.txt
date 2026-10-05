@@ -2,12 +2,19 @@
 cmake_minimum_required(VERSION 3.20.0)
 
 set(BOARD_ROOT ${CMAKE_CURRENT_LIST_DIR}/../..)
+set(PLUGIN_MANAGER_DIR "${CMAKE_CURRENT_LIST_DIR}/../../../PluginManager" CACHE PATH
+	"PluginManager source directory")
+if(NOT EXISTS "${PLUGIN_MANAGER_DIR}/zephyr/module.yml")
+	message(FATAL_ERROR "PLUGIN_MANAGER_DIR is not a PluginManager source tree")
+endif()
+list(APPEND ZEPHYR_EXTRA_MODULES "${PLUGIN_MANAGER_DIR}")
 find_package(Zephyr REQUIRED HINTS $ENV{ZEPHYR_BASE})
 project(ef800_main)
 
 target_sources(app PRIVATE
 	src/main.c
 	src/keyboard_host.c
+	src/ef800_plugin_host.c
 	${CMAKE_CURRENT_LIST_DIR}/../../shared/keyboard_protocol/keyboard_translation.c
 	${CMAKE_CURRENT_LIST_DIR}/../../shared/ef800_main/ef800_time.c
 	${CMAKE_CURRENT_LIST_DIR}/../../shared/ef800_main/ef800_main.c
@@ -36,6 +43,11 @@ target_sources(app PRIVATE
 	${CMAKE_CURRENT_LIST_DIR}/../../shared/ef800_update/ef800_metadata.c
 	${CMAKE_CURRENT_LIST_DIR}/../../shared/ef800_ports/ef800_main_usb_msc.c
 	${CMAKE_CURRENT_LIST_DIR}/../../shared/ef800_storage/ef800_storage_owner.c
+	${CMAKE_CURRENT_LIST_DIR}/../../shared/ef800_plugin/ef800_plugin_registry.c
+	${CMAKE_CURRENT_LIST_DIR}/../../shared/ef800_plugin/ef800_calculation_service.c
+	${CMAKE_CURRENT_LIST_DIR}/../../shared/ef800_plugin/ef800_plugin_screen.c
+	${CMAKE_CURRENT_LIST_DIR}/../../shared/ef800_plugin/ef800_plugin_display.c
+	${CMAKE_CURRENT_LIST_DIR}/../../shared/ef800_plugin/ef800_plugin_session.c
 )
 
 target_include_directories(app PRIVATE
@@ -51,4 +63,6 @@ target_include_directories(app PRIVATE
 	${CMAKE_CURRENT_LIST_DIR}/../../shared/ef800_update
 	${CMAKE_CURRENT_LIST_DIR}/../../shared/ef800_storage
 	${CMAKE_CURRENT_LIST_DIR}/../../shared/ef800_watchdog
+	${CMAKE_CURRENT_LIST_DIR}/../../shared/ef800_plugin
+	${CMAKE_CURRENT_LIST_DIR}/../plugins/measurement-plugin/include
 )

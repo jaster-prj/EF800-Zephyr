@@ -24,6 +24,7 @@ enum ef800_storage_root {
 int ef800_main_foundation_init(void);
 
 bool ef800_storage_is_mounted(void);
+const struct fs_mount_t *ef800_storage_mount_descriptor(void);
 int ef800_storage_mount(void);
 int ef800_storage_unmount(void);
 bool ef800_main_usb_msd_requested(void);

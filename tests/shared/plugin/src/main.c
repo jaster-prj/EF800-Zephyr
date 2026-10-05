@@ -1,0 +1,267 @@
+/* SPDX-License-Identifier: Apache-2.0 */
+#include <errno.h>
+#include <string.h>
+#include "keyboard_protocol.h"
+
+#include <zephyr/ztest.h>
+
+#include "ef800_plugin_registry.h"
+#include "ef800_calculation_service.h"
+#include "ef800_workspace.h"
+#include "ef800_persistence_fake.h"
+#include "ef800_plugin_screen.h"
+#include "ef800_plugin_display.h"
+#include "ef800_keyboard_events.h"
+#include "ef800_plugin_session.h"
+
+struct calculation_fixture {
+	const char *snapshot;
+	int snapshot_status;
+	int transform_status;
+};
+
+static int fixture_snapshot(void *context, char *destination, size_t capacity,
+	size_t *length)
+{
+	struct calculation_fixture *fixture = context;
+	size_t size = strlen(fixture->snapshot);
+
+	if (fixture->snapshot_status != 0) {
+		return fixture->snapshot_status;
+	}
+	if (size > capacity) {
+		return -EFBIG;
+	}
+	memcpy(destination, fixture->snapshot, size);
+	*length = size;
+	return 0;
+}
+
+static int fixture_transform(void *context, const char *snapshot,
+	size_t snapshot_length, char *output, size_t capacity, size_t *length)
+{
+	(void)context;
+	struct calculation_fixture *fixture = context;
+	if (fixture->transform_status != 0) {
+		return fixture->transform_status;
+	}
+	if (snapshot_length > capacity) {
+		return -EFBIG;
+	}
+	memcpy(output, snapshot, snapshot_length);
+	*length = snapshot_length;
+	return 0;
+}
+
+ZTEST(ef800_plugin, test_bounded_calculation_service)
+{
+	struct calculation_fixture fixture = {.snapshot = "workspace"};
+	struct ef800_calculation_service service = {
+		.snapshot = fixture_snapshot,
+		.transform = fixture_transform,
+		.context = &fixture,
+	};
+	char snapshot[32];
+	char output[32];
+	size_t length;
+
+	zassert_ok(ef800_calculation_service_run(&service, snapshot,
+		sizeof(snapshot), output, sizeof(output), &length), NULL);
+	zassert_equal(length, 9, NULL);
+	zassert_mem_equal(output, "workspace", 9, NULL);
+	fixture.snapshot_status = -EIO;
+	zassert_equal(ef800_calculation_service_run(&service, snapshot,
+		sizeof(snapshot), output, sizeof(output), &length), -EIO, NULL);
+	zassert_equal(ef800_calculation_service_run(&service, NULL,
+		sizeof(snapshot), output, sizeof(output), &length), -EINVAL, NULL);
+	fixture.snapshot_status = 0;
+	fixture.snapshot = "0123456789";
+	zassert_equal(ef800_calculation_service_run(&service, snapshot, 4,
+		output, sizeof(output), &length), -EFBIG, NULL);
+	fixture.snapshot = "ok";
+	fixture.transform_status = -ERANGE;
+	zassert_equal(ef800_calculation_service_run(&service, snapshot,
+		sizeof(snapshot), output, sizeof(output), &length), -ERANGE, NULL);
+}
+
+ZTEST(ef800_plugin, test_workspace_snapshot_is_bounded)
+{
+	struct ef800_persistence_fake fake;
+	struct ef800_persistence storage;
+	struct ef800_workspace workspace;
+	char snapshot[16];
+	char small_snapshot[8];
+	size_t length;
+
+	ef800_persistence_fake_init(&fake);
+	zassert_ok(ef800_persistence_init(&storage, &fake.backend), NULL);
+	zassert_ok(ef800_workspace_init(&workspace, &storage), NULL);
+	zassert_ok(ef800_workspace_create(&workspace, "calc"), NULL);
+	zassert_ok(ef800_workspace_append(&workspace, "123456789", 9), NULL);
+	zassert_equal(ef800_workspace_snapshot(&workspace, small_snapshot,
+		sizeof(small_snapshot), &length), -EFBIG, NULL);
+	zassert_equal(length, 0, NULL);
+	zassert_ok(ef800_workspace_snapshot(&workspace, snapshot,
+		12, &length), NULL);
+	zassert_equal(length, 9, NULL);
+	zassert_mem_equal(snapshot, "123456789", 9, NULL);
+}
+
+ZTEST(ef800_plugin, test_bounded_plugin_screen)
+{
+	struct ef800_plugin_screen screen;
+
+	ef800_plugin_screen_init(&screen);
+	strcpy(screen.title, "Plugin");
+	screen.row_count = 2U;
+	strcpy(screen.rows[0], "first");
+	strcpy(screen.rows[1], "second");
+	strcpy(screen.footer, "ENTER select");
+	zassert_ok(ef800_plugin_screen_validate(&screen), NULL);
+	screen.row_count = EF800_PLUGIN_SCREEN_ROWS + 1U;
+	zassert_equal(ef800_plugin_screen_validate(&screen), -EINVAL, NULL);
+	 screen.row_count = 1U;
+	memset(screen.rows[0], 'x', sizeof(screen.rows[0]));
+	zassert_equal(ef800_plugin_screen_validate(&screen), -EOVERFLOW, NULL);
+}
+
+static int display_line_test(void *context, uint8_t row, const char *text)
+{
+	uint8_t *last_row = context;
+	(void)text;
+	*last_row = row;
+	return 0;
+}
+
+ZTEST(ef800_plugin, test_plugin_display_keeps_host_rows)
+{
+	struct ef800_plugin_screen screen;
+	uint8_t last_row = 0U;
+	struct ef800_plugin_display display = {
+		.context = &last_row,
+		.write_line = display_line_test,
+	};
+
+	ef800_plugin_screen_init(&screen);
+	screen.row_count = 1U;
+	strcpy(screen.rows[0], "body");
+	zassert_ok(ef800_plugin_display_render(&display, &screen), NULL);
+	zassert_equal(last_row, 6U, NULL);
+	 screen.row_count = EF800_PLUGIN_SCREEN_ROWS + 1U;
+	zassert_equal(ef800_plugin_display_render(&display, &screen), -EINVAL, NULL);
+}
+
+ZTEST(ef800_plugin, test_logical_keyboard_conversion)
+{
+	struct ef800_plugin_key_event event;
+
+	zassert_ok(ef800_keyboard_key_event('a', &event), NULL);
+	zassert_equal(event.code, EF800_PLUGIN_KEY_CHARACTER, NULL);
+	zassert_equal(event.character, 'a', NULL);
+	zassert_ok(ef800_keyboard_event_key(KB_EVENT_ARROWLEFT, &event), NULL);
+	zassert_equal(event.code, EF800_PLUGIN_KEY_LEFT, NULL);
+	zassert_equal(ef800_keyboard_event_key(KB_EVENT_OFF, &event),
+		-ENOTSUP, NULL);
+}
+
+static int session_render(void *instance, struct ef800_plugin_screen *screen)
+{
+	(void)instance;
+	screen->row_count = 1U;
+	strcpy(screen->rows[0], "plugin");
+	return 0;
+}
+
+static int session_key(void *instance, const struct ef800_plugin_key_event *event,
+	enum ef800_plugin_key_result *result)
+{
+	(void)instance;
+	*result = event->code == EF800_PLUGIN_KEY_CHARACTER ?
+		EF800_PLUGIN_KEY_CONSUMED : EF800_PLUGIN_KEY_NOT_CONSUMED;
+	return 0;
+}
+
+ZTEST(ef800_plugin, test_plugin_session_lifecycle_and_key_policy)
+{
+	struct ef800_plugin_session session;
+	struct ef800_plugin_screen screen;
+	struct ef800_plugin_key_event event;
+	enum ef800_plugin_key_result result;
+	const struct ef800_plugin_ui_api api = {
+		.abi_version = 1U,
+		.struct_size = sizeof(api),
+		.render = session_render,
+		.handle_key = session_key,
+	};
+
+	ef800_plugin_session_init(&session);
+	zassert_equal(ef800_plugin_session_open(&session, &session, &api), 0, NULL);
+	ef800_plugin_screen_init(&screen);
+	zassert_ok(ef800_plugin_session_render(&session, &screen), NULL);
+	zassert_equal(ef800_plugin_session_key(&session,
+		&(struct ef800_plugin_key_event){.code = EF800_PLUGIN_KEY_CHARACTER},
+		&result), 0, NULL);
+	zassert_equal(result, EF800_PLUGIN_KEY_CONSUMED, NULL);
+	memset(&event, 0, sizeof(event));
+	event.code = EF800_PLUGIN_KEY_BACK;
+	zassert_ok(ef800_plugin_session_key(&session, &event, &result), NULL);
+	zassert_equal(result, EF800_PLUGIN_KEY_REQUEST_BACK, NULL);
+	ef800_plugin_session_close(&session);
+	zassert_equal(ef800_plugin_session_render(&session, &screen), -EINVAL, NULL);
+}
+
+ZTEST(ef800_plugin, test_builtin_and_external_entries)
+{
+	struct ef800_plugin_registry registry;
+	struct ef800_plugin_descriptor_info info = {
+		.struct_size = sizeof(info),
+		.plugin_id = 100u,
+		.interface_version = 1u,
+		.kind = EF800_PLUGIN_KIND_CALCULATION,
+		.menu_category = EF800_PLUGIN_MENU_CALCULATION,
+	};
+	const struct ef800_plugin_registry_entry *entry;
+
+	strcpy(info.name, "Offset calculation");
+	strcpy(info.version, "1.0.0");
+	ef800_plugin_registry_init(&registry);
+	zassert_equal(ef800_plugin_registry_register_builtins(&registry), 0, NULL);
+	zassert_equal(ef800_plugin_registry_count(&registry), 2, NULL);
+	zassert_equal(ef800_plugin_registry_register_external(&registry, &info), 0,
+		NULL);
+	entry = ef800_plugin_registry_find(&registry, 100u);
+	zassert_not_null(entry, NULL);
+	zassert_equal(entry->state, EF800_PLUGIN_REGISTRY_READY, NULL);
+	zassert_equal(entry->info.kind, EF800_PLUGIN_KIND_CALCULATION, NULL);
+	zassert_equal(ef800_plugin_registry_register_external(&registry, &info),
+		-EEXIST, NULL);
+}
+
+ZTEST(ef800_plugin, test_rejects_invalid_and_records_diagnostics)
+{
+	struct ef800_plugin_registry registry;
+	struct ef800_plugin_descriptor_info invalid = {
+		.struct_size = sizeof(invalid),
+		.plugin_id = 101u,
+	};
+
+	ef800_plugin_registry_init(&registry);
+	zassert_equal(ef800_plugin_registry_register_external(&registry, &invalid),
+		-EINVAL, NULL);
+	zassert_equal(ef800_plugin_registry_record_diagnostic(&registry, 102u,
+		EF800_PLUGIN_REGISTRY_MISSING), 0, NULL);
+	zassert_equal(ef800_plugin_registry_state_for(&registry, 102u),
+		EF800_PLUGIN_REGISTRY_MISSING, NULL);
+	zassert_equal(ef800_plugin_registry_record_diagnostic(&registry, 103u,
+		EF800_PLUGIN_REGISTRY_INCOMPATIBLE), 0, NULL);
+	zassert_equal(ef800_plugin_registry_state_for(&registry, 103u),
+		EF800_PLUGIN_REGISTRY_INCOMPATIBLE, NULL);
+	zassert_equal(ef800_plugin_registry_record_diagnostic(&registry, 104u,
+		EF800_PLUGIN_REGISTRY_UNAVAILABLE), 0, NULL);
+	zassert_equal(ef800_plugin_registry_state_for(&registry, 104u),
+		EF800_PLUGIN_REGISTRY_UNAVAILABLE, NULL);
+	zassert_equal(ef800_plugin_registry_state_for(&registry, 999u),
+		EF800_PLUGIN_REGISTRY_MISSING, NULL);
+}
+
+ZTEST_SUITE(ef800_plugin, NULL, NULL, NULL, NULL, NULL);

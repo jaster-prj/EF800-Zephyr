@@ -44,6 +44,18 @@ Measurement:  valid package + persisted port assignment
 
 The host remains responsible for resolving assignments, claiming UARTs, applying serial defaults/configuration, and passing a Port service. Measurement plugins never claim UARTs directly.
 
+### EF800-owned hardware requirements
+
+Hardware requirements are part of the EF800 application contract, not the generic PluginManager. An EF800 Measurement descriptor exposes an EF800 metadata extension containing a required hardware-capability bitmask. PluginManager validates and loads the generic package but does not interpret UART, SPI, I2C, USB, or flow-control semantics.
+
+MainApplication reads the EF800 metadata before showing a plugin in port assignment and applies:
+
+```text
+(port.capabilities & plugin.required_hardware) == plugin.required_hardware
+```
+
+This keeps generic package loading reusable across applications while allowing EF800 to evolve its hardware policy independently.
+
 ### Optional UI capability on each plugin interface
 
 PluginManager v1 describes one interface per descriptor. Instead of requiring one package to export multiple independent interfaces, Measurement and Calculation interfaces may advertise an optional UI capability. This preserves the one-interface descriptor model while allowing a plugin to provide menu metadata and an active screen.
