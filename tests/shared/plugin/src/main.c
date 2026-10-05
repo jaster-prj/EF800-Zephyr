@@ -13,6 +13,7 @@
 #include "ef800_plugin_display.h"
 #include "ef800_keyboard_events.h"
 #include "ef800_plugin_session.h"
+#include "ef800_measurement_submenu.h"
 
 struct calculation_fixture {
 	const char *snapshot;
@@ -226,7 +227,7 @@ ZTEST(ef800_plugin, test_builtin_and_external_entries)
 	strcpy(info.version, "1.0.0");
 	ef800_plugin_registry_init(&registry);
 	zassert_equal(ef800_plugin_registry_register_builtins(&registry), 0, NULL);
-	zassert_equal(ef800_plugin_registry_count(&registry), 2, NULL);
+	zassert_equal(ef800_plugin_registry_count(&registry), 0, NULL);
 	zassert_equal(ef800_plugin_registry_register_external(&registry, &info), 0,
 		NULL);
 	entry = ef800_plugin_registry_find(&registry, 100u);
@@ -235,6 +236,46 @@ ZTEST(ef800_plugin, test_builtin_and_external_entries)
 	zassert_equal(entry->info.kind, EF800_PLUGIN_KIND_CALCULATION, NULL);
 	zassert_equal(ef800_plugin_registry_register_external(&registry, &info),
 		-EEXIST, NULL);
+}
+
+ZTEST(ef800_plugin, test_measurement_submenu_actions_and_navigation)
+{
+	struct ef800_measurement_submenu menu;
+	uint32_t action;
+
+	ef800_measurement_submenu_init(&menu,
+		EF800_MEASUREMENT_ACTION_MEASURE | EF800_MEASUREMENT_ACTION_UP |
+		EF800_MEASUREMENT_ACTION_DOWN | EF800_MEASUREMENT_ACTION_ENTER);
+	zassert_equal(ef800_measurement_submenu_count(&menu), 4, NULL);
+	zassert_equal(ef800_measurement_submenu_action(&menu),
+		EF800_MEASUREMENT_ACTION_MEASURE, NULL);
+	ef800_measurement_submenu_move(&menu, 1);
+	zassert_equal(ef800_measurement_submenu_action(&menu),
+		EF800_MEASUREMENT_ACTION_UP, NULL);
+	zassert_true(ef800_measurement_submenu_key('d', &action), NULL);
+	zassert_equal(action, EF800_MEASUREMENT_ACTION_DOWN, NULL);
+	ef800_measurement_submenu_init(&menu, EF800_MEASUREMENT_ACTION_MEASURE);
+	zassert_equal(ef800_measurement_submenu_count(&menu), 1, NULL);
+	zassert_equal(ef800_measurement_submenu_action(&menu),
+		EF800_MEASUREMENT_ACTION_MEASURE, NULL);
+	zassert_true(ef800_measurement_submenu_key('u', &action), NULL);
+	zassert_equal(action, EF800_MEASUREMENT_ACTION_UP, NULL);
+	zassert_equal(menu.actions & action, 0U, NULL);
+}
+
+ZTEST(ef800_plugin, test_measurement_submenu_lifecycle_and_unsupported_action)
+{
+	struct ef800_measurement_submenu menu;
+	uint32_t action = 0U;
+
+	ef800_measurement_submenu_init(&menu, 0U);
+	zassert_false(menu.active, NULL);
+	zassert_equal(ef800_measurement_submenu_count(&menu), 0, NULL);
+	zassert_equal(ef800_measurement_submenu_action(&menu), 0U, NULL);
+	ef800_measurement_submenu_move(&menu, 1);
+	zassert_false(ef800_measurement_submenu_key('x', &action), NULL);
+	ef800_measurement_submenu_init(&menu, EF800_MEASUREMENT_ACTION_MEASURE);
+	zassert_false((menu.actions & EF800_MEASUREMENT_ACTION_UP) != 0U, NULL);
 }
 
 ZTEST(ef800_plugin, test_rejects_invalid_and_records_diagnostics)

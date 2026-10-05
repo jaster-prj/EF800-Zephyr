@@ -108,11 +108,13 @@ Define stable EF800 identifiers for:
 - Keyboard service.
 - Logging and clock services.
 
-Keep existing persisted builder IDs unchanged:
+Legacy measurement builder IDs are no longer assignable. Version-1 metadata
+migration clears IDs `2` and `3`; current assignments use full external plugin
+IDs in version-2 metadata and are retained only while the plugin is loaded.
 
 ```text
-EF800_PORT_BUILDER_ELTA3  = 2
-EF800_PORT_BUILDER_FTS3XX = 3
+EF800_PORT_BUILDER_ELTA3  = 2 (legacy, retired)
+EF800_PORT_BUILDER_FTS3XX = 3 (legacy, retired)
 ```
 
 Reserve a documented range for externally installed device plugins. Existing

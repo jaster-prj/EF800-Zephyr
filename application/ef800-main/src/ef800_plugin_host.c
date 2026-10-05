@@ -73,6 +73,24 @@ static struct pm_application_contract contract = {
 	.service_count = ARRAY_SIZE(service_items),
 };
 
+static int validate_measurement_display(
+	const struct ef800_measurement_display *display)
+{
+	if (display == NULL || display->struct_size < sizeof(*display) ||
+		display->row_count > EF800_MEASUREMENT_SCREEN_ROWS ||
+		display->selected_action >= 32u ||
+		memchr(display->title, '\0', sizeof(display->title)) == NULL ||
+		memchr(display->footer, '\0', sizeof(display->footer)) == NULL) {
+		return -EINVAL;
+	}
+	for (uint32_t row = 0U; row < display->row_count; ++row) {
+		if (memchr(display->rows[row], '\0', sizeof(display->rows[row])) == NULL) {
+			return -EOVERFLOW;
+		}
+	}
+	return 0;
+}
+
 static int convert_entry(void *context, uint32_t address,
 	enum pm_elf_entry_kind kind, void *function_out)
 {
@@ -229,6 +247,179 @@ static void deactivate_measurement(uint32_t plugin_id)
 	(void)pm_manager_unload(manager, plugin_id);
 }
 
+int ef800_plugin_host_measurement_session_open(
+	struct ef800_measurement_plugin_session *session, uint32_t plugin_id,
+	const struct ef800_measurement_transport *transport)
+{
+	struct ef800_measurement_instance *instance;
+	const struct ef800_plugin_registry_entry *entry;
+	int status;
+
+	if (session == NULL || transport == NULL || session->state !=
+		EF800_MEASUREMENT_SESSION_CLOSED || !ready) {
+		return -EINVAL;
+	}
+	entry = ef800_plugin_registry_find(active_registry, plugin_id);
+	if (entry == NULL || entry->state != EF800_PLUGIN_REGISTRY_READY ||
+		entry->info.kind != EF800_PLUGIN_KIND_MEASUREMENT ||
+		entry->info.measurement_actions == 0U) {
+		return -ENODEV;
+	}
+	port_api.abi_version = EF800_PORT_API_VERSION;
+	port_api.struct_size = sizeof(port_api);
+	port_api.context = (void *)transport;
+	port_api.write = port_write;
+	port_api.read = port_read;
+	service_items[0] = (struct pm_service){
+		.service_id = {{EF800_PLUGIN_PORT_SERVICE_UUID_BYTES}},
+		.version = 1u,
+		.vtable = &port_api,
+	};
+	service_table.items = service_items;
+	service_table.count = ARRAY_SIZE(service_items);
+	contract.services = service_items;
+	contract.service_count = service_table.count;
+	status = pm_manager_load_available(manager, (size_t)available_index(plugin_id),
+		&package_config, &session->loaded_id);
+	if (status != PM_OK) {
+		return status;
+	}
+	status = pm_manager_create_instance(manager, session->loaded_id);
+	if (status == PM_OK) {
+		status = pm_manager_get_instance(manager, session->loaded_id,
+			(void **)&instance);
+	}
+	if (status != PM_OK) {
+		(void)pm_manager_destroy_instance(manager, session->loaded_id);
+		(void)pm_manager_unload(manager, session->loaded_id);
+		return status;
+	}
+	session->plugin_id = plugin_id;
+	session->actions = entry->info.measurement_actions;
+	session->instance = instance;
+	session->transport = transport;
+	session->state = EF800_MEASUREMENT_SESSION_ACTIVE;
+	return 0;
+}
+
+int ef800_plugin_host_measurement_session_measure(
+	struct ef800_measurement_plugin_session *session,
+	struct ef800_measurement_data *measurement)
+{
+	struct ef800_measurement_instance *instance;
+	struct ef800_measurement_result result = {.struct_size = sizeof(result)};
+	int status;
+
+	if (session == NULL || session->state != EF800_MEASUREMENT_SESSION_ACTIVE ||
+		(session->actions & EF800_MEASUREMENT_ACTION_MEASURE) == 0U ||
+		measurement == NULL) {
+		return -EINVAL;
+	}
+	instance = session->instance;
+	if (instance == NULL || instance->api == NULL || instance->api->measure == NULL) {
+		return -EPROTO;
+	}
+	if (instance->api->abi_version != EF800_MEASUREMENT_API_VERSION ||
+		instance->api->struct_size < sizeof(struct ef800_measurement_api) ||
+		instance->api->ui_abi_version != EF800_MEASUREMENT_UI_API_VERSION ||
+		instance->api->ui_struct_size < sizeof(struct ef800_measurement_api) ||
+		instance->api->render == NULL || instance->api->handle_key == NULL) {
+		return -EPROTO;
+	}
+	status = instance->api->measure(instance, &result);
+	if (status == PM_OK) {
+		measurement->distance_mm = result.distance_mm;
+		measurement->horizontal_gon_1e4 = result.horizontal_gon_1e4;
+		measurement->vertical_gon_1e4 = result.vertical_gon_1e4;
+		measurement->control = result.control;
+	}
+	return status == PM_OK ? 0 : -EIO;
+}
+
+int ef800_plugin_host_measurement_session_input(
+	struct ef800_measurement_plugin_session *session, uint32_t input)
+{
+	uint32_t action = input == EF800_MEASUREMENT_INPUT_UP ?
+		EF800_MEASUREMENT_ACTION_UP : input == EF800_MEASUREMENT_INPUT_DOWN ?
+		EF800_MEASUREMENT_ACTION_DOWN : input == EF800_MEASUREMENT_INPUT_ENTER ?
+		EF800_MEASUREMENT_ACTION_ENTER : 0U;
+	struct ef800_measurement_instance *instance;
+
+	if (session == NULL || session->state != EF800_MEASUREMENT_SESSION_ACTIVE ||
+		action == 0U || (session->actions & action) == 0U) {
+		return -ENOTSUP;
+	}
+	instance = session->instance;
+	if (instance == NULL || instance->api == NULL || instance->api->handle_input == NULL) {
+		return -ENOTSUP;
+	}
+	return instance->api->handle_input(instance, input) == PM_OK ? 0 : -EIO;
+}
+
+int ef800_plugin_host_measurement_session_key(
+	struct ef800_measurement_plugin_session *session, uint8_t key,
+	bool *consumed)
+{
+	struct ef800_measurement_key_event event = {
+		.struct_size = sizeof(event),
+		.code = EF800_MEASUREMENT_KEY_CHARACTER,
+		.character = key,
+	};
+	uint32_t result = EF800_MEASUREMENT_KEY_NOT_CONSUMED;
+	struct ef800_measurement_instance *instance;
+
+	if (session == NULL || consumed == NULL ||
+		session->state != EF800_MEASUREMENT_SESSION_ACTIVE) {
+		return -EINVAL;
+	}
+	instance = session->instance;
+	if (instance == NULL || instance->api == NULL ||
+		instance->api->handle_key == NULL) return -EPROTO;
+	if (key == 0x1BU || key == 0x08U || key == 0x7FU) {
+		event.code = EF800_MEASUREMENT_KEY_BACK;
+	}
+	if (instance->api->handle_key(instance, &event, &result) != PM_OK) {
+		return -EIO;
+	}
+	*consumed = result == EF800_MEASUREMENT_KEY_CONSUMED ||
+		result == EF800_MEASUREMENT_KEY_REQUEST_BACK;
+	return result == EF800_MEASUREMENT_KEY_ERROR ? -EIO :
+		result == EF800_MEASUREMENT_KEY_UNSUPPORTED ? -ENOTSUP : 0;
+}
+
+int ef800_plugin_host_measurement_session_render(
+	struct ef800_measurement_plugin_session *session,
+	struct ef800_measurement_display *display)
+{
+	struct ef800_measurement_instance *instance;
+
+	if (session == NULL || display == NULL ||
+		session->state != EF800_MEASUREMENT_SESSION_ACTIVE) {
+		return -EINVAL;
+	}
+	instance = session->instance;
+	if (instance->api == NULL || instance->api->render == NULL ||
+		instance->api->ui_abi_version != EF800_MEASUREMENT_UI_API_VERSION ||
+		instance->api->ui_struct_size < sizeof(struct ef800_measurement_api)) {
+		return -EPROTO;
+	}
+	return instance->api->render(instance, display) == PM_OK ?
+		validate_measurement_display(display) : -EIO;
+}
+
+void ef800_plugin_host_measurement_session_close(
+	struct ef800_measurement_plugin_session *session)
+{
+	if (session == NULL || session->state == EF800_MEASUREMENT_SESSION_CLOSED) {
+		return;
+	}
+	if (manager != NULL && session->loaded_id != 0U) {
+		(void)pm_manager_destroy_instance(manager, session->loaded_id);
+		(void)pm_manager_unload(manager, session->loaded_id);
+	}
+	*session = (struct ef800_measurement_plugin_session){0};
+}
+
 int ef800_plugin_host_calculate(uint32_t plugin_id,
 	const struct ef800_workspace *workspace, char *snapshot,
 	size_t snapshot_capacity, char *output, size_t output_capacity,
@@ -338,6 +529,7 @@ static void register_available_plugins(void)
 			&(pm_uuid_t){{EF800_PLUGIN_MEASUREMENT_UUID_BYTES}})) {
 			info.kind = EF800_PLUGIN_KIND_MEASUREMENT;
 			info.menu_category = EF800_PLUGIN_MENU_MEASUREMENT;
+			info.measurement_actions = 0U;
 		}
 		if (ef800_plugin_registry_register_external(active_registry, &info) != 0) {
 			LOG_WRN("Plugin %u rejected from registry", info.plugin_id);
@@ -366,6 +558,21 @@ static void inspect_available_metadata(void)
 				metadata->size >= sizeof(*metadata)) {
 				(void)ef800_plugin_registry_set_hardware(active_registry,
 					plugin_id, metadata->required_hardware);
+				if (metadata->measurement_ui_version !=
+					EF800_MEASUREMENT_UI_API_VERSION ||
+					metadata->measurement_ui_size <
+					sizeof(struct ef800_measurement_api)) {
+					(void)ef800_plugin_registry_record_diagnostic(active_registry,
+						plugin_id, EF800_PLUGIN_REGISTRY_INCOMPATIBLE);
+				} else {
+					struct ef800_plugin_registry_entry *entry =
+						(struct ef800_plugin_registry_entry *)
+						ef800_plugin_registry_find(active_registry, plugin_id);
+					if (entry != NULL) {
+						entry->info.measurement_actions =
+							metadata->measurement_actions;
+					}
+				}
 			}
 		}
 		(void)pm_manager_unload(manager, plugin_id);

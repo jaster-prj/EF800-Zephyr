@@ -61,6 +61,12 @@ int main(void)
     struct ef800_measurement_instance *instance;
     struct ef800_serial_defaults serial;
     struct ef800_measurement_result result;
+    struct ef800_measurement_display display;
+    struct ef800_measurement_key_event event = {
+        sizeof(event), EF800_MEASUREMENT_KEY_CHARACTER, 0u, 'u', {0u}
+    };
+    uint32_t key_result;
+    (void)key_result;
     void *opaque = 0;
 
     assert(pm_plugin_create(&table, &opaque) == PM_OK);
@@ -76,14 +82,25 @@ int main(void)
     assert(result.horizontal_gon_1e4 == 1000000);
     assert(result.vertical_gon_1e4 == 505000);
     assert(result.control == TEST_CONTROL);
+    assert(instance->api->ui_abi_version == EF800_MEASUREMENT_UI_API_VERSION);
+    assert(instance->api->render(instance, &display) == PM_OK);
+    assert(ef800_measurement_display_validate(&display) == 0);
+    display.row_count = EF800_MEASUREMENT_SCREEN_ROWS + 1u;
+    assert(ef800_measurement_display_validate(&display) == PM_EINVAL);
+    display.row_count = 1u;
     assert(fake.output_size == sizeof(expected) - 1u);
     assert(memcmp(fake.output, expected, sizeof(expected) - 1u) == 0);
 #if TEST_HAS_INPUT
+    assert(instance->api->handle_key(instance, &event, &key_result) == PM_OK);
+    assert(key_result == EF800_MEASUREMENT_KEY_CONSUMED);
     assert(instance->api->handle_input(instance, EF800_MEASUREMENT_INPUT_UP) == PM_OK);
     assert(instance->api->handle_input(instance, EF800_MEASUREMENT_INPUT_DOWN) == PM_OK);
     assert(instance->api->handle_input(instance, EF800_MEASUREMENT_INPUT_ENTER) == PM_OK);
 #else
     assert(instance->api->handle_input(instance, EF800_MEASUREMENT_INPUT_UP) == PM_ENOTSUP);
+    event.character = 'u';
+    assert(instance->api->handle_key(instance, &event, &key_result) == PM_OK);
+    assert(key_result == EF800_MEASUREMENT_KEY_UNSUPPORTED);
 #endif
     assert(pm_plugin_destroy(instance) == PM_OK);
     assert(pm_plugin_create(&(struct pm_service_table){0u, 0}, &opaque) == PM_ENOENT);

@@ -13,7 +13,7 @@ static const struct ef800_device_plugin device_plugins[] = {
 	},
 	{
 		.builder_id = EF800_PORT_BUILDER_FTS3XX,
-		.name = "FTS3XX",
+		.name = "Fennel1 (FTS3XX)",
 		.default_serial_config = ef800_fts3xx_default_serial_config,
 		.measure = ef800_fts3xx_measure,
 	},

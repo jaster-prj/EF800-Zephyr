@@ -91,6 +91,9 @@ int ef800_port_assignment_import(struct ef800_port_assignment_service *service,
 int ef800_port_assignment_import_with_connection(
 	struct ef800_port_assignment_service *service, uint8_t port_id,
 	uint8_t builder_id, uint32_t connection);
+int ef800_port_assignment_import_plugin_with_connection(
+	struct ef800_port_assignment_service *service, uint8_t port_id,
+	uint32_t plugin_id, uint32_t connection);
 int ef800_port_assignment_set_with_connection(
 	struct ef800_port_assignment_service *service, uint8_t port_id,
 	uint8_t builder_id, uint32_t connection);

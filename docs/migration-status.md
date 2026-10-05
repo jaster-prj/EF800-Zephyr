@@ -54,7 +54,8 @@ The existing EF800 release framing remains `E0 F0 <code>`.
 
 Plugin integration checkpoint:
 
-- Elta3 and FTS3XX are registered through the EF800 static device-plugin
+- Elta3 and Fennel1 (the existing FTS3XX adapter, persisted ID 3) are registered
+  through the EF800 static device-plugin
   registry using the stable persisted builder IDs `2` and `3`.
 - MainApplication resolves measurement-capable ports, serial defaults, and
   measurement dispatch through the registry while retaining existing UART
@@ -121,7 +122,9 @@ Plugin integration checkpoint:
   UART ownership checks.
 - Port 1 and Port 2 user-facing titles are both `RS232 Port`; Port 2 retains
   UART1 and optional hardware flow-control connection labels.
-- Elta3 and FTS3XX framing/parsers, serial configuration, measurement workflow,
+- External measurement plugins use full persisted plugin IDs. Legacy Elta3 and
+  Fennel1/FTS3XX assignment IDs 2 and 3 are migrated to NONE and are not
+  assignable.
   fixed-point records, and Workspace append behavior.
 - Backend-neutral persistence API with safe names and no-storage behavior.
 - Workspace create/select/restore/list/append and Position records.

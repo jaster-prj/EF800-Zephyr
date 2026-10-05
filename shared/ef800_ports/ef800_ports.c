@@ -55,20 +55,6 @@ static const struct ef800_port_device_descriptor devices[] = {
 			EF800_PORT_CAP_SERIAL_FLOW_CONTROL | EF800_PORT_CAP_USB,
 	},
 	{
-		.builder_id = EF800_PORT_BUILDER_ELTA3,
-		.title = "Elta3",
-		.shortcut = 'e',
-		.capabilities = EF800_PORT_CAP_SERIAL |
-			EF800_PORT_CAP_SERIAL_FLOW_CONTROL,
-	},
-	{
-		.builder_id = EF800_PORT_BUILDER_FTS3XX,
-		.title = "FTS3XX",
-		.shortcut = 'f',
-		.capabilities = EF800_PORT_CAP_SERIAL |
-			EF800_PORT_CAP_SERIAL_FLOW_CONTROL,
-	},
-	{
 		.builder_id = EF800_PORT_BUILDER_MSD,
 		.title = "USB MSD",
 		.shortcut = 'u',
@@ -371,14 +357,7 @@ int ef800_port_assignment_decode(const uint8_t *buffer, size_t length,
 	decoded.connection = (uint8_t)sys_get_le32(&buffer[12]);
 	decoded.assigned = true;
 	if (decoded.plugin_id == 0U ||
-		!ef800_port_connection_is_valid(decoded.port_id, decoded.connection) ||
-		(decoded.builder_id != EF800_PORT_BUILDER_NONE &&
-		 (!ef800_port_device_is_compatible(ef800_port_get(decoded.port_id),
-									 ef800_port_device_get(decoded.builder_id)) ||
-		  !ef800_port_assignment_record_valid(decoded.port_id, decoded.builder_id,
-										 decoded.connection) ||
-		  !ef800_port_device_supports_connection(decoded.builder_id,
-										 decoded.connection)))) {
+		!ef800_port_connection_is_valid(decoded.port_id, decoded.connection)) {
 		return -EINVAL;
 	}
 	*state = decoded;
@@ -543,6 +522,25 @@ int ef800_port_assignment_import(struct ef800_port_assignment_service *service,
 
 	return ef800_port_assignment_import_with_connection(service, port_id,
 									builder_id, connection);
+}
+
+int ef800_port_assignment_import_plugin_with_connection(
+	struct ef800_port_assignment_service *service, uint8_t port_id,
+	uint32_t plugin_id, uint32_t connection)
+{
+	struct ef800_port_assignment_state *current = assignment_state(service, port_id);
+	const struct ef800_port_descriptor *port = ef800_port_get(port_id);
+
+	if (current == NULL || port == NULL || plugin_id == 0U ||
+		!ef800_port_connection_is_valid(port_id, connection) ||
+		(port->fixed && plugin_id != EF800_PORT_BUILDER_BLUENRG)) {
+		return -EINVAL;
+	}
+	current->builder_id = plugin_id <= UINT8_MAX ? (uint8_t)plugin_id : 0U;
+	current->plugin_id = plugin_id;
+	current->connection = (uint8_t)connection;
+	current->assigned = true;
+	return 0;
 }
 
 int ef800_port_assignment_set_with_connection(

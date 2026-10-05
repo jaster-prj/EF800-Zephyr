@@ -51,6 +51,13 @@ enum ef800_plugin_capability {
 	EF800_PLUGIN_CAPABILITY_DIRECTIONAL_INPUT = 1u << 2,
 };
 
+enum ef800_measurement_action {
+	EF800_MEASUREMENT_ACTION_MEASURE = 1u << 0,
+	EF800_MEASUREMENT_ACTION_UP = 1u << 1,
+	EF800_MEASUREMENT_ACTION_DOWN = 1u << 2,
+	EF800_MEASUREMENT_ACTION_ENTER = 1u << 3,
+};
+
 enum ef800_plugin_menu_category {
 	EF800_PLUGIN_MENU_CALCULATION = 1,
 	EF800_PLUGIN_MENU_MEASUREMENT = 2,
@@ -74,6 +81,9 @@ struct ef800_plugin_metadata {
 	uint16_t version;
 	uint16_t size;
 	uint32_t required_hardware;
+	uint32_t measurement_ui_version;
+	uint32_t measurement_ui_size;
+	uint32_t measurement_actions;
 };
 
 struct ef800_calculation_api {
@@ -95,6 +105,7 @@ struct ef800_plugin_descriptor_info {
 	uint32_t interface_version;
 	uint32_t capabilities;
 	uint32_t required_hardware;
+	uint32_t measurement_actions;
 	enum ef800_plugin_kind kind;
 	enum ef800_plugin_menu_category menu_category;
 	char name[EF800_PLUGIN_MAX_NAME_LENGTH + 1u];

@@ -1,10 +1,11 @@
 # EF800 Measurement Plugin SDK
 
 This application-owned SDK builds and tests two standalone PluginManager
-measurement packages:
+measurement packages. Each package owns its measurement submenu declaration,
+logical keyboard handling, measurement state, and bounded display model:
 
 - ELTA3, persisted plugin/builder ID `2`.
-- FTS3XX, persisted plugin/builder ID `3`.
+- Fennel1 (FTS3XX protocol), persisted plugin ID `3`.
 
 The public headers under `include/` contain no Zephyr types. ABI-visible
 structures use fixed-width fields and explicit reserved space. The only
@@ -28,8 +29,22 @@ and `struct_size`, then call:
   physical port.
 - `measure(instance, result)` for a structured result in millimetres and gon
   multiplied by 10000.
-- `handle_input(instance, input)` for ELTA3 up/down/enter. FTS3XX returns
-  `PM_ENOTSUP`.
+- `render(instance, display)` for the bounded package-owned display model.
+- `handle_key(instance, event, result)` for logical package input. Raw keyboard
+  framing and LCD hardware remain host-owned.
+
+## Measurement Submenus
+
+MainApplication exposes external measurement packages through package-declared
+submenus. Elta3 declares `Measure`, `Up`, `Down`, and `Enter`. Fennel1 is the
+product name for the FTS3XX protocol adapter and declares `Measure` only. Its
+protocol remains a binary `0x11` request followed by `CR LF` and a line-based
+measurement response; directional input is intentionally unsupported.
+
+The host keeps raw keyboard framing and UART ownership. While a plugin submenu
+is active, host back/cancel and global keys have precedence. The host routes
+the remaining logical action keys to the selected plugin binding and tears the
+binding down when the submenu exits or the assignment becomes invalid.
 
 The service table and Port vtable/context must remain valid until
 `pm_manager_destroy_instance()` has completed.
@@ -54,7 +69,7 @@ cmake -S . -B build/arm \
 cmake --build build/arm
 ```
 
-The output files are `elta3_plugin.pmp` and `fts3xx_plugin.pmp`. Every package
+The output files are `elta3_plugin.pmp` and `fennel1_plugin.pmp`. Every package
 build invokes `tools/verify_package.py`, which verifies PMP metadata, CRC,
 ARM ELF32 `ET_REL`, no undefined symbols, descriptor identity, and required
 Port-service UUID agreement.

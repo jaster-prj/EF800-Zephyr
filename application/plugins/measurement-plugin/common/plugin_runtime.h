@@ -16,6 +16,12 @@ struct ef800_plugin_runtime {
 const struct ef800_port_api *ef800_find_port(const struct pm_service_table *services);
 int pm_plugin_create(const struct pm_service_table *services, void **instance);
 int pm_plugin_destroy(void *instance);
+void ef800_measurement_display_init(struct ef800_measurement_display *display,
+    const char *title, uint32_t actions);
+int ef800_measurement_display_text(char *output, uint32_t capacity,
+    const char *value);
+int ef800_measurement_display_number(char *output, uint32_t capacity,
+    const char *label, int32_t value);
 extern struct ef800_plugin_runtime ef800_runtime;
 extern const struct ef800_measurement_api ef800_plugin_api;
 

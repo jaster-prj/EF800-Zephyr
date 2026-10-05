@@ -17,6 +17,7 @@ target_sources(app PRIVATE
 	${CMAKE_CURRENT_LIST_DIR}/../../../shared/keyboard_protocol/keyboard_translation.c
 	${CMAKE_CURRENT_LIST_DIR}/../../../shared/ef800_measurement/ef800_device_plugin.c
 	${CMAKE_CURRENT_LIST_DIR}/../../../shared/ef800_measurement/ef800_measurement.c
+	${CMAKE_CURRENT_LIST_DIR}/../../../shared/ef800_measurement/ef800_measurement_submenu.c
 	${CMAKE_CURRENT_LIST_DIR}/../../../shared/ef800_persistence/ef800_workspace.c
 	${CMAKE_CURRENT_LIST_DIR}/../../../shared/ef800_persistence/ef800_persistence.c
 	${CMAKE_CURRENT_LIST_DIR}/../../../shared/ef800_persistence/ef800_persistence_fake.c

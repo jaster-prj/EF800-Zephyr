@@ -66,6 +66,12 @@ int ef800_metadata_read(const struct flash_area *area,
 	if (ret == sizeof(buffer)) {
 		ret = ef800_boot_metadata_decode(buffer, sizeof(buffer), metadata);
 		*valid = ret == 0 && ef800_boot_metadata_valid(metadata);
+	} else if (ret == 40) {
+		ret = ef800_boot_metadata_migrate_v1(buffer, 40U, metadata);
+		*valid = ret == 0 && ef800_boot_metadata_valid(metadata);
+		if (ret == 0) {
+                        ret = EF800_METADATA_MIGRATED;
+		}
 	} else if (ret >= 0) {
 		ret = -ENOENT;
 	}

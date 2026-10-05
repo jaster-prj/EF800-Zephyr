@@ -12,7 +12,9 @@
 #define EF800_UPDATE_FORMAT_VERSION 1U
 
 #define EF800_BOOT_METADATA_MAGIC   0x45463842U
-#define EF800_BOOT_METADATA_VERSION 1U
+#define EF800_BOOT_METADATA_VERSION 2U
+#define EF800_BOOT_METADATA_LEGACY_VERSION 1U
+#define EF800_METADATA_MIGRATED (-4095)
 
 #define EF800_BOOT_TARGET_MAIN   0U
 #define EF800_BOOT_TARGET_BACKUP 1U
@@ -53,6 +55,11 @@ struct ef800_update_header {
  * Fixed internal-flash record. The first 32 bytes are covered by crc32;
  * reserved keeps the record aligned to the STM32L4 eight-byte write unit.
  */
+struct ef800_boot_port_assignment {
+	uint32_t plugin_id;
+	uint32_t connection;
+};
+
 struct ef800_boot_metadata {
 	uint32_t magic;
 	uint16_t version;
@@ -62,13 +69,14 @@ struct ef800_boot_metadata {
 	uint32_t sequence;
 	/* Low byte is the persisted DebugDevice port; zero means no DebugDevice. */
 	uint32_t console_target;
-	/* One byte per Port 1..5: builder ID in bits 0..3, connection in 4..7. */
+	/* Legacy compact assignments retained in memory for migration/system compatibility. */
 	uint64_t port_assignments;
+	struct ef800_boot_port_assignment ports[5];
 	uint32_t crc32;
 	uint32_t reserved;
 };
 
-#define EF800_BOOT_METADATA_SIZE 40U
+#define EF800_BOOT_METADATA_SIZE 80U
 
 bool ef800_vector_table_valid(const uint32_t vector[2], uintptr_t image_address,
 				      size_t image_size, uintptr_t sram_address,
@@ -84,6 +92,8 @@ uint32_t ef800_crc32_update(uint32_t crc, const uint8_t *data, size_t length);
 int ef800_boot_metadata_encode(const struct ef800_boot_metadata *metadata,
 					       uint8_t *buffer, size_t capacity);
 int ef800_boot_metadata_decode(const uint8_t *buffer, size_t length,
+					       struct ef800_boot_metadata *metadata);
+int ef800_boot_metadata_migrate_v1(const uint8_t *buffer, size_t length,
 					       struct ef800_boot_metadata *metadata);
 
 void ef800_boot_metadata_init(struct ef800_boot_metadata *metadata);
@@ -105,6 +115,12 @@ int ef800_boot_metadata_set_console(struct ef800_boot_metadata *metadata,
 					    uint8_t debug_port);
 uint8_t ef800_port_assignment_builder(uint64_t assignments, uint8_t port_id);
 uint8_t ef800_port_assignment_connection(uint64_t assignments, uint8_t port_id);
+uint32_t ef800_boot_metadata_plugin_id(const struct ef800_boot_metadata *metadata,
+	uint8_t port_id);
+uint32_t ef800_boot_metadata_connection(const struct ef800_boot_metadata *metadata,
+	uint8_t port_id);
+int ef800_boot_metadata_set_assignment(struct ef800_boot_metadata *metadata,
+	uint8_t port_id, uint32_t plugin_id, uint32_t connection);
 int ef800_port_assignment_set_builder(uint64_t *assignments, uint8_t port_id,
 					      uint8_t builder_id);
 int ef800_port_assignment_set_record(uint64_t *assignments, uint8_t port_id,

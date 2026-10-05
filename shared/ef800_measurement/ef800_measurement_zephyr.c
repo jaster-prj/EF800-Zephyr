@@ -128,17 +128,3 @@ int ef800_measurement_zephyr_init_with_config(
 	};
 	return 0;
 }
-
-int ef800_measurement_zephyr_init(
-	struct ef800_measurement_zephyr_transport *transport,
-	const struct device *uart, uint8_t builder_id, uint32_t connection)
-{
-	struct ef800_measurement_serial_config config;
-	int result = ef800_measurement_serial_config_for_builder(builder_id,
-									connection, &config);
-
-	if (result != 0) {
-		return result;
-	}
-	return ef800_measurement_zephyr_init_with_config(transport, uart, &config);
-}

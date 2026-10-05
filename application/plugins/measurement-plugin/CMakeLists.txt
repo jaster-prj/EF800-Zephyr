@@ -8,9 +8,9 @@ set(PLUGIN_MANAGER_DIR "" CACHE PATH "Optional PluginManager source tree")
 set(PM_ARM_TOOLCHAIN_PREFIX "" CACHE STRING "ARM compiler prefix, without -gcc")
 set(EF800_PLUGIN_VERSION "1.0.0")
 
-set(COMMON_SOURCES src/protocol.c src/plugin_runtime.c)
+set(COMMON_SOURCES common/protocol.c common/plugin_runtime.c)
 set(COMMON_INCLUDES ${CMAKE_CURRENT_LIST_DIR}/include
-    ${CMAKE_CURRENT_LIST_DIR}/compat ${CMAKE_CURRENT_LIST_DIR}/src)
+    ${CMAKE_CURRENT_LIST_DIR}/compat ${CMAKE_CURRENT_LIST_DIR}/common)
 
 function(add_host_plugin_test target source)
     add_executable(${target} tests/test_plugin.c ${source} ${COMMON_SOURCES})
@@ -23,19 +23,19 @@ function(add_host_plugin_test target source)
     endif()
 endfunction()
 
-add_host_plugin_test(elta3_host_test src/elta3.c)
+add_host_plugin_test(elta3_host_test elta3/src/elta3.c)
 target_compile_definitions(elta3_host_test PRIVATE
     TEST_ELTA3=1
     TEST_BAUD=1200u TEST_DATA_BITS=7u TEST_PARITY=1u TEST_STOP_BITS=2u
     TEST_CONTROL=48u TEST_HAS_INPUT=1)
 add_test(NAME elta3_protocol COMMAND elta3_host_test)
 
-add_host_plugin_test(fts3xx_host_test src/fts3xx.c)
-target_compile_definitions(fts3xx_host_test PRIVATE
+add_host_plugin_test(fennel1_host_test fennel1/src/fennel1.c)
+target_compile_definitions(fennel1_host_test PRIVATE
     TEST_ELTA3=0
     TEST_BAUD=9600u TEST_DATA_BITS=8u TEST_PARITY=0u TEST_STOP_BITS=1u
     TEST_CONTROL=0u TEST_HAS_INPUT=0)
-add_test(NAME fts3xx_protocol COMMAND fts3xx_host_test)
+add_test(NAME fennel1_protocol COMMAND fennel1_host_test)
 
 if(PM_ARM_TOOLCHAIN_PREFIX)
     set(ARM_CC "${PM_ARM_TOOLCHAIN_PREFIX}-gcc")
@@ -52,7 +52,7 @@ if(PM_ARM_TOOLCHAIN_PREFIX)
     endif()
     configure_file(cmake/plugin_memory.ld.in ${CMAKE_CURRENT_BINARY_DIR}/plugin_memory.ld @ONLY)
 
-    function(add_arm_plugin target source plugin_id plugin_name)
+    function(add_arm_plugin target package_dir source plugin_id plugin_name)
         set(image ${CMAKE_CURRENT_BINARY_DIR}/${target}.elf)
         set(package ${CMAKE_CURRENT_BINARY_DIR}/${target}.pmp)
         add_custom_command(OUTPUT ${image}
@@ -61,16 +61,16 @@ if(PM_ARM_TOOLCHAIN_PREFIX)
                 -ffunction-sections -fdata-sections -Wall -Wextra -Werror
                 -I${CMAKE_CURRENT_LIST_DIR}/include
                 -I${CMAKE_CURRENT_LIST_DIR}/compat
-                -I${CMAKE_CURRENT_LIST_DIR}/src
+                 -I${CMAKE_CURRENT_LIST_DIR}/common
                 -DEF800_PLUGIN_ID=${plugin_id}u
-                ${CMAKE_CURRENT_LIST_DIR}/${source}
-                ${CMAKE_CURRENT_LIST_DIR}/src/protocol.c
-                ${CMAKE_CURRENT_LIST_DIR}/src/plugin_runtime.c
-                ${CMAKE_CURRENT_LIST_DIR}/src/descriptor.c
+                 ${CMAKE_CURRENT_LIST_DIR}/${source}
+                 ${CMAKE_CURRENT_LIST_DIR}/common/protocol.c
+                 ${CMAKE_CURRENT_LIST_DIR}/common/plugin_runtime.c
+                 ${CMAKE_CURRENT_LIST_DIR}/${package_dir}/descriptor.c
                 -r -nostdlib -nostartfiles -nodefaultlibs
                 -T${CMAKE_CURRENT_BINARY_DIR}/plugin_memory.ld
                 -o ${image}
-            DEPENDS ${source} ${COMMON_SOURCES} src/descriptor.c
+                 DEPENDS ${source} ${COMMON_SOURCES} ${package_dir}/descriptor.c
                 ${CMAKE_CURRENT_BINARY_DIR}/plugin_memory.ld)
         add_custom_command(OUTPUT ${package}
             COMMAND ${Python3_EXECUTABLE} ${CMAKE_CURRENT_LIST_DIR}/tools/package_plugin.py
@@ -82,6 +82,6 @@ if(PM_ARM_TOOLCHAIN_PREFIX)
         add_custom_target(${target} ALL DEPENDS ${package})
     endfunction()
 
-    add_arm_plugin(elta3_plugin src/elta3.c 2 "EF800 ELTA3")
-    add_arm_plugin(fts3xx_plugin src/fts3xx.c 3 "EF800 FTS3XX")
+    add_arm_plugin(elta3_plugin elta3 elta3/src/elta3.c 2 "EF800 ELTA3")
+    add_arm_plugin(fennel1_plugin fennel1 fennel1/src/fennel1.c 3 "EF800 Fennel1")
 endif()

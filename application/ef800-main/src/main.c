@@ -32,7 +32,6 @@
 #include "ef800_main_usb_msc.h"
 #include "ef800_storage_owner.h"
 #include "ef800_measurement_zephyr.h"
-#include "ef800_device_plugin.h"
 #include "ef800_t6963.h"
 #include "ef800_workspace.h"
 #include "keyboard_host.h"
@@ -99,6 +98,7 @@ static int32_t measurement_number;
 static struct ef800_measurement_record measurement_record;
 static char measurement_code[EF800_MEASUREMENT_TEXT_MAX + 1U] = "02";
 static bool boot_metadata_valid;
+static bool boot_metadata_migration_pending;
 static bool lcd_ready;
 static bool fuel_gauge_ready;
 static bool runtime_state_ready;
@@ -107,6 +107,7 @@ static uint8_t menu_selection;
 static uint8_t selected_port_index;
 static uint8_t selected_builder_id;
 static uint32_t selected_plugin_id;
+static struct ef800_measurement_plugin_session measurement_plugin_session;
 
 enum application_menu {
 	APPLICATION_MENU_MAIN = 0,
@@ -218,15 +219,20 @@ static void display_port_assignment_connections(void);
 static void display_port_debug_confirmation(void);
 static void display_measurement_devices(void);
 static void display_measurement_actions(void);
+static void display_measurement_plugin_menu(void);
+static void display_active_menu(void);
 static void display_measurement_editor(void);
 static void display_calculation_menu(void);
 static void handle_measurement_editor_key(uint8_t key);
 static int trigger_measurement(bool fixed);
 static int send_measurement_input(uint32_t input);
+static bool selected_measurement_has_submenu(void);
+static void close_measurement_plugin_session(void);
 static void start_measurement_editor(void);
 static const struct device *port_uart_device(enum ef800_port_uart_id uart_id);
 static int port_uart_check_ready(uint8_t port_id, uint32_t connection);
 static int claim_loaded_port_assignments(void);
+static int reconcile_measurement_assignments(void);
 static int set_console_for_port(uint8_t port_id);
 
 static int load_boot_metadata(void)
@@ -234,12 +240,13 @@ static int load_boot_metadata(void)
 	int result = ef800_metadata_read_current(&boot_metadata,
 							&boot_metadata_valid);
 
-	if (result != 0 || !boot_metadata_valid) {
+    if ((result != 0 && result != EF800_METADATA_MIGRATED) || !boot_metadata_valid) {
 		ef800_boot_metadata_init(&boot_metadata);
 		boot_metadata_valid = false;
 		return result;
 	}
-	return 0;
+    boot_metadata_migration_pending = result == EF800_METADATA_MIGRATED;
+	return result;
 }
 
 static int import_metadata_assignments(void)
@@ -250,11 +257,10 @@ static int import_metadata_assignments(void)
 		return 0;
 	}
 	for (uint8_t port_id = 1U; port_id <= EF800_PORT_COUNT; ++port_id) {
-		result = ef800_port_assignment_import_with_connection(
+		result = ef800_port_assignment_import_plugin_with_connection(
 			&port_assignments, port_id,
-			ef800_port_assignment_builder(boot_metadata.port_assignments, port_id),
-			ef800_port_assignment_connection(boot_metadata.port_assignments,
-													  port_id));
+			ef800_boot_metadata_plugin_id(&boot_metadata, port_id),
+			ef800_boot_metadata_connection(&boot_metadata, port_id));
 		if (result != 0) {
 			return result;
 		}
@@ -264,26 +270,21 @@ static int import_metadata_assignments(void)
 
 static int sync_boot_metadata(void)
 {
-	uint64_t assignments = 0U;
 	uint8_t debug_port = 0U;
 	int result;
 
 	for (uint8_t port_id = 1U; port_id <= EF800_PORT_COUNT; ++port_id) {
-		uint8_t builder_id = ef800_port_assignment_get_builder(&port_assignments,
-									port_id);
-
-		result = ef800_port_assignment_set_record(&assignments, port_id,
-									 builder_id,
-									 ef800_port_assignment_get_connection(
-										 &port_assignments, port_id));
-		if (result != 0) {
-			return result;
-		}
-		if (debug_port == 0U && builder_id == EF800_PORT_BUILDER_DEBUG) {
+		uint32_t plugin_id = ef800_port_assignment_get_plugin_id(&port_assignments,
+			port_id);
+		uint32_t connection = ef800_port_assignment_get_connection(&port_assignments,
+			port_id);
+		result = ef800_boot_metadata_set_assignment(&boot_metadata, port_id,
+			plugin_id, connection);
+		if (result != 0) return result;
+		if (debug_port == 0U && plugin_id == EF800_PORT_BUILDER_DEBUG) {
 			debug_port = port_id;
 		}
 	}
-	boot_metadata.port_assignments = assignments;
 	result = ef800_boot_metadata_set_console(&boot_metadata, debug_port);
 	if (result != 0) {
 		return result;
@@ -319,17 +320,16 @@ static int reconcile_port_uart_state(void)
 	int result;
 
 	for (uint8_t port_id = 1U; port_id <= EF800_PORT_COUNT; ++port_id) {
-		uint8_t builder_id = ef800_port_assignment_get_builder(
+		uint32_t plugin_id = ef800_port_assignment_get_plugin_id(
 			&port_assignments, port_id);
 
-		result = ef800_port_assignment_set_record(&desired.port_assignments,
-									    port_id, builder_id,
-									    ef800_port_assignment_get_connection(
-										 &port_assignments, port_id));
+		result = ef800_boot_metadata_set_assignment(&desired, port_id,
+			ef800_port_assignment_get_plugin_id(&port_assignments, port_id),
+			ef800_port_assignment_get_connection(&port_assignments, port_id));
 		if (result != 0) {
 			return result;
 		}
-		if (debug_port == 0U && builder_id == EF800_PORT_BUILDER_DEBUG) {
+		if (debug_port == 0U && plugin_id == EF800_PORT_BUILDER_DEBUG) {
 			debug_port = port_id;
 		}
 	}
@@ -370,16 +370,56 @@ static int reconcile_port_uart_state(void)
 		return result;
 	}
 	ef800_port_uart_startup_complete(&port_uart_registry);
-	if (!boot_metadata_valid ||
-		boot_metadata.port_assignments != desired.port_assignments ||
+	if (!boot_metadata_valid || boot_metadata_migration_pending ||
+		memcmp(boot_metadata.ports, desired.ports, sizeof(desired.ports)) != 0 ||
 		boot_metadata.console_target != desired.console_target) {
 		boot_metadata = desired;
 		result = ef800_metadata_write_current(&boot_metadata);
 		if (result == 0) {
 			boot_metadata_valid = true;
+			boot_metadata_migration_pending = false;
 		}
 	}
 	return result;
+}
+
+static int reconcile_measurement_assignments(void)
+{
+	int first_error = 0;
+
+	for (uint8_t port_id = 1U; port_id <= EF800_PORT_COUNT; ++port_id) {
+		uint32_t plugin_id = ef800_port_assignment_get_plugin_id(&port_assignments,
+			port_id);
+		const struct ef800_plugin_registry_entry *entry;
+		bool keep;
+
+		if (!ef800_port_assignment_is_assigned(&port_assignments, port_id) ||
+			plugin_id == EF800_PORT_BUILDER_NONE ||
+			plugin_id == EF800_PORT_BUILDER_DEBUG ||
+			plugin_id == EF800_PORT_BUILDER_MSD ||
+			plugin_id == EF800_PORT_BUILDER_BLUENRG) {
+			continue;
+		}
+		entry = ef800_plugin_registry_find(&plugin_registry, plugin_id);
+		keep = entry != NULL && entry->state == EF800_PLUGIN_REGISTRY_READY &&
+			entry->info.kind == EF800_PLUGIN_KIND_MEASUREMENT &&
+			entry->info.required_hardware == EF800_PLUGIN_HARDWARE_SERIAL &&
+			ef800_port_connection_is_valid(port_id,
+				ef800_port_assignment_get_connection(&port_assignments, port_id));
+		if (keep) continue;
+
+		LOG_WRN("Clearing unavailable measurement plugin %u on port %u",
+			(unsigned)plugin_id, port_id);
+		if (ef800_storage_is_mounted()) {
+			int result = ef800_port_assignment_remove(&port_assignments, port_id);
+			if (result != 0 && first_error == 0) first_error = result;
+		} else {
+			int result = ef800_port_assignment_import_with_connection(&port_assignments,
+				port_id, EF800_PORT_BUILDER_NONE, EF800_PORT_CONNECTION_NONE);
+			if (result != 0 && first_error == 0) first_error = result;
+		}
+	}
+	return first_error;
 }
 
 static int persist_port_assignment_metadata(void)
@@ -398,11 +438,11 @@ static int claim_loaded_port_assignments(void)
 
 	for (size_t index = 0U; index < ef800_port_count(); ++index) {
 		const struct ef800_port_descriptor *port = ef800_port_at(index);
-		uint8_t builder_id = ef800_port_assignment_get_builder(
+		uint32_t plugin_id = ef800_port_assignment_get_plugin_id(
 			&port_assignments, port->id);
 		int result;
 
-		if (builder_id == EF800_PORT_BUILDER_NONE) {
+		if (plugin_id == EF800_PORT_BUILDER_NONE) {
 			continue;
 		}
 		uint32_t connection = ef800_port_assignment_get_connection(
@@ -417,7 +457,7 @@ static int claim_loaded_port_assignments(void)
 			continue;
 		}
 		result = ef800_port_uart_claim(&port_uart_registry, port->id,
-						       builder_id,
+						       (uint8_t)plugin_id,
 						       ef800_port_assignment_get_connection(
 							&port_assignments, port->id));
 		if (result != 0) {
@@ -428,42 +468,8 @@ static int claim_loaded_port_assignments(void)
 			}
 			continue;
 		}
-		if (ef800_device_plugin_find(builder_id) != NULL) {
-			struct ef800_measurement_serial_config config;
-			enum ef800_legacy_serial_kind kind = builder_id ==
-				EF800_PORT_BUILDER_ELTA3 ? EF800_LEGACY_SERIAL_ELTA3 :
-				EF800_LEGACY_SERIAL_FTS3XX;
-			const struct ef800_port_uart_route *route =
-				ef800_port_uart_for_connection(port->id, connection);
-			const struct device *device = route == NULL ? NULL :
-				port_uart_device(route->uart_id);
-
-			if (route == NULL || device == NULL) {
-				LOG_WRN("Port %u measurement route is unavailable", port->id);
-				if (first_error == 0) {
-					first_error = -ENODEV;
-				}
-				continue;
-			}
-			result = ef800_serial_config_load(&persistence, kind, port->id,
-									&config);
-			if (result == -ENOENT || result == -ENOTSUP) {
-				result = ef800_measurement_serial_config_for_builder(builder_id,
-										connection, &config);
-			}
-			if (result == 0) {
-				result = ef800_measurement_zephyr_init_with_config(
-					&measurement_transports[port->id - 1U], device, &config);
-			}
-			if (result != 0) {
-				LOG_WRN("Port %u measurement UART setup failed: %d",
-					port->id, result);
-				if (first_error == 0) {
-					first_error = result;
-				}
-			}
-		} else if (ef800_plugin_registry_find(&plugin_registry, builder_id) != NULL &&
-			ef800_plugin_registry_find(&plugin_registry, builder_id)->info.kind ==
+		if (ef800_plugin_registry_find(&plugin_registry, plugin_id) != NULL &&
+			ef800_plugin_registry_find(&plugin_registry, plugin_id)->info.kind ==
 			EF800_PLUGIN_KIND_MEASUREMENT) {
 			struct ef800_measurement_serial_config config;
 			const struct ef800_port_uart_route *route =
@@ -477,7 +483,7 @@ static int claim_loaded_port_assignments(void)
 				}
 				continue;
 			}
-			result = ef800_plugin_host_serial_config(builder_id, NULL, &config);
+			result = ef800_plugin_host_serial_config(plugin_id, NULL, &config);
 			if (result == 0) {
 				result = ef800_measurement_zephyr_init_with_config(
 					&measurement_transports[port->id - 1U], device, &config);
@@ -1427,7 +1433,7 @@ static size_t port_assignment_device_count(void)
 		const struct ef800_plugin_registry_entry *plugin =
 			ef800_plugin_registry_at(&plugin_registry, index);
 		if (plugin != NULL && plugin->info.kind == EF800_PLUGIN_KIND_MEASUREMENT &&
-			plugin->measurement == NULL && plugin_hardware_matches_port(plugin, port)) {
+			plugin_hardware_matches_port(plugin, port)) {
 			++count;
 		}
 	}
@@ -1468,7 +1474,7 @@ static const struct ef800_plugin_registry_entry *plugin_at_selection(
 		const struct ef800_plugin_registry_entry *plugin =
 			ef800_plugin_registry_at(&plugin_registry, index);
 		if (plugin != NULL && plugin->info.kind == EF800_PLUGIN_KIND_MEASUREMENT &&
-			plugin->measurement == NULL && plugin_hardware_matches_port(plugin, port) &&
+			plugin_hardware_matches_port(plugin, port) &&
 			selection-- == 0U) {
 			return plugin;
 		}
@@ -1507,6 +1513,20 @@ static void display_port_assignment_devices(void)
 		snprintk(line, sizeof(line), "%c %s [%c]",
 			device_index == menu_selection ? '>' : ' ', device->title,
 			device->shortcut);
+		display_line((uint8_t)row++, line);
+		++device_index;
+	}
+	for (size_t index = 0U; index < ef800_plugin_registry_count(&plugin_registry); ++index) {
+		const struct ef800_plugin_registry_entry *plugin =
+			ef800_plugin_registry_at(&plugin_registry, index);
+		if (plugin == NULL || plugin->info.kind != EF800_PLUGIN_KIND_MEASUREMENT ||
+			plugin->state != EF800_PLUGIN_REGISTRY_READY ||
+			!plugin_hardware_matches_port(plugin, port)) {
+			continue;
+		}
+		snprintk(line, sizeof(line), "%c %s [%u]",
+			device_index == menu_selection ? '>' : ' ', plugin->info.name,
+			(unsigned)plugin->info.plugin_id);
 		display_line((uint8_t)row++, line);
 		++device_index;
 	}
@@ -1629,22 +1649,21 @@ static void display_port_debug_confirmation(void)
 
 static const char *measurement_device_title(uint8_t port_id)
 {
-	uint8_t builder = ef800_port_assignment_get_builder(&port_assignments, port_id);
-	const struct ef800_port_device_descriptor *device =
-		ef800_port_device_get(builder);
+	uint32_t plugin_id = ef800_port_assignment_get_plugin_id(&port_assignments, port_id);
+	const struct ef800_plugin_registry_entry *plugin =
+		ef800_plugin_registry_find(&plugin_registry, plugin_id);
 
-	return device == NULL ? "unknown" : device->title;
+	return plugin == NULL ? "unknown" : plugin->info.name;
 }
 
 static int load_measurement_ports(void)
 {
 	measurement_port_count = 0U;
 	for (uint8_t port_id = 1U; port_id <= EF800_PORT_COUNT; ++port_id) {
-		uint8_t builder = ef800_port_assignment_get_builder(&port_assignments, port_id);
+		uint32_t plugin_id = ef800_port_assignment_get_plugin_id(&port_assignments, port_id);
 
-		if ((ef800_device_plugin_find(builder) != NULL ||
-			ef800_plugin_registry_find(&plugin_registry, builder) != NULL) &&
-			ef800_plugin_registry_state_for(&plugin_registry, builder) ==
+		if (ef800_plugin_registry_find(&plugin_registry, plugin_id) != NULL &&
+			ef800_plugin_registry_state_for(&plugin_registry, plugin_id) ==
 			EF800_PLUGIN_REGISTRY_READY &&
 			measurement_transports[port_id - 1U].uart != NULL) {
 			measurement_port_ids[measurement_port_count++] = port_id;
@@ -1711,6 +1730,60 @@ static void display_measurement_actions(void)
 	display_line(7U, "ENTER select  ESC back");
 }
 
+static bool selected_measurement_has_submenu(void)
+{
+	uint32_t plugin_id = ef800_port_assignment_get_plugin_id(&port_assignments,
+		selected_measurement_port);
+	const struct ef800_plugin_registry_entry *entry =
+		ef800_plugin_registry_find(&plugin_registry, plugin_id);
+
+	return entry != NULL && entry->info.kind == EF800_PLUGIN_KIND_MEASUREMENT &&
+		entry->state == EF800_PLUGIN_REGISTRY_READY;
+}
+
+static size_t measurement_plugin_action_count(void)
+{
+	struct ef800_measurement_display display;
+
+	if (!selected_measurement_has_submenu() ||
+		ef800_plugin_host_measurement_session_render(
+		&measurement_plugin_session, &display) != 0) {
+		return 0U;
+	}
+	return ((display.actions & EF800_MEASUREMENT_ACTION_MEASURE) != 0U) +
+		((display.actions & EF800_MEASUREMENT_ACTION_UP) != 0U) +
+		((display.actions & EF800_MEASUREMENT_ACTION_DOWN) != 0U) +
+		((display.actions & EF800_MEASUREMENT_ACTION_ENTER) != 0U);
+}
+
+static void close_measurement_plugin_session(void)
+{
+	ef800_plugin_host_measurement_session_close(&measurement_plugin_session);
+}
+
+static void display_measurement_plugin_menu(void)
+{
+	struct ef800_measurement_display display;
+	char line[STATUS_LINE_SIZE];
+
+	if (ef800_plugin_host_measurement_session_render(
+		&measurement_plugin_session, &display) != 0) {
+		display_line(6U, "Plugin display unavailable");
+		return;
+	}
+	display_line(0U, display.title);
+	snprintk(line, sizeof(line), "Port %u: %s", selected_measurement_port,
+		measurement_device_title(selected_measurement_port));
+	display_line(1U, line);
+	display_line(2U, "Select action");
+	for (size_t index = 0U; index < display.row_count && index < 4U; ++index) {
+		snprintk(line, sizeof(line), "%c %s", index == menu_selection ? '>' : ' ',
+			display.rows[index]);
+		display_line((uint8_t)(3U + index), line);
+	}
+	display_line(7U, display.footer);
+}
+
 static void display_measurement_editor(void)
 {
 	char line[STATUS_LINE_SIZE];
@@ -1742,22 +1815,14 @@ static void start_measurement_editor(void)
 
 static int trigger_measurement(bool fixed)
 {
-	uint8_t builder = ef800_port_assignment_get_builder(&port_assignments,
+	uint32_t plugin_id = ef800_port_assignment_get_plugin_id(&port_assignments,
 		selected_measurement_port);
 	struct ef800_measurement_data data;
-	const struct ef800_plugin_registry_entry *plugin =
-		ef800_plugin_registry_find(&plugin_registry, builder);
 	int result;
 
-	if (plugin != NULL && plugin->measurement == NULL) {
-		result = ef800_plugin_host_measure(builder,
+	result = ef800_plugin_host_measure(plugin_id,
 			&measurement_transports[selected_measurement_port - 1U].transport,
 			&data);
-	} else {
-		result = ef800_device_plugin_measure(builder,
-			&measurement_transports[selected_measurement_port - 1U].transport,
-			&data);
-	}
 	if (result != 0) {
 		return result;
 	}
@@ -1777,29 +1842,12 @@ static int trigger_measurement(bool fixed)
 
 static int send_measurement_input(uint32_t input)
 {
-	uint8_t builder = ef800_port_assignment_get_builder(&port_assignments,
+	uint32_t plugin_id = ef800_port_assignment_get_plugin_id(&port_assignments,
 		selected_measurement_port);
-	const struct ef800_plugin_registry_entry *plugin =
-		ef800_plugin_registry_find(&plugin_registry, builder);
 	const struct ef800_measurement_transport *transport =
 		&measurement_transports[selected_measurement_port - 1U].transport;
 
-	if (plugin != NULL && plugin->measurement == NULL) {
-		return ef800_plugin_host_input(builder, transport, input);
-	}
-	if (builder == EF800_PORT_BUILDER_ELTA3) {
-		switch (input) {
-		case EF800_MEASUREMENT_INPUT_UP:
-			return ef800_elta3_up(transport);
-		case EF800_MEASUREMENT_INPUT_DOWN:
-			return ef800_elta3_down(transport);
-		case EF800_MEASUREMENT_INPUT_ENTER:
-			return ef800_elta3_enter(transport);
-		default:
-			return -EINVAL;
-		}
-	}
-	return -ENOTSUP;
+	return ef800_plugin_host_input(plugin_id, transport, input);
 }
 
 static int save_measurement(void)
@@ -1851,7 +1899,7 @@ static void handle_measurement_editor_key(uint8_t key)
 		measurement_editor.active = false;
 		active_menu = APPLICATION_MENU_MEASUREMENT_ACTIONS;
 		menu_selection = 0U;
-		display_measurement_actions();
+		display_active_menu();
 		return;
 	}
 	if (key == 0x08U || key == 0x7FU) {
@@ -1969,7 +2017,11 @@ static void display_active_menu(void)
 		display_measurement_devices();
 		break;
 	case APPLICATION_MENU_MEASUREMENT_ACTIONS:
-		display_measurement_actions();
+		if (selected_measurement_has_submenu()) {
+			display_measurement_plugin_menu();
+		} else {
+			display_measurement_actions();
+		}
 		break;
 	case APPLICATION_MENU_MEASUREMENT_EDITOR:
 		display_measurement_editor();
@@ -2009,7 +2061,7 @@ static size_t active_menu_count(void)
 	case APPLICATION_MENU_MEASUREMENTS:
 		return measurement_port_count;
 	case APPLICATION_MENU_MEASUREMENT_ACTIONS:
-		return 7U;
+		return selected_measurement_has_submenu() ? measurement_plugin_action_count() : 7U;
 	case APPLICATION_MENU_MEASUREMENT_EDITOR:
 		return 0U;
 	case APPLICATION_MENU_CALCULATIONS:
@@ -2076,6 +2128,7 @@ static void return_from_child_menu(void)
 	} else if (active_menu == APPLICATION_MENU_MEASUREMENTS) {
 		return_to_main_menu();
 	} else if (active_menu == APPLICATION_MENU_MEASUREMENT_ACTIONS) {
+		close_measurement_plugin_session();
 		active_menu = APPLICATION_MENU_MEASUREMENTS;
 		menu_selection = selected_measurement_port;
 		display_measurement_devices();
@@ -2486,6 +2539,7 @@ static void commit_port_assignment_connection(void)
 	const struct ef800_port_connection_descriptor *connection =
 		connection_at_selection(menu_selection);
 	uint8_t old_builder_id;
+	uint32_t old_plugin_id;
 	uint32_t old_connection;
 	uint8_t old_debug_port = 0U;
 	uint32_t old_debug_connection = EF800_PORT_CONNECTION_NONE;
@@ -2496,6 +2550,7 @@ static void commit_port_assignment_connection(void)
 		return;
 	}
 	old_builder_id = ef800_port_assignment_get_builder(&port_assignments, port->id);
+	old_plugin_id = ef800_port_assignment_get_plugin_id(&port_assignments, port->id);
 	old_connection = ef800_port_assignment_get_connection(&port_assignments, port->id);
 	for (uint8_t port_id = 1U; port_id <= EF800_PORT_COUNT; ++port_id) {
 		if (ef800_port_assignment_get_builder(&port_assignments, port_id) ==
@@ -2546,7 +2601,9 @@ static void commit_port_assignment_connection(void)
 		}
 	}
 	result = ef800_port_uart_claim(&port_uart_registry, port->id,
-						       selected_builder_id, connection->capability);
+						       selected_plugin_id <= UINT8_MAX ?
+						       (uint8_t)selected_plugin_id : 0U,
+						       connection->capability);
 	if (result != 0) {
 		if (old_builder_id != EF800_PORT_BUILDER_NONE) {
 			(void)ef800_port_uart_claim(&port_uart_registry, port->id,
@@ -2555,8 +2612,11 @@ static void commit_port_assignment_connection(void)
 		display_port_assignment_result("Connection unavailable", result);
 		return;
 	}
-	result = set_port_assignment_runtime(port->id, selected_builder_id,
-													  connection->capability);
+	result = selected_plugin_id > UINT8_MAX ?
+		ef800_port_assignment_set_plugin_with_connection(&port_assignments,
+			port->id, selected_plugin_id, connection->capability) :
+		set_port_assignment_runtime(port->id, selected_builder_id,
+			connection->capability);
 	if (result == 0) {
 		result = persist_port_assignment_metadata();
 	}
@@ -2565,8 +2625,8 @@ static void commit_port_assignment_connection(void)
 	}
 	if (result == 0) {
 		char line[STATUS_LINE_SIZE];
-		snprintk(line, sizeof(line), "Assigned %s to port %u",
-			ef800_port_device_get(selected_builder_id)->title, port->id);
+			snprintk(line, sizeof(line), "Assigned plugin %u to port %u",
+			(unsigned)selected_plugin_id, port->id);
 		display_port_assignment_result(line, 0);
 		if (usb_assignment_changed(port->id, old_builder_id, old_connection,
 								 selected_builder_id, connection->capability)) {
@@ -2578,7 +2638,8 @@ static void commit_port_assignment_connection(void)
 	} else {
 		(void)ef800_port_uart_release(&port_uart_registry, port->id,
 						       selected_builder_id, connection->capability);
-		(void)restore_port_assignment(port->id, old_builder_id, old_connection);
+		(void)ef800_port_assignment_import_plugin_with_connection(&port_assignments,
+			port->id, old_plugin_id, old_connection);
 		if (old_builder_id != EF800_PORT_BUILDER_NONE) {
 			(void)ef800_port_uart_claim(&port_uart_registry, port->id,
 							     old_builder_id, old_connection);
@@ -2683,14 +2744,69 @@ static void activate_menu_entry(void)
 	if (active_menu == APPLICATION_MENU_MEASUREMENTS) {
 		if (menu_selection < measurement_port_count) {
 			selected_measurement_port = measurement_port_ids[menu_selection];
+			if (selected_measurement_has_submenu()) {
+				uint32_t plugin_id = ef800_port_assignment_get_plugin_id(&port_assignments,
+					selected_measurement_port);
+				const struct ef800_plugin_registry_entry *entry =
+					ef800_plugin_registry_find(&plugin_registry, plugin_id);
+				int session_result = entry != NULL ?
+					ef800_plugin_host_measurement_session_open(
+						&measurement_plugin_session, plugin_id,
+						&measurement_transports[selected_measurement_port - 1U].transport) : -ENODEV;
+				if (session_result != 0 || entry == NULL) {
+					display_line(6U, "Plugin unavailable");
+					return;
+				}
+			}
 			active_menu = APPLICATION_MENU_MEASUREMENT_ACTIONS;
 			menu_selection = 0U;
-			display_measurement_actions();
+			display_active_menu();
 		}
 		return;
 	}
 	if (active_menu == APPLICATION_MENU_MEASUREMENT_ACTIONS) {
 		int result;
+		if (selected_measurement_has_submenu()) {
+			struct ef800_measurement_display plugin_display;
+			if (ef800_plugin_host_measurement_session_render(
+				&measurement_plugin_session, &plugin_display) != 0) {
+				display_line(6U, "Plugin display unavailable");
+				return;
+			}
+			if (menu_selection == 0U) {
+				struct ef800_measurement_data data;
+				result = ef800_plugin_host_measurement_session_measure(
+					&measurement_plugin_session, &data);
+				if (result == 0) {
+					if (measurement_number == INT32_MAX) {
+						display_line(6U, "Measurement number exhausted");
+						return;
+					}
+					measurement_record.number = ++measurement_number;
+					measurement_record.data = data;
+					measurement_record.staff_height_mm = 0;
+					strncpy(measurement_record.code, measurement_code,
+						sizeof(measurement_record.code) - 1U);
+					measurement_record.code[sizeof(measurement_record.code) - 1U] = '\0';
+					measurement_pending = true;
+					active_menu = APPLICATION_MENU_MEASUREMENT_EDITOR;
+					start_measurement_editor();
+				} else {
+					display_line(6U, "Measurement failed");
+				}
+			} else {
+				bool consumed = false;
+				uint8_t key = (plugin_display.actions & EF800_MEASUREMENT_ACTION_UP) != 0U &&
+					menu_selection == 1U ? 'u' :
+					(plugin_display.actions & EF800_MEASUREMENT_ACTION_DOWN) != 0U &&
+					menu_selection == 1U ? 'd' : 'e';
+				result = ef800_plugin_host_measurement_session_key(
+					&measurement_plugin_session, key, &consumed);
+				display_line(6U, result == 0 && consumed ? "Device command sent" :
+					"Device command failed");
+			}
+			return;
+		}
 
 		switch (menu_selection) {
 		case 0U:
@@ -2825,6 +2941,18 @@ static bool handle_application_key(uint8_t key)
 			return_from_child_menu();
 		}
 		return true;
+	}
+	if (active_menu == APPLICATION_MENU_MEASUREMENT_ACTIONS &&
+		measurement_plugin_session.state == EF800_MEASUREMENT_SESSION_ACTIVE &&
+		key != '\r' && key != '\n') {
+		bool consumed = false;
+		int result = ef800_plugin_host_measurement_session_key(
+			&measurement_plugin_session, key, &consumed);
+		if (consumed) {
+			display_active_menu();
+			if (result != 0) display_line(6U, "Plugin action failed");
+			return true;
+		}
 	}
 	if (key == '\r' || key == '\n') {
 		activate_menu_entry();
@@ -3362,6 +3490,16 @@ SHELL_CMD_REGISTER(rtc, &rtc_commands, "EF800 RTC commands", NULL);
 
 static void handle_keyboard_event(uint32_t event)
 {
+	if (active_menu == APPLICATION_MENU_MEASUREMENT_ACTIONS &&
+		measurement_plugin_session.state == EF800_MEASUREMENT_SESSION_ACTIVE) {
+		/* Arrow events navigate the host-owned action list; activation remains host-owned. */
+		if ((event & KB_EVENT_ARROWUP) != 0U ||
+			(event & KB_EVENT_ARROWDOWN) != 0U ||
+			(event & KB_EVENT_ARROWRIGHT) != 0U ||
+			(event & KB_EVENT_ARROWLEFT) != 0U) {
+			/* Continue through the normal precedence path below. */
+		}
+	}
 	if ((event & KB_EVENT_OFF) != 0U) {
 		int ret = power_down.port == NULL ? -ENODEV :
 			gpio_pin_set_dt(&power_down, 1);
@@ -3568,6 +3706,10 @@ int main(void)
 				result = ef800_port_assignment_load_all(&port_assignments);
 				if (result != 0) {
 					LOG_WRN("Port assignments unavailable: %d", result);
+				}
+				result = reconcile_measurement_assignments();
+				if (result != 0) {
+					LOG_WRN("Measurement assignment reconciliation incomplete: %d", result);
 				}
 				/* Port 4 can be changed while MSC owns the volume, so its FAT
 				 * record may still contain the previous MSD assignment. NVS is

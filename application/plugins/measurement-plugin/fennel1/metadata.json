@@ -1,0 +1,10 @@
+{
+  "application_id": "65663830-302d-6170-702d-763100000001",
+  "interface_id": "65663830-302d-6d65-6173-2d7631000001",
+  "interface_version": 1,
+  "plugin_id": 3,
+  "name": "EF800 Fennel1",
+  "version": "1.0.0",
+  "required_services": ["65663830-302d-706f-7274-2d7631000001"],
+  "measurement_actions": ["measure"]
+}

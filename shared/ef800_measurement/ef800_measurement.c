@@ -1,7 +1,6 @@
 /* SPDX-License-Identifier: Apache-2.0 */
 
 #include "ef800_measurement.h"
-#include "ef800_device_plugin.h"
 
 #include <errno.h>
 #include <limits.h>
@@ -186,13 +185,6 @@ void ef800_fts3xx_default_serial_config(
 		.stop_bits = 1U,
 		.flow_control = EF800_MEASUREMENT_FLOW_NONE,
 	};
-}
-
-int ef800_measurement_serial_config_for_builder(
-	uint8_t builder_id, uint32_t connection,
-	struct ef800_measurement_serial_config *config)
-{
-	return ef800_device_plugin_serial_config(builder_id, connection, config);
 }
 
 int ef800_elta3_up(const struct ef800_measurement_transport *transport)

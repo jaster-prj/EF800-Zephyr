@@ -11,7 +11,7 @@
 #if EF800_PLUGIN_ID == 2u
 #define EF800_PLUGIN_NAME "EF800 ELTA3"
 #elif EF800_PLUGIN_ID == 3u
-#define EF800_PLUGIN_NAME "EF800 FTS3XX"
+#define EF800_PLUGIN_NAME "EF800 ELTA3"
 #else
 #error Unsupported EF800 measurement plugin ID
 #endif
@@ -44,6 +44,11 @@ struct ef800_wire_descriptor {
 static const struct ef800_plugin_metadata ef800_metadata = {
     {EF800_PLUGIN_METADATA_UUID_BYTES}, EF800_PLUGIN_METADATA_VERSION,
     sizeof(struct ef800_plugin_metadata), EF800_PLUGIN_HARDWARE_SERIAL,
+    EF800_MEASUREMENT_UI_API_VERSION, sizeof(struct ef800_measurement_api),
+    EF800_PLUGIN_ID == 2u ?
+        (EF800_MEASUREMENT_ACTION_MEASURE | EF800_MEASUREMENT_ACTION_UP |
+         EF800_MEASUREMENT_ACTION_DOWN | EF800_MEASUREMENT_ACTION_ENTER) :
+        EF800_MEASUREMENT_ACTION_MEASURE,
 };
 
 __attribute__((section(".rodata.pm_descriptor"), used))
@@ -52,7 +57,7 @@ const struct ef800_wire_descriptor pm_plugin_get_descriptor = {
     {EF800_APPLICATION_UUID_BYTES},
     {EF800_MEASUREMENT_INTERFACE_UUID_BYTES},
     EF800_MEASUREMENT_INTERFACE_VERSION, EF800_PLUGIN_ID,
-    1u, 80u, 96u, sizeof(EF800_PLUGIN_NAME),
+    1u, 88u, 96u, sizeof(EF800_PLUGIN_NAME),
     96u + sizeof(EF800_PLUGIN_NAME), sizeof(EF800_PLUGIN_VERSION),
     (uint32_t)(uintptr_t)pm_plugin_create,
     (uint32_t)(uintptr_t)pm_plugin_destroy,

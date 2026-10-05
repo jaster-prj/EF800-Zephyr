@@ -490,13 +490,11 @@ ZTEST(keyboard_protocol, test_port_descriptors_and_compatibility)
 	const struct ef800_port_descriptor *bluenrg_port = ef800_port_get(5U);
 	const struct ef800_port_device_descriptor *debug =
 		ef800_port_device_get(EF800_PORT_BUILDER_DEBUG);
-	const struct ef800_port_device_descriptor *elta3 =
-		ef800_port_device_get(EF800_PORT_BUILDER_ELTA3);
 	const struct ef800_port_device_descriptor *msd =
 		ef800_port_device_get(EF800_PORT_BUILDER_MSD);
 
 	zassert_equal(ef800_port_count(), EF800_PORT_COUNT, NULL);
-	zassert_equal(ef800_port_device_count(), EF800_PORT_DEVICE_COUNT, NULL);
+	zassert_equal(ef800_port_device_count(), 3U, NULL);
 	zassert_not_null(rs232, NULL);
 	zassert_not_null(serial, NULL);
 	zassert_not_null(multifunction, NULL);
@@ -506,7 +504,7 @@ ZTEST(keyboard_protocol, test_port_descriptors_and_compatibility)
 	zassert_true((multifunction->capabilities & EF800_PORT_CAP_PARALLEL) != 0U, NULL);
 	zassert_false((multifunction->capabilities & EF800_PORT_CAP_SERIAL_FLOW_CONTROL) != 0U, NULL);
 	zassert_true(ef800_port_device_is_compatible(rs232, debug), NULL);
-	zassert_true(ef800_port_device_is_compatible(serial, elta3), NULL);
+	zassert_is_null(ef800_port_device_get(EF800_PORT_BUILDER_ELTA3), NULL);
 	zassert_false(ef800_port_device_is_compatible(serial, msd), NULL);
 	zassert_true(ef800_port_device_is_compatible(usb, debug), NULL);
 	zassert_true(ef800_port_device_is_compatible(usb, msd), NULL);
@@ -627,13 +625,7 @@ ZTEST(keyboard_protocol, test_disabled_assignment_uses_runtime_model)
 	zassert_ok(ef800_port_assignment_init(&service, &storage), NULL);
 	zassert_equal(ef800_port_assignment_set_with_connection(&service, 1U,
 									 EF800_PORT_BUILDER_ELTA3,
-									 EF800_PORT_CONNECTION_SERIAL), -ENOTSUP, NULL);
-	zassert_ok(ef800_port_assignment_import_with_connection(&service, 1U,
-									 EF800_PORT_BUILDER_ELTA3,
-									 EF800_PORT_CONNECTION_SERIAL), NULL);
-	zassert_true(ef800_port_assignment_is_assigned(&service, 1U), NULL);
-	zassert_equal(ef800_port_assignment_get_builder(&service, 1U),
-				      EF800_PORT_BUILDER_ELTA3, NULL);
+									 EF800_PORT_CONNECTION_SERIAL), -EINVAL, NULL);
 }
 
 ZTEST(keyboard_protocol, test_disabled_port_assignment_storage)
@@ -879,19 +871,9 @@ ZTEST(keyboard_protocol, test_port_uart_routes_and_ownership)
 	zassert_ok(ef800_port_uart_can_claim(&registry, 1U,
 						 EF800_PORT_BUILDER_DEBUG,
 						 EF800_PORT_CONNECTION_SERIAL), NULL);
-	zassert_ok(ef800_port_uart_can_claim(&registry, 2U,
-							 EF800_PORT_BUILDER_ELTA3,
-							 EF800_PORT_CONNECTION_SERIAL), NULL);
-	zassert_ok(ef800_port_uart_can_claim(&registry, 2U,
-						 EF800_PORT_BUILDER_ELTA3,
-						 EF800_PORT_CONNECTION_SERIAL_FLOW_CONTROL), NULL);
-	zassert_ok(ef800_port_uart_claim(&registry, 2U,
-						 EF800_PORT_BUILDER_ELTA3,
-						 EF800_PORT_CONNECTION_SERIAL_FLOW_CONTROL), NULL);
-	zassert_true(ef800_port_uart_is_claimed(&registry, 2U), NULL);
-	zassert_equal(ef800_port_uart_can_claim(&registry, 3U,
-						       EF800_PORT_BUILDER_FTS3XX,
-						       EF800_PORT_CONNECTION_SERIAL), 0, NULL);
+	zassert_equal(ef800_port_uart_can_claim(&registry, 2U,
+								 EF800_PORT_BUILDER_ELTA3,
+								 EF800_PORT_CONNECTION_SERIAL), -EINVAL, NULL);
 	zassert_equal(ef800_port_uart_can_claim(&registry, 2U,
 							       EF800_PORT_BUILDER_MSD,
 							       EF800_PORT_CONNECTION_SERIAL), -EINVAL, NULL);
@@ -902,15 +884,11 @@ ZTEST(keyboard_protocol, test_port_uart_routes_and_ownership)
 								 EF800_PORT_UART1), NULL);
 		zassert_equal(ef800_port_uart_can_claim(&console_registry, 2U,
 								 EF800_PORT_BUILDER_ELTA3,
-								 EF800_PORT_CONNECTION_SERIAL), -EBUSY, NULL);
+								 EF800_PORT_CONNECTION_SERIAL), -EINVAL, NULL);
 	}
 	zassert_equal(ef800_port_uart_release(&registry, 2U,
-						   EF800_PORT_BUILDER_DEBUG,
-						   EF800_PORT_CONNECTION_SERIAL_FLOW_CONTROL), -EINVAL, NULL);
-	zassert_ok(ef800_port_uart_release(&registry, 2U,
-						 EF800_PORT_BUILDER_ELTA3,
-						 EF800_PORT_CONNECTION_SERIAL_FLOW_CONTROL), NULL);
-	zassert_false(ef800_port_uart_is_claimed(&registry, 2U), NULL);
+									 EF800_PORT_BUILDER_DEBUG,
+									 EF800_PORT_CONNECTION_SERIAL_FLOW_CONTROL), 0, NULL);
 	zassert_ok(ef800_port_uart_claim(&registry, 4U,
 						 EF800_PORT_BUILDER_MSD,
 						 EF800_PORT_CONNECTION_USB_MSD), NULL);
@@ -977,32 +955,24 @@ ZTEST(keyboard_protocol, test_boot_metadata_assignments_and_console_fallback)
 	ef800_boot_metadata_init(&metadata);
 	zassert_equal(sizeof(metadata), EF800_BOOT_METADATA_SIZE, NULL);
 	zassert_true(ef800_boot_metadata_valid(&metadata), NULL);
-	zassert_equal(ef800_port_assignment_builder(metadata.port_assignments, 5U),
+	zassert_equal(ef800_boot_metadata_plugin_id(&metadata, 5U),
 			      EF800_PORT_BUILDER_BLUENRG, NULL);
-	zassert_equal(ef800_port_assignment_connection(metadata.port_assignments, 5U),
+	zassert_equal(ef800_boot_metadata_connection(&metadata, 5U),
 			      EF800_PORT_CONNECTION_SPI, NULL);
 	zassert_equal(ef800_console_port_select(&metadata, false),
 			      EF800_CONSOLE_FALLBACK_PORT, NULL);
 
-	zassert_ok(ef800_port_assignment_set_record(&metadata.port_assignments, 1U,
-								 EF800_PORT_BUILDER_DEBUG,
-								 EF800_PORT_CONNECTION_SERIAL), NULL);
-	zassert_ok(ef800_port_assignment_set_record(&metadata.port_assignments, 2U,
-								 EF800_PORT_BUILDER_ELTA3,
-								 EF800_PORT_CONNECTION_SERIAL_FLOW_CONTROL), NULL);
-	zassert_ok(ef800_port_assignment_set_record(&metadata.port_assignments, 3U,
-								 EF800_PORT_BUILDER_FTS3XX,
-								 EF800_PORT_CONNECTION_SERIAL), NULL);
-	zassert_ok(ef800_port_assignment_set_record(&metadata.port_assignments, 4U,
-								 EF800_PORT_BUILDER_MSD,
-								 EF800_PORT_CONNECTION_USB_MSD), NULL);
-	zassert_true(ef800_port_assignments_valid(metadata.port_assignments), NULL);
-	zassert_equal(ef800_port_assignment_builder(metadata.port_assignments, 2U),
-			      EF800_PORT_BUILDER_ELTA3, NULL);
-	zassert_equal(ef800_port_assignment_connection(metadata.port_assignments, 2U),
-			      EF800_PORT_CONNECTION_SERIAL_FLOW_CONTROL, NULL);
+	zassert_ok(ef800_boot_metadata_set_assignment(&metadata, 1U,
+									 EF800_PORT_BUILDER_DEBUG,
+									 EF800_PORT_CONNECTION_SERIAL), NULL);
+	zassert_ok(ef800_boot_metadata_set_assignment(&metadata, 4U,
+									 EF800_PORT_BUILDER_MSD,
+									 EF800_PORT_CONNECTION_USB_MSD), NULL);
+	zassert_ok(ef800_boot_metadata_set_assignment(&metadata, 5U,
+									 EF800_PORT_BUILDER_BLUENRG,
+									 EF800_PORT_CONNECTION_SPI), NULL);
 	zassert_equal(ef800_console_port_select(&metadata, false),
-			      EF800_CONSOLE_NO_TARGET, NULL);
+			      EF800_CONSOLE_FALLBACK_PORT, NULL);
 	zassert_ok(ef800_boot_metadata_set_console(&metadata, 1U), NULL);
 	zassert_equal(ef800_console_port_select(&metadata, false), 1U, NULL);
 	metadata.crc32 = ef800_boot_metadata_crc(&metadata);
@@ -1019,18 +989,14 @@ ZTEST(keyboard_protocol, test_boot_metadata_assignments_and_console_fallback)
 	zassert_ok(ef800_boot_metadata_set_console(&metadata, 1U), NULL);
 	metadata.crc32 = ef800_boot_metadata_crc(&metadata);
 	zassert_true(ef800_boot_metadata_valid(&metadata), NULL);
-	zassert_equal(ef800_port_assignment_set_record(&metadata.port_assignments, 3U,
-								 EF800_PORT_BUILDER_ELTA3,
-								 EF800_PORT_CONNECTION_PARALLEL), -EINVAL, NULL);
-	metadata.port_assignments |= 0x80ULL;
+	metadata.ports[1].connection = EF800_PORT_CONNECTION_PARALLEL;
 	zassert_false(ef800_boot_metadata_valid(&metadata), NULL);
-	metadata.port_assignments &= ~0x80ULL;
-	metadata.port_assignments |= 1ULL << 40;
-	zassert_false(ef800_boot_metadata_valid(&metadata), NULL);
-	metadata.port_assignments &= ~(1ULL << 40);
-	zassert_ok(ef800_port_assignment_set_record(&metadata.port_assignments, 2U,
-								 EF800_PORT_BUILDER_DEBUG,
-								 EF800_PORT_CONNECTION_SERIAL), NULL);
+	metadata.ports[1].connection = EF800_PORT_CONNECTION_NONE;
+	metadata.ports[1].plugin_id = 0x12345678U;
+	metadata.ports[1].connection = EF800_PORT_CONNECTION_SERIAL;
+	metadata.crc32 = ef800_boot_metadata_crc(&metadata);
+	zassert_true(ef800_boot_metadata_valid(&metadata), NULL);
+	metadata.ports[1].connection = 99U;
 	metadata.crc32 = ef800_boot_metadata_crc(&metadata);
 	zassert_false(ef800_boot_metadata_valid(&metadata), NULL);
 }
