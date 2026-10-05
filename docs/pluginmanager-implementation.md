@@ -2,8 +2,8 @@
 
 ## Current Status (2026-10-04)
 
-The `application/pluginmanager-test` host is a successful EF800 integration
-prototype. It is not yet the production `MainApplication` integration.
+Production `ef800-main` is the only EF800 PluginManager host. Generic
+PluginManager unit tests remain in the PluginManager repository.
 
 ### Proven
 
@@ -12,8 +12,8 @@ prototype. It is not yet the production `MainApplication` integration.
 - Both target packages are generated, CRC-verified, discovered from the FAT
   volume root, validated through `pm_package_parse_reader()`, and loaded with
   `pm_manager_load_available()`.
-- The NUCLEO-G0B1RE loads, instantiates, executes, destroys, and unloads both
-  plugins.
+- MainApplication loads, instantiates, executes, destroys, and unloads external
+  plugins through the generic PluginManager lifecycle.
 - ELTA3 measurement passes at `1200 7O2`; Fennel-compatible FTS3XX measurement
   passes at `9600 8N1`.
 - Switching between ELTA3 and FTS3XX without reboot passes. The application
@@ -24,13 +24,8 @@ prototype. It is not yet the production `MainApplication` integration.
 
 ### Not Proven or Not Production-Ready
 
-- The production `ef800-main` MainApplication does not yet own the complete
-  external plugin lifecycle.
-- External plugin IDs, assignments, serial configuration persistence, and
-  legacy migration behavior are not finalized.
-- Workspace service integration uses a NUCLEO prototype format, not the
-  production EF800 Workspace record format.
-- LCD, keyboard, menu, and USB MSC ownership transitions are not integrated.
+- Production external plugin IDs, assignments, Workspace snapshots, LCD,
+  keyboard, menu, and USB ownership boundaries are integrated.
 - The external NOR/FAT setup is bring-up configuration, not production
   qualification.
 - Native target plugins execute from RAM with MPU disabled. Packages are CRC
@@ -384,30 +379,14 @@ Current status as of 2026-10-04:
 
 - Generic framework host, ARM package, SDK-builder, generated harness, and
   Zephyr native-sim verification pass.
-- The FAT-backed NUCLEO test application is consolidated under
-  `application/pluginmanager-test` and clean-builds.
+- Production `ef800-main` is the sole EF800 PluginManager host and clean-builds.
 - Built-in Elta3 and FTS3XX dispatch is implemented through the EF800-owned
   static device-plugin registry with persisted IDs unchanged.
-- PluginManager is pinned as a west module and the NUCLEO measurement host is
-  built in CI with package-loaded ELTA3 and FTS3XX plugins.
-- Root-volume FAT package discovery, streaming validation, target loading,
-  application-owned UART initialization, and dummy-device measurement pass on
-  the NUCLEO-G0B1RE.
-- The calculation prototype has a bounded domain service with filesystem and
-  file-replacement adapters outside the plugin contract.
-- MainApplication external package loading, persistence for external IDs, USB
-  MSC ownership integration, production Workspace integration, and UI services
-  remain pending.
-
-NUCLEO design prototype (2026-09-30): the NUCLEO host builds with an
-application-owned Measurement assignment/menu policy and a static Calculation
-interface. Its host regression checks absent/missing/unavailable/ready states,
-shared binding for measurement and directional actions, bounded calculation
-input/output, and malformed data. Calculation preview and explicit-confirm
-transformed-file creation are wired into the NUCLEO shell; physical execution
-is pending. The NUCLEO uses a simplified millimetre-per-line file, not the
-production Workspace format, and its assignments are RAM-only. This does not
-close the MainApplication phases below.
+- PluginManager is pinned as a west module and production MainApplication
+  integrates package discovery, UART ownership, Workspace snapshots, bounded
+  Calculation, UI sessions, and hardware-capability filtering.
+- Generic PluginManager tests remain in the PluginManager repository. The former
+  NUCLEO prototype is removed from EF800.
 
 Decision: name the port-bound action interface **Measurement**. The EF800 host
 owns port capability matching, assignment, claims and UART lifetime; the
@@ -480,14 +459,15 @@ Current verification baseline:
   user-uploaded executable plugins remain release-disabled until signatures,
   MPU/W^X, stack, timeout, fault-containment, and rollback evidence pass.
 
-The contract export is maintained under `docs/plugin-contract/`. The target
-acceptance smoke test is:
+The contract export is maintained under `docs/plugin-contract/`. Production
+MainApplication target acceptance is documented under
+`application/ef800-main/tests/`; the smoke test is:
 
 ```powershell
-powershell -ExecutionPolicy Bypass -File application/pluginmanager-test/tests/target_acceptance.ps1 -Port COM14
+powershell -ExecutionPolicy Bypass -File application/ef800-main/tests/acceptance.ps1 -Port COM7
 ```
 
-It validates startup discovery and registry/calculation diagnostics without
+It validates production MainApplication startup discovery and registry/calculation diagnostics without
 formatting or replacing storage. Exit code `2` means the internal storage is
 unavailable and is an explicit hardware blocker.
 

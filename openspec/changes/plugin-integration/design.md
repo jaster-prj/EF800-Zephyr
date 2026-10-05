@@ -1,6 +1,9 @@
 ## Context
 
-EF800 has a working PluginManager integration prototype under `application/pluginmanager-test`. It validates packages, loads ARM plugin images, supports a Port service, and demonstrates Measurement and Calculation interfaces. Production `ef800-main` still contains fixed menu arrays, a host-owned `active_menu` state machine, direct T6963 rendering, and direct logical-key handling in `main.c`.
+Production `ef800-main` owns the PluginManager integration, package discovery,
+port policy, Workspace policy, UI, and keyboard session. Generic PluginManager
+tests remain in the PluginManager repository; the former NUCLEO prototype is
+not part of the EF800 product test surface.
 
 The device already separates USB MSD ownership into the BackupApplication. Changing USB selection restarts the application, so a restart is an acceptable and intentional synchronization boundary. MainApplication only needs to discover plugins during a boot where internal storage is reachable. Hot replacement and filesystem monitoring are not part of this design.
 

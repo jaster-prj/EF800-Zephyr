@@ -59,8 +59,9 @@ Plugin integration checkpoint:
 - MainApplication resolves measurement-capable ports, serial defaults, and
   measurement dispatch through the registry while retaining existing UART
   ownership and protocol implementations.
-- The external PluginManager FAT-backed NUCLEO test clean-builds and its generic
-  framework host, ARM, SDK, and native-sim tests pass.
+- Production MainApplication owns PluginManager discovery, package lifecycle,
+  versioned plugin-ID persistence, Workspace snapshots, Calculation invocation,
+  UI sessions, and hardware-capability filtering.
 - MainApplication performs startup-only package discovery when internal storage
   is reachable and uses the generic PluginManager opaque descriptor extension
   for EF800 metadata. PluginManager does not interpret EF800 hardware
@@ -69,18 +70,10 @@ Plugin integration checkpoint:
   filtered by EF800 hardware capabilities before port selection.
 - Calculation plugins receive bounded production Workspace snapshots and have
   explicit preview/confirmed append paths without filesystem handles.
-- The NUCLEO host continues to build the ELTA3 and FTS3XX packages from
-  `application/plugins/measurement-plugin` in CI.
- - NUCLEO host additionally clean-builds a RAM-only Measurement assignment/menu
-   prototype and a static bounded Calculation plugin. Native host policy tests
-   pass. The NUCLEO STM32G0B1 is identified as `0x467` and the updated image is
-   flashed and verified. COM14 is the console and COM7 is the instrument bridge.
-   Root-volume FAT mounting, package reader validation, package loading, plugin
-   lifecycle, bounded calculation, and ELTA3/FTS3XX dummy-device measurements
-   have now passed. The NOR/FAT setup remains bring-up-only and is not production
-   qualified. The observed JEDEC ID is `ef 40 16` / 8 MiB and does not match the
-   supplied W25Q128JV 16 MiB datasheet. See
-   `application/pluginmanager-test/TEST_ENVIRONMENT.md`.
+- Production MainApplication acceptance assets are under
+  `application/ef800-main/tests/`. The former NUCLEO PluginManager prototype
+  has been removed; generic PluginManager tests remain in the PluginManager
+  repository.
 
 ## Completed Migration
 

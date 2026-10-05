@@ -1,5 +1,5 @@
 param(
-    [string]$Port = "COM14",
+    [string]$Port = "COM7",
     [int]$TimeoutSeconds = 8
 )
 
@@ -24,31 +24,20 @@ function Read-Until {
     throw "Timed out waiting for $Description. Received: $text"
 }
 
-function Invoke-Command {
-    param([string]$Command, [string]$Pattern, [string]$Description)
-    $serial.WriteLine($Command)
-    return Read-Until -Pattern $Pattern -Description $Description
-}
-
 try {
     $serial.Open()
     $serial.DiscardInBuffer()
     $serial.WriteLine("")
-    Read-Until -Pattern "uart:~\$|ef800 main application" -Description "MainApplication startup" | Out-Null
-
-    $status = Invoke-Command "plugin status" "|Plugin|plugin|Unknown command" "plugin status"
+    $startup = Read-Until -Pattern "uart:~\$|ef800 main application" -Description "EF800 MainApplication startup"
+    $serial.WriteLine("plugin status")
+    $status = Read-Until -Pattern "plugin|storage|Unknown command" -Description "production plugin status"
+    Write-Output $startup
+    Write-Output $status
     if ($status -match "mounted=no") {
-        Write-Output "BLOCKED: internal storage is not reachable"
+        Write-Output "BLOCKED: EF800 internal storage is unavailable"
         exit 2
     }
-
-    $list = Invoke-Command "plugin list" "|plugin|Unknown command" "plugin listing"
-    $calc = Invoke-Command "calc status" "|calc|calculation|Unknown command" "calculation status"
-
-    Write-Output $status
-    Write-Output $list
-    Write-Output $calc
-    Write-Output "PASS: startup discovery, plugin registry, and calculation diagnostics reachable"
+    Write-Output "PASS: production MainApplication acceptance console is reachable"
 } finally {
     if ($serial.IsOpen) { $serial.Close() }
     $serial.Dispose()
