@@ -42,11 +42,11 @@
 
 ## 6. SDK, Documentation, and Verification
 
-- [ ] 6.1 Publish the EF800 contract export, ABI limits, target metadata, and Measurement/Calculation/UI examples for plugin developers.
+- [x] 6.1 Publish the EF800 contract export, ABI limits, target metadata, and Measurement/Calculation/UI examples for plugin developers.
 - [x] 6.2 Add native tests for registry policy, startup storage states, menu visibility, plugin lifecycle, and bounded services.
-- [ ] 6.3 Add target acceptance coverage for package discovery, Measurement assignment/readiness, Calculation invocation, plugin UI, and restart-based USB transitions.
-- [ ] 6.4 Run all four firmware builds and the native suite, then verify image sizes, linked addresses, and generated DeviceTree outputs.
-- [ ] 6.5 Update `docs/pluginmanager-implementation.md`, `docs/migration-status.md`, and relevant testing documentation when the implementation gates close.
+- [x] 6.3 Add target acceptance coverage for package discovery, Measurement assignment/readiness, Calculation invocation, plugin UI, and restart-based USB transitions.
+- [x] 6.4 Run all four firmware builds and the native suite, then verify image sizes, linked addresses, and generated DeviceTree outputs.
+- [x] 6.5 Update `docs/pluginmanager-implementation.md`, `docs/migration-status.md`, and relevant testing documentation when the implementation gates close.
 
 ## 7. Deferred Security Gate
 

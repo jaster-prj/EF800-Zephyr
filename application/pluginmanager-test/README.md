@@ -114,6 +114,16 @@ The calculation hardware smoke test is:
 powershell -ExecutionPolicy Bypass -File tests/calculation_acceptance.ps1 -Port COM14
 ```
 
+The target acceptance smoke test checks startup discovery, plugin registry
+diagnostics, and Calculation availability without modifying storage:
+
+```powershell
+powershell -ExecutionPolicy Bypass -File tests/target_acceptance.ps1 -Port COM14
+```
+
+Exit code `2` means the internal storage is unavailable and is an explicit
+hardware blocker. The script never formats, replaces, or rescans storage.
+
 The dummy-device measurement test uses the NUCLEO shell on `COM14` and the
 device simulator on `COM7`. Start the repository simulator in a separate
 terminal first:

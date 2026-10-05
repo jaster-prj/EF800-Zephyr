@@ -466,6 +466,31 @@ bits; external IDs require a separate persistence design.
 
 ## Verification Gates
 
+Current verification baseline:
+
+- MainApplication, BackupApplication, Bootloader, and keyboard-controller
+  pristine builds pass.
+- `scripts/verify-images.sh` passes the fixed flash layout:
+  bootloader `0x08000000`, backup `0x08010000`, main `0x08030000`, keyboard
+  `0x08000000` on the L431 target.
+- Native suite: 46/46 test cases passed.
+- Generic PluginManager host tests: 3/3 tests passed.
+- EF800 contract export: `docs/plugin-contract/`.
+- Security policy: `docs/plugin-contract/security-policy.md`. Arbitrary
+  user-uploaded executable plugins remain release-disabled until signatures,
+  MPU/W^X, stack, timeout, fault-containment, and rollback evidence pass.
+
+The contract export is maintained under `docs/plugin-contract/`. The target
+acceptance smoke test is:
+
+```powershell
+powershell -ExecutionPolicy Bypass -File application/pluginmanager-test/tests/target_acceptance.ps1 -Port COM14
+```
+
+It validates startup discovery and registry/calculation diagnostics without
+formatting or replacing storage. Exit code `2` means the internal storage is
+unavailable and is an explicit hardware blocker.
+
 Before considering the integration complete:
 
 - Elta3 and FTS3XX native protocol tests pass unchanged.

@@ -14,10 +14,15 @@ target, but the firmware is not a production release.
 Latest software baseline:
 
 - Zephyr `v4.4.1`, SDK `1.0.1`, reusable `EF800_Devcontainer`.
-- Native Twister suite: **37/37 test cases passed**.
+- Native Twister suite: **46/46 test cases passed**.
 - Bootloader, BackupApplication, MainApplication, and keyboard-controller
   builds pass.
 - `scripts/verify-images.sh` passes the fixed image layout.
+- Plugin integration tasks are at **30/33**: contract, discovery, Measurement,
+  Calculation, bounded UI, keyboard session, and acceptance artifacts are in
+  place. Production plugin security remains deferred.
+- Plugin security policy is documented in `docs/plugin-contract/security-policy.md`.
+  Unsigned arbitrary executable plugins remain disabled for release.
 - MainApplication is linked at `0x08030000` and the keyboard image at
   `0x08000000` on the L431 controller.
 
@@ -56,9 +61,16 @@ Plugin integration checkpoint:
   ownership and protocol implementations.
 - The external PluginManager FAT-backed NUCLEO test clean-builds and its generic
   framework host, ARM, SDK, and native-sim tests pass.
-- External package loading is not enabled in MainApplication. PluginManager is
-  pinned in the EF800 west manifest, and the NUCLEO host builds the ELTA3 and
-  FTS3XX packages from `application/plugins/measurement-plugin` in CI.
+- MainApplication performs startup-only package discovery when internal storage
+  is reachable and uses the generic PluginManager opaque descriptor extension
+  for EF800 metadata. PluginManager does not interpret EF800 hardware
+  requirements.
+- External Measurement assignments use version-2 full plugin IDs and are
+  filtered by EF800 hardware capabilities before port selection.
+- Calculation plugins receive bounded production Workspace snapshots and have
+  explicit preview/confirmed append paths without filesystem handles.
+- The NUCLEO host continues to build the ELTA3 and FTS3XX packages from
+  `application/plugins/measurement-plugin` in CI.
  - NUCLEO host additionally clean-builds a RAM-only Measurement assignment/menu
    prototype and a static bounded Calculation plugin. Native host policy tests
    pass. The NUCLEO STM32G0B1 is identified as `0x467` and the updated image is
