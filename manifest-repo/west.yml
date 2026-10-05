@@ -16,7 +16,7 @@ manifest:
       import: true
     - name: PluginManager
       remote: jaster-prj
-      revision: 2490ac9922bdd49ea9ec8b2f9564a25bc29db459
+      revision: 244a8af344e83c559868dc2f9bca8bbabfe0fcaa
       path: modules/lib/PluginManager
 
   self:
