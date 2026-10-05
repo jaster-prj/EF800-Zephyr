@@ -42,6 +42,20 @@ jobs:
           /opt/venv/bin/west twister -T application/tests \
             -p native_sim --inline-logs
 
+      - name: Test measurement plugin SDK
+        working-directory: ./zephyr_workspace/application/application/plugins/measurement-plugin
+        run: |
+          cmake -S . -B build/ci-host -G Ninja
+          cmake --build build/ci-host
+          ctest --test-dir build/ci-host --output-on-failure
+
+      - name: Build PluginManager NUCLEO host
+        working-directory: ./zephyr_workspace
+        run: |
+          /opt/venv/bin/west build -p always -b nucleo_g0b1re \
+            application/application/pluginmanager-test \
+            --build-dir application/build/pluginmanager-test
+
       - name: Build keyboard controller
         working-directory: ./zephyr_workspace
         run: |
@@ -90,6 +104,9 @@ jobs:
           cp application/build/ef800-backup/zephyr/zephyr.bin application/artifacts/ef800-backup.bin
           cp application/build/ef800-main/zephyr/zephyr.bin application/artifacts/ef800-main.bin
           cp application/build/ef800-keyboard/zephyr/zephyr.bin application/artifacts/ef800-keyboard.bin
+          cp application/build/pluginmanager-test/zephyr/zephyr.bin application/artifacts/pluginmanager-nucleo.bin
+          cp application/build/pluginmanager-test/measurement-plugins/elta3_plugin.pmp application/artifacts/elta3_plugin.pmp
+          cp application/build/pluginmanager-test/measurement-plugins/fts3xx_plugin.pmp application/artifacts/fts3xx_plugin.pmp
 
       - name: Publish images
         uses: actions/upload-artifact@v4

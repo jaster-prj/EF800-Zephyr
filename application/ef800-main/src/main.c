@@ -32,6 +32,7 @@
 #include "ef800_main_usb_msc.h"
 #include "ef800_storage_owner.h"
 #include "ef800_measurement_zephyr.h"
+#include "ef800_device_plugin.h"
 #include "ef800_t6963.h"
 #include "ef800_workspace.h"
 #include "keyboard_host.h"
@@ -419,8 +420,7 @@ static int claim_loaded_port_assignments(void)
 			}
 			continue;
 		}
-		if (builder_id == EF800_PORT_BUILDER_ELTA3 ||
-		    builder_id == EF800_PORT_BUILDER_FTS3XX) {
+		if (ef800_device_plugin_find(builder_id) != NULL) {
 			struct ef800_measurement_serial_config config;
 			enum ef800_legacy_serial_kind kind = builder_id ==
 				EF800_PORT_BUILDER_ELTA3 ? EF800_LEGACY_SERIAL_ELTA3 :
@@ -1541,8 +1541,7 @@ static int load_measurement_ports(void)
 	for (uint8_t port_id = 1U; port_id <= EF800_PORT_COUNT; ++port_id) {
 		uint8_t builder = ef800_port_assignment_get_builder(&port_assignments, port_id);
 
-		if ((builder == EF800_PORT_BUILDER_ELTA3 ||
-		     builder == EF800_PORT_BUILDER_FTS3XX) &&
+		if (ef800_device_plugin_find(builder) != NULL &&
 			measurement_transports[port_id - 1U].uart != NULL) {
 			measurement_port_ids[measurement_port_count++] = port_id;
 		}
@@ -1638,17 +1637,9 @@ static int trigger_measurement(bool fixed)
 	struct ef800_measurement_data data;
 	int result;
 
-	if (builder == EF800_PORT_BUILDER_ELTA3) {
-		result = ef800_elta3_measure(
-			&measurement_transports[selected_measurement_port - 1U].transport,
-			&data);
-	} else if (builder == EF800_PORT_BUILDER_FTS3XX) {
-		result = ef800_fts3xx_measure(
-			&measurement_transports[selected_measurement_port - 1U].transport,
-			&data);
-	} else {
-		return -EINVAL;
-	}
+	result = ef800_device_plugin_measure(builder,
+		&measurement_transports[selected_measurement_port - 1U].transport,
+		&data);
 	if (result != 0) {
 		return result;
 	}

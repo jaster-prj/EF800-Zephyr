@@ -1,0 +1,61 @@
+/ {
+    chosen {
+        zephyr,console = &usart2;
+        zephyr,shell-uart = &usart2;
+    };
+
+    aliases {
+        plugin-flash = &plugin_flash;
+        plugin-uart = &arduino_serial;
+    };
+};
+
+&arduino_serial {
+    current-speed = <9600>;
+    status = "okay";
+};
+
+&usart2 {
+    current-speed = <115200>;
+    status = "okay";
+};
+
+&arduino_spi {
+    status = "okay";
+    cs-gpios = <&arduino_header ARDUINO_HEADER_R3_D10 GPIO_ACTIVE_LOW>;
+
+    plugin_flash: flash@0 {
+        compatible = "jedec,spi-nor";
+        reg = <0>;
+        spi-max-frequency = <24000000>;
+        size = <DT_SIZE_M(64)>;
+        jedec-id = [ef 40 16];
+        reset-gpios = <&arduino_header ARDUINO_HEADER_R3_D9 GPIO_ACTIVE_LOW>;
+        wp-gpios = <&arduino_header ARDUINO_HEADER_R3_D8 GPIO_ACTIVE_LOW>;
+        status = "okay";
+
+        partitions {
+            compatible = "fixed-partitions";
+            #address-cells = <1>;
+            #size-cells = <1>;
+
+            plugin_storage_partition: partition@0 {
+                label = "plugin-storage";
+                reg = <0x00000000 DT_SIZE_M(8)>;
+            };
+        };
+    };
+};
+
+/ {
+    plugin_disk: plugin_disk {
+        compatible = "zephyr,flash-disk";
+        partition = <&plugin_storage_partition>;
+        disk-name = "PM";
+        /* Existing FAT BPB uses 4096-byte logical sectors; do not reformat. */
+        sector-size = <4096>;
+        /* The Zephyr NOR driver reports a 64 KiB erase page for this part. */
+        cache-size = <65536>;
+        status = "okay";
+    };
+};

@@ -5,6 +5,8 @@ manifest:
   remotes:
     - name: upstream
       url-base: https://github.com/zephyrproject-rtos
+    - name: jaster-prj
+      url-base: https://github.com/jaster-prj
 
   projects:
     - name: zephyr
@@ -12,6 +14,10 @@ manifest:
       revision: v4.4.1
       west-commands: scripts/west-commands.yml
       import: true
+    - name: PluginManager
+      remote: jaster-prj
+      revision: 2490ac9922bdd49ea9ec8b2f9564a25bc29db459
+      path: modules/lib/PluginManager
 
   self:
     path: application/manifest-repo

@@ -14,7 +14,7 @@ target, but the firmware is not a production release.
 Latest software baseline:
 
 - Zephyr `v4.4.1`, SDK `1.0.1`, reusable `EF800_Devcontainer`.
-- Native Twister suite: **31/31 test cases passed**.
+- Native Twister suite: **37/37 test cases passed**.
 - Bootloader, BackupApplication, MainApplication, and keyboard-controller
   builds pass.
 - `scripts/verify-images.sh` passes the fixed image layout.
@@ -46,6 +46,29 @@ Down  E0 50    Right E0 4D
 ```
 
 The existing EF800 release framing remains `E0 F0 <code>`.
+
+Plugin integration checkpoint:
+
+- Elta3 and FTS3XX are registered through the EF800 static device-plugin
+  registry using the stable persisted builder IDs `2` and `3`.
+- MainApplication resolves measurement-capable ports, serial defaults, and
+  measurement dispatch through the registry while retaining existing UART
+  ownership and protocol implementations.
+- The external PluginManager FAT-backed NUCLEO test clean-builds and its generic
+  framework host, ARM, SDK, and native-sim tests pass.
+- External package loading is not enabled in MainApplication. PluginManager is
+  pinned in the EF800 west manifest, and the NUCLEO host builds the ELTA3 and
+  FTS3XX packages from `application/plugins/measurement-plugin` in CI.
+ - NUCLEO host additionally clean-builds a RAM-only Measurement assignment/menu
+   prototype and a static bounded Calculation plugin. Native host policy tests
+   pass. The NUCLEO STM32G0B1 is identified as `0x467` and the updated image is
+   flashed and verified. COM14 is the console and COM7 is the instrument bridge.
+   Root-volume FAT mounting, package reader validation, package loading, plugin
+   lifecycle, bounded calculation, and ELTA3/FTS3XX dummy-device measurements
+   have now passed. The NOR/FAT setup remains bring-up-only and is not production
+   qualified. The observed JEDEC ID is `ef 40 16` / 8 MiB and does not match the
+   supplied W25Q128JV 16 MiB datasheet. See
+   `application/pluginmanager-test/TEST_ENVIRONMENT.md`.
 
 ## Completed Migration
 

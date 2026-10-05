@@ -1,6 +1,7 @@
 /* SPDX-License-Identifier: Apache-2.0 */
 
 #include "ef800_measurement.h"
+#include "ef800_device_plugin.h"
 
 #include <errno.h>
 #include <limits.h>
@@ -191,21 +192,7 @@ int ef800_measurement_serial_config_for_builder(
 	uint8_t builder_id, uint32_t connection,
 	struct ef800_measurement_serial_config *config)
 {
-	if (config == NULL || (connection != EF800_PORT_CONNECTION_SERIAL &&
-		connection != EF800_PORT_CONNECTION_SERIAL_FLOW_CONTROL)) {
-		return -EINVAL;
-	}
-	if (builder_id == EF800_PORT_BUILDER_ELTA3) {
-		ef800_elta3_default_serial_config(config);
-	} else if (builder_id == EF800_PORT_BUILDER_FTS3XX) {
-		ef800_fts3xx_default_serial_config(config);
-	} else {
-		return -EINVAL;
-	}
-	config->flow_control = connection ==
-		EF800_PORT_CONNECTION_SERIAL_FLOW_CONTROL ?
-		EF800_MEASUREMENT_FLOW_RTS_CTS : EF800_MEASUREMENT_FLOW_NONE;
-	return 0;
+	return ef800_device_plugin_serial_config(builder_id, connection, config);
 }
 
 int ef800_elta3_up(const struct ef800_measurement_transport *transport)

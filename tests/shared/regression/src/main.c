@@ -16,6 +16,7 @@
 #include "ef800_workspace.h"
 #include "ef800_update.h"
 #include "ef800_measurement.h"
+#include "ef800_device_plugin.h"
 
 #if defined(EF800_TEST_KEYBOARD)
 ZTEST(keyboard_protocol, test_raw_key_map)
@@ -1182,6 +1183,66 @@ ZTEST(keyboard_protocol, test_measurement_append_to_workspace)
 						 "survey.dat", content, sizeof(content), &length), NULL);
 	zassert_str_equal(content, "7 100.0000 1.234 50.5000 1.500 P001\r", NULL);
 	zassert_equal(length, strlen(content), NULL);
+}
+
+ZTEST(keyboard_protocol, test_measurement_device_plugins)
+{
+	struct ef800_measurement_serial_config config;
+	struct ef800_measurement_data measurement;
+	struct measurement_fake_transport elta_fake = {
+		.response = (const uint8_t *)"A\r\n#48 0 1.234; 100.0000; 50.5000\r\n",
+		.response_length = strlen("A\r\n#48 0 1.234; 100.0000; 50.5000\r\n"),
+	};
+	struct measurement_fake_transport fts_fake = {
+		.response = (const uint8_t *)"1234 0900000 1800000\r\n",
+		.response_length = strlen("1234 0900000 1800000\r\n"),
+	};
+	const struct ef800_measurement_transport elta_transport = {
+		.write = measurement_fake_write, .read = measurement_fake_read,
+		.context = &elta_fake,
+	};
+	const struct ef800_measurement_transport fts_transport = {
+		.write = measurement_fake_write, .read = measurement_fake_read,
+		.context = &fts_fake,
+	};
+	const struct ef800_device_plugin *plugin;
+
+	plugin = ef800_device_plugin_find(EF800_PORT_BUILDER_ELTA3);
+	zassert_not_null(plugin, NULL);
+	zassert_equal(plugin->builder_id, EF800_PORT_BUILDER_ELTA3, NULL);
+	plugin = ef800_device_plugin_find(EF800_PORT_BUILDER_FTS3XX);
+	zassert_not_null(plugin, NULL);
+	zassert_equal(plugin->builder_id, EF800_PORT_BUILDER_FTS3XX, NULL);
+	zassert_is_null(ef800_device_plugin_find(EF800_PORT_BUILDER_NONE), NULL);
+	zassert_is_null(ef800_device_plugin_find(EF800_PORT_BUILDER_DEBUG), NULL);
+	zassert_is_null(ef800_device_plugin_find(0xffU), NULL);
+
+	zassert_ok(ef800_device_plugin_serial_config(EF800_PORT_BUILDER_ELTA3,
+		EF800_PORT_CONNECTION_SERIAL, &config), NULL);
+	zassert_equal(config.baudrate, 1200U, NULL);
+	zassert_equal(config.data_bits, 7U, NULL);
+	zassert_equal(config.parity, EF800_MEASUREMENT_PARITY_ODD, NULL);
+	zassert_equal(config.stop_bits, 2U, NULL);
+	zassert_ok(ef800_device_plugin_measure(EF800_PORT_BUILDER_ELTA3,
+		&elta_transport, &measurement), NULL);
+	zassert_mem_equal(elta_fake.writes, "S14\r\nB\r\nQ\r\n", 11U, NULL);
+
+	zassert_ok(ef800_device_plugin_serial_config(EF800_PORT_BUILDER_FTS3XX,
+		EF800_PORT_CONNECTION_SERIAL, &config), NULL);
+	zassert_equal(config.baudrate, 9600U, NULL);
+	zassert_equal(config.data_bits, 8U, NULL);
+	zassert_equal(config.parity, EF800_MEASUREMENT_PARITY_NONE, NULL);
+	zassert_equal(config.stop_bits, 1U, NULL);
+	zassert_ok(ef800_device_plugin_measure(EF800_PORT_BUILDER_FTS3XX,
+		&fts_transport, &measurement), NULL);
+	zassert_mem_equal(fts_fake.writes, "\x11\r\n", 3U, NULL);
+
+	zassert_equal(ef800_device_plugin_measure(EF800_PORT_BUILDER_DEBUG,
+		&elta_transport, &measurement), -EINVAL, NULL);
+	zassert_equal(ef800_device_plugin_measure(EF800_PORT_BUILDER_ELTA3,
+		NULL, &measurement), -EINVAL, NULL);
+	zassert_equal(ef800_device_plugin_measure(EF800_PORT_BUILDER_ELTA3,
+		&elta_transport, NULL), -EINVAL, NULL);
 }
 #endif
 

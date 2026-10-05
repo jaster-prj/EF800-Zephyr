@@ -21,6 +21,7 @@ target_sources(app PRIVATE
 	${CMAKE_CURRENT_LIST_DIR}/../../shared/ef800_persistence/ef800_workspace.c
 	${CMAKE_CURRENT_LIST_DIR}/../../shared/ef800_position/ef800_position.c
 	${CMAKE_CURRENT_LIST_DIR}/../../shared/ef800_measurement/ef800_measurement.c
+	${CMAKE_CURRENT_LIST_DIR}/../../shared/ef800_measurement/ef800_device_plugin.c
 	${CMAKE_CURRENT_LIST_DIR}/../../shared/ef800_measurement/ef800_measurement_zephyr.c
 	${CMAKE_CURRENT_LIST_DIR}/../../shared/ef800_ports/ef800_ports.c
 	${CMAKE_CURRENT_LIST_DIR}/../../shared/ef800_ports/ef800_port_uart.c
