@@ -1,0 +1,135 @@
+/* SPDX-License-Identifier: Apache-2.0 */
+#include <zephyr/kernel.h>
+#include <zephyr/app_memory/mem_domain.h>
+#include <zephyr/sys/printk.h>
+
+#include <cmsis_core.h>
+
+#include <stdint.h>
+
+#define SPIKE_STACK_SIZE 2048
+#define SPIKE_REGION_SIZE 1024
+
+extern uint8_t __plugin_text_start[];
+extern uint8_t __plugin_text_end[];
+
+/* Power-of-two regions make the ARMv7-M MPU layout explicit and measurable. */
+static uint8_t plugin_ro[SPIKE_REGION_SIZE] __aligned(SPIKE_REGION_SIZE);
+static uint8_t plugin_rw[SPIKE_REGION_SIZE] __aligned(SPIKE_REGION_SIZE);
+static uint8_t plugin_mailbox[SPIKE_REGION_SIZE] __aligned(SPIKE_REGION_SIZE);
+
+static struct k_mem_domain plugin_domain;
+static struct k_thread plugin_thread;
+K_THREAD_STACK_DEFINE(plugin_stack, SPIKE_STACK_SIZE);
+
+K_MEM_PARTITION_DEFINE(plugin_ro_partition, plugin_ro, sizeof(plugin_ro),
+	K_MEM_PARTITION_P_RO_U_RO);
+static struct k_mem_partition plugin_text_partition = {
+	.start = (uintptr_t)__plugin_text_start,
+	.size = SPIKE_REGION_SIZE,
+	.attr = K_MEM_PARTITION_P_RX_U_RX,
+};
+K_MEM_PARTITION_DEFINE(plugin_rw_partition, plugin_rw, sizeof(plugin_rw),
+	K_MEM_PARTITION_P_RW_U_RW);
+K_MEM_PARTITION_DEFINE(plugin_mailbox_partition, plugin_mailbox,
+	sizeof(plugin_mailbox), K_MEM_PARTITION_P_RW_U_RW);
+
+static volatile uint32_t plugin_result;
+static volatile bool plugin_user_context;
+static struct k_sem plugin_done;
+
+static void plugin_worker_step(void) __attribute__((section(".plugin_text.worker")));
+
+static void plugin_worker_step(void)
+{
+	plugin_rw[0] = 0x5aU;
+	plugin_mailbox[0] = plugin_rw[0];
+	plugin_result = plugin_mailbox[0];
+}
+
+static void plugin_worker(void *p1, void *p2, void *p3)
+{
+	ARG_UNUSED(p1);
+	ARG_UNUSED(p2);
+	ARG_UNUSED(p3);
+
+	plugin_user_context = k_is_user_context();
+	plugin_worker_step();
+	k_sem_give(&plugin_done);
+
+	while (true) {
+		k_sleep(K_FOREVER);
+	}
+}
+
+static int install_plugin_domain(void)
+{
+	struct k_mem_partition *partitions[] = {
+		&plugin_text_partition,
+		&plugin_ro_partition,
+		&plugin_rw_partition,
+		&plugin_mailbox_partition,
+	};
+	int ret = k_mem_domain_init(&plugin_domain, ARRAY_SIZE(partitions),
+		partitions);
+
+	if (ret != 0) {
+		return ret;
+	}
+
+	return k_mem_domain_add_thread(&plugin_domain, &plugin_thread);
+}
+
+int main(void)
+{
+	k_tid_t worker;
+	int ret;
+
+	k_sem_init(&plugin_done, 0, 1);
+	printk("EF800 isolation spike\n");
+	printk("userspace=%d arm_mpu=%d xor_write=%d\n",
+		IS_ENABLED(CONFIG_USERSPACE), IS_ENABLED(CONFIG_ARM_MPU),
+		IS_ENABLED(CONFIG_EXECUTE_XOR_WRITE));
+	printk("mpu_regions=%u min_align=%u stack_guard=%d\n",
+		(unsigned int)((MPU->TYPE & MPU_TYPE_DREGION_Msk) >>
+			MPU_TYPE_DREGION_Pos),
+		(unsigned int)CONFIG_ARM_MPU_REGION_MIN_ALIGN_AND_SIZE,
+		IS_ENABLED(CONFIG_MPU_STACK_GUARD));
+	printk("text=%p/%u ro=%p/%u rw=%p/%u mailbox=%p/%u stack=%p/%u\n",
+		__plugin_text_start,
+		(unsigned int)SPIKE_REGION_SIZE,
+		plugin_ro, (unsigned int)sizeof(plugin_ro), plugin_rw,
+		(unsigned int)sizeof(plugin_rw), plugin_mailbox,
+		(unsigned int)sizeof(plugin_mailbox), plugin_stack,
+		(unsigned int)K_THREAD_STACK_SIZEOF(plugin_stack));
+
+	worker = k_thread_create(&plugin_thread, plugin_stack,
+		K_THREAD_STACK_SIZEOF(plugin_stack), plugin_worker, NULL, NULL, NULL,
+		5, K_USER, K_FOREVER);
+	if (worker == NULL) {
+		printk("worker create failed\n");
+		return -ENOMEM;
+	}
+	k_thread_access_grant(worker, &plugin_done);
+
+	ret = install_plugin_domain();
+	if (ret != 0) {
+		printk("domain install failed: %d\n", ret);
+		return ret;
+	}
+
+	printk("worker=%p domain=%p partitions=%u\n", &plugin_thread,
+		&plugin_domain, (unsigned int)plugin_domain.num_partitions);
+	k_thread_start(&plugin_thread);
+
+	ret = k_sem_take(&plugin_done, K_SECONDS(2));
+	if (ret != 0) {
+		printk("worker completion failed: %d\n", ret);
+		return ret;
+	}
+
+	printk("worker user=%d result=0x%02x PASS\n", plugin_user_context,
+		(unsigned int)plugin_result);
+	k_thread_abort(&plugin_thread);
+	return 0;
+}

@@ -1,0 +1,69 @@
+/* SPDX-License-Identifier: Apache-2.0 */
+#include <zephyr/dt-bindings/pinctrl/stm32-pinctrl.h>
+
+&pinctrl {
+	usart1_tx_pb6: usart1_tx_pb6 {
+		pinmux = <STM32_PINMUX('B', 6, AF7)>;
+		bias-pull-up;
+		drive-push-pull;
+	};
+
+	usart1_rx_pb7: usart1_rx_pb7 {
+		pinmux = <STM32_PINMUX('B', 7, AF7)>;
+		bias-pull-up;
+	};
+
+	usart3_tx_pd8: usart3_tx_pd8 {
+		pinmux = <STM32_PINMUX('D', 8, AF7)>;
+		bias-pull-up;
+		drive-push-pull;
+	};
+
+	usart3_rx_pd9: usart3_rx_pd9 {
+		pinmux = <STM32_PINMUX('D', 9, AF7)>;
+		bias-pull-up;
+	};
+
+	lpuart1_tx_pg7: lpuart1_tx_pg7 {
+		pinmux = <STM32_PINMUX('G', 7, AF8)>;
+		bias-pull-up;
+		drive-push-pull;
+	};
+
+	lpuart1_rx_pc0: lpuart1_rx_pc0 {
+		pinmux = <STM32_PINMUX('C', 0, AF8)>;
+		bias-pull-up;
+	};
+
+	quadspi_clk_pf10: quadspi_clk_pf10 {
+		pinmux = <STM32_PINMUX('F', 10, AF3)>;
+	};
+
+	quadspi_bk1_ncs_pe11: quadspi_bk1_ncs_pe11 {
+		pinmux = <STM32_PINMUX('E', 11, AF10)>;
+	};
+
+	quadspi_bk1_io0_pf8: quadspi_bk1_io0_pf8 {
+		pinmux = <STM32_PINMUX('F', 8, AF10)>;
+	};
+
+	quadspi_bk1_io1_pf9: quadspi_bk1_io1_pf9 {
+		pinmux = <STM32_PINMUX('F', 9, AF10)>;
+	};
+
+	quadspi_bk1_io2_pf7: quadspi_bk1_io2_pf7 {
+		pinmux = <STM32_PINMUX('F', 7, AF10)>;
+	};
+
+	quadspi_bk1_io3_pf6: quadspi_bk1_io3_pf6 {
+		pinmux = <STM32_PINMUX('F', 6, AF10)>;
+	};
+
+	usb_otg_fs_dm_pa11: usb_otg_fs_dm_pa11 {
+		pinmux = <STM32_PINMUX('A', 11, AF10)>;
+	};
+
+	usb_otg_fs_dp_pa12: usb_otg_fs_dp_pa12 {
+		pinmux = <STM32_PINMUX('A', 12, AF10)>;
+	};
+};
