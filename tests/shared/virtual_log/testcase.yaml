@@ -1,0 +1,9 @@
+tests:
+  shared.virtual_log:
+    tags:
+      - ef800
+      - virtual
+      - logging
+    harness: ztest
+    platform_allow:
+      - native_sim

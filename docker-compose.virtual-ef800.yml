@@ -1,0 +1,42 @@
+services:
+  virtual-ef800:
+    build:
+      context: .
+      dockerfile: docker/virtual-ef800/Dockerfile
+    expose:
+      - "8800"
+    restart: unless-stopped
+    volumes:
+      - virtual-ef800-flash:/var/lib/virtual-ef800
+    networks:
+      - virtual-ef800
+
+  virtual-ef800-web:
+    build:
+      context: .
+      dockerfile: docker/virtual-ef800-web/Dockerfile
+    environment:
+      SIMULATOR_HOST: virtual-ef800
+      SIMULATOR_PORT: "8800"
+      WEB_HOST: 0.0.0.0
+      WEB_PORT: "8080"
+    ports:
+      - "127.0.0.1:${VIRTUAL_EF800_WEB_PORT:-8080}:8080"
+    depends_on:
+      - virtual-ef800
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8080/health', timeout=2)"]
+      interval: 10s
+      timeout: 3s
+      retries: 5
+    networks:
+      - virtual-ef800
+
+networks:
+  virtual-ef800:
+    name: virtual-ef800
+
+volumes:
+  virtual-ef800-flash:
+    name: virtual-ef800-flash

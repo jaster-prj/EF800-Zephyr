@@ -24,6 +24,41 @@ Native tests run on `native_sim` and do not require EF800 hardware:
 The current native baseline is 31 test cases. The older 24- and 26-test
 figures belong to superseded bring-up notes.
 
+## Virtual EF800
+
+The `application/ef800-main` target runs the production behavioral EF800 orchestration on
+Zephyr `native_sim` without an STM32 controller or physical PCB. It provides a
+headless virtual status/display/keyboard foundation and a front-panel transport
+on TCP port `8800`. The browser gateway and host tools are under
+`GSE/Virtual-EF800`.
+
+Build the target inside the reusable container:
+
+```powershell
+docker exec -w /workspace EF800_Devcontainer /opt/venv/bin/west build -p always -b native_sim application/application/ef800-main -d application/build/ef800-main-native-sim
+```
+
+For interactive use, build and start the independent Compose deployment:
+
+```powershell
+docker exec -w /workspace EF800_Devcontainer /opt/venv/bin/west build -p always -b native_sim application/application/ef800-main -d application/build/ef800-main-native-sim
+docker compose -f docker-compose.virtual-ef800.yml build
+docker compose -f docker-compose.virtual-ef800.yml up -d
+Start-Process http://127.0.0.1:8080/
+```
+
+The browser starts as a viewer. Acquire control before using the semantic
+keypad. Only one browser controls the simulator at a time; disconnect and
+restart paths issue `release-all`. The headless `scenario_client.py` remains
+available for deterministic acceptance and can connect directly when the web
+service is not running.
+
+Virtual results qualify covered application control flow, display/keypad
+behavior, plugin supervision, cleanup, quarantine, and data-integrity
+behavior. They do not qualify STM32 registers, ARM image loading, MPU/W^X,
+CPU fault classification, boot handoff, electrical timing, QSPI geometry,
+USB enumeration, or fitted peripheral wiring.
+
 Bootloader recovery behavior is also covered by the firmware control-flow
 contract: the failure limit applies only while MainApplication is the selected
 target, and a boot following BackupApplication resets the counter before
@@ -33,7 +68,7 @@ All native suites under `tests/` are executed together with one Twister
 invocation:
 
 ```sh
-west twister -T application/tests -p native_sim --inline-logs
+west twister -T application/tests -p native_sim --inline-logs --no-clean
 ```
 
 The former aggregate `keyboard_protocol` suite has been decomposed into these

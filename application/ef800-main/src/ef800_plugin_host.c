@@ -12,6 +12,9 @@
 #include "plugin_manager/plugin_manager.h"
 #include "plugin_manager/plugin_manager_zephyr.h"
 #include "plugin_manager/plugin_target_arm.h"
+#ifdef CONFIG_BOARD_NATIVE_SIM
+#include "plugin_manager/plugin_target_native.h"
+#endif
 
 #include "ef800_main.h"
 #include "ef800_plugin_contract.h"
@@ -19,14 +22,21 @@
 #include "ef800_port_service.h"
 LOG_MODULE_REGISTER(ef800_plugin_host, LOG_LEVEL_INF);
 
-#define EF800_PLUGIN_DIRECTORY ""
+#define EF800_PLUGIN_DIRECTORY "plugins"
 #define EF800_PLUGIN_SUFFIX ".PMP"
 #define EF800_PLUGIN_MAX_ENTRIES 16u
 #define EF800_PLUGIN_MAX_PACKAGE_SIZE (32u * 1024u)
+#if CONFIG_BOARD_NATIVE_SIM
+#define EF800_PLUGIN_TEXT_SIZE 0x8000u
+#define EF800_PLUGIN_RODATA_SIZE 0x8000u
+#define EF800_PLUGIN_DATA_SIZE 0x4000u
+#define EF800_PLUGIN_BSS_SIZE 0x4000u
+#else
 #define EF800_PLUGIN_TEXT_SIZE 0x2000u
 #define EF800_PLUGIN_RODATA_SIZE 0x2000u
 #define EF800_PLUGIN_DATA_SIZE 0x0800u
 #define EF800_PLUGIN_BSS_SIZE 0x0800u
+#endif
 
 static struct pm_manager *manager;
 static struct ef800_plugin_registry *active_registry;
@@ -47,6 +57,13 @@ static const struct pm_elf_profile elf_profile = {
 	.text_address = 0u,
 	.rodata_address = 0x2000u,
 	.data_address = 0x20010000u,
+#if CONFIG_BOARD_NATIVE_SIM
+	.machine = PM_ELF_MACHINE_I386,
+	.relocation_type = PM_ELF_R_I386_32,
+#else
+	.machine = PM_ELF_MACHINE_ARM,
+	.relocation_type = PM_ELF_R_ARM_ABS32,
+#endif
 };
 
 static const struct pm_plugin_interface interfaces[] = {
@@ -70,7 +87,7 @@ static struct pm_application_contract contract = {
 	.interfaces = interfaces,
 	.interface_count = ARRAY_SIZE(interfaces),
 	.services = service_items,
-	.service_count = ARRAY_SIZE(service_items),
+	.service_count = 0u,
 };
 
 static int validate_measurement_display(
@@ -95,8 +112,14 @@ static int convert_entry(void *context, uint32_t address,
 	enum pm_elf_entry_kind kind, void *function_out)
 {
 	const struct pm_elf_image *image = context;
-	uintptr_t target = (uintptr_t)image->text +
+	uintptr_t target;
+
+#if CONFIG_BOARD_NATIVE_SIM
+	target = (uintptr_t)image->text + (address - image->text_address);
+#else
+	target = (uintptr_t)image->text +
 		((address & ~1u) - image->text_address) + (address & 1u);
+#endif
 
 	ARG_UNUSED(kind);
 	*(void **)function_out = (void *)target;
@@ -108,21 +131,40 @@ static int adapt_descriptor(const struct pm_wire_plugin_descriptor *wire,
 	const struct pm_package_manifest *manifest,
 	const struct pm_plugin_descriptor **result, void *context)
 {
-	struct pm_arm_entry_adapter adapter = {
+	#if !CONFIG_BOARD_NATIVE_SIM
+	struct pm_arm_entry_adapter arm_adapter = {
 		.executable_base = image->text_address,
 		.executable_size = image->text_size,
 		.convert = convert_entry,
 		.context = (void *)image,
 	};
+	#endif
+	#if CONFIG_BOARD_NATIVE_SIM
+	struct pm_native_entry_adapter native_adapter = {
+		.executable_base = image->text_address,
+		.executable_size = image->text_size,
+		.convert = convert_entry,
+		.context = (void *)image,
+	};
+	#endif
 	struct pm_descriptor_bind_config bind = {
+#if CONFIG_BOARD_NATIVE_SIM
+		.resolve = pm_native_entry_resolve,
+		.context = &native_adapter,
+#else
 		.resolve = pm_arm_entry_resolve,
-		.context = &adapter,
+		.context = &arm_adapter,
+#endif
 	};
 	int status;
 
 	ARG_UNUSED(manifest);
 	ARG_UNUSED(context);
-	status = pm_arm_entry_adapter_validate(&adapter, image);
+#if CONFIG_BOARD_NATIVE_SIM
+	status = pm_native_entry_adapter_validate(&native_adapter, image);
+#else
+	status = pm_arm_entry_adapter_validate(&arm_adapter, image);
+#endif
 	if (status == PM_OK) {
 		status = pm_wire_descriptor_bind(wire, image, &bind, &descriptor);
 	}
@@ -175,6 +217,11 @@ static int port_read(void *context, uint8_t *data, uint32_t capacity,
 
 static struct pm_manager_package_config package_config = {
 	.elf_profile = &elf_profile,
+#if CONFIG_BOARD_NATIVE_SIM
+	.target_architecture = PM_PACKAGE_TARGET_NATIVE_SIM,
+#else
+	.target_architecture = PM_PACKAGE_TARGET_ARM_CORTEX_M,
+#endif
 	.adapt_wire_descriptor = adapt_descriptor,
 	.alloc_image = allocate_image,
 	.free_image = free_image,
@@ -223,13 +270,31 @@ static int activate_measurement(uint32_t plugin_id,
 	if (index < 0) {
 		return index;
 	}
+#if CONFIG_BOARD_NATIVE_SIM
+	/* Native discovery keeps the validated relocatable image resident.  This
+	 * avoids a second FAT read/load cycle through the simulator boundary and
+	 * lets activation create the already-registered descriptor instance. */
+	status = pm_manager_create_instance(manager, plugin_id);
+	if (status == PM_OK) {
+		status = pm_manager_get_instance(manager, plugin_id, instance);
+		if (status == PM_OK) {
+			return PM_OK;
+		}
+		(void)pm_manager_destroy_instance(manager, plugin_id);
+	}
+#endif
+	LOG_INF("Loading plugin %u index %d config profile=%p adapt=%p alloc=%p manager=%p",
+		(unsigned)plugin_id, index, package_config.elf_profile,
+		package_config.adapt_wire_descriptor, package_config.alloc_image, manager);
 	status = pm_manager_load_available(manager, (size_t)index,
 		&package_config, &loaded_id);
 	if (status != PM_OK) {
+		LOG_WRN("Plugin %u load failed: %d", plugin_id, status);
 		return status;
 	}
 	status = pm_manager_create_instance(manager, loaded_id);
 	if (status != PM_OK) {
+		LOG_WRN("Plugin %u instance create failed: %d", plugin_id, status);
 		(void)pm_manager_unload(manager, loaded_id);
 		return status;
 	}
@@ -575,7 +640,9 @@ static void inspect_available_metadata(void)
 				}
 			}
 		}
+		#if !CONFIG_BOARD_NATIVE_SIM
 		(void)pm_manager_unload(manager, plugin_id);
+		#endif
 	}
 }
 

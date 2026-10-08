@@ -1,0 +1,8 @@
+tests:
+  shared.virtual_startup:
+    tags:
+      - ef800
+      - virtual
+    harness: ztest
+    platform_allow:
+      - native_sim

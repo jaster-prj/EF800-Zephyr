@@ -1,0 +1,8 @@
+tests:
+  shared.ui:
+    tags:
+      - ef800
+      - ui
+    harness: ztest
+    platform_allow:
+      - native_sim

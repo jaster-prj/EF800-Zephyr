@@ -1,0 +1,70 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Virtual EF800</title>
+  <link rel="stylesheet" href="/style.css">
+</head>
+<body>
+  <main>
+    <h1>Virtual EF800</h1>
+    <p id="status" class="status">Connecting...</p>
+    <section class="diagnostics" aria-label="native simulator diagnostics">
+      <h2>MainApplication logs <small>(native-sim behavioral evidence)</small></h2>
+      <div class="controls">
+        <button id="logs-pause">Pause</button>
+        <button id="logs-clear">Clear</button>
+        <label>Severity
+          <select id="logs-severity">
+            <option value="ALL">All</option>
+            <option value="DEBUG">Debug+</option>
+            <option value="INFO">Info+</option>
+            <option value="WARNING">Warning+</option>
+            <option value="ERROR">Error+</option>
+            <option value="PANIC">Panic</option>
+          </select>
+        </label>
+        <label><input id="logs-autoscroll" type="checkbox" checked> Auto-scroll</label>
+      </div>
+      <p id="logs-status" class="status">No diagnostic records yet.</p>
+      <pre id="logs" aria-live="polite" aria-label="MainApplication log records"></pre>
+    </section>
+    <canvas id="lcd" width="240" height="64" aria-label="EF800 display"></canvas>
+    <pre id="text" aria-label="EF800 text"></pre>
+    <section class="controls">
+      <button id="control">Acquire control</button>
+      <button id="release" disabled>Release control</button>
+    </section>
+    <section class="plugins" aria-label="native simulator plugins">
+      <h2>Native-sim plugins</h2>
+      <input id="plugin-file" type="file" accept=".pmp,.PMP">
+      <button id="plugin-upload">Upload plugin</button>
+      <button id="simulator-restart">Restart simulator</button>
+      <p id="plugin-status" class="status">No package operation yet.</p>
+      <label>Plugin ID <input id="plugin-id" type="number" min="1" value="2"></label>
+      <label>Assigned port <select id="plugin-port"><option value="1">1</option><option value="2">2</option></select></label>
+      <button id="plugin-assign">Assign plugin</button>
+      <button id="plugin-execute">Run measurement</button>
+    </section>
+    <section class="devices" aria-label="virtual device docking">
+      <h2>Virtual device dock</h2>
+      <label>Port <select id="device-port"><option value="1">1</option><option value="2">2</option></select></label>
+      <label>Delay ms <input id="device-delay" type="number" min="0" max="60000" value="0"></label>
+      <label>Response hex <input id="device-response" type="text" maxlength="256" placeholder="52442B0012340D0A"></label>
+      <label><input id="device-available" type="checkbox" checked> Available</label>
+      <button id="device-dock">Dock device</button>
+      <p id="device-status" class="status">No virtual device configured.</p>
+    </section>
+    <section id="keypad" class="keypad" aria-label="EF800 keypad">
+      <button data-key="up">UP</button>
+      <button data-key="left">LEFT</button>
+      <button data-key="enter">OK</button>
+      <button data-key="right">RIGHT</button>
+      <button data-key="down">DOWN</button>
+      <button data-key="esc">ESC</button>
+    </section>
+  </main>
+  <script src="/app.js"></script>
+</body>
+</html>

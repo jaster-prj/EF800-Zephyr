@@ -40,7 +40,27 @@ jobs:
         working-directory: ./zephyr_workspace
         run: |
           /opt/venv/bin/west twister -T application/tests \
-            -p native_sim --inline-logs
+            -p native_sim --inline-logs --no-clean
+
+      - name: Build virtual EF800 target
+        working-directory: ./zephyr_workspace
+        run: |
+          /opt/venv/bin/west build -p always -b native_sim \
+            application/application/ef800-main \
+            --build-dir application/build/ef800-main-native-sim
+
+      - name: Run host front-panel tests
+        working-directory: ./zephyr_workspace/application
+        run: |
+          python -m pip install -r GSE/Virtual-EF800/requirements.txt
+          python -m unittest \
+            GSE/Virtual-EF800/test_virtual_frontpanel.py \
+            GSE/Virtual-EF800/test_scenario_client.py \
+            GSE/Virtual-EF800/test_gateway.py \
+            GSE/Virtual-EF800/test_deployment.py \
+            GSE/Virtual-EF800/test_web_assets.py \
+            GSE/Virtual-EF800/test_compose_integration.py
+
 
       - name: Test measurement plugin SDK
         working-directory: ./zephyr_workspace/application/application/plugins/measurement-plugin

@@ -6,6 +6,7 @@ find_package(Python3 REQUIRED COMPONENTS Interpreter)
 
 set(PLUGIN_MANAGER_DIR "" CACHE PATH "Optional PluginManager source tree")
 set(PM_ARM_TOOLCHAIN_PREFIX "" CACHE STRING "ARM compiler prefix, without -gcc")
+option(PM_BUILD_NATIVE_SIM "Build native_sim plugin packages" OFF)
 set(EF800_PLUGIN_VERSION "1.0.0")
 
 set(COMMON_SOURCES common/protocol.c common/plugin_runtime.c)
@@ -84,4 +85,41 @@ if(PM_ARM_TOOLCHAIN_PREFIX)
 
     add_arm_plugin(elta3_plugin elta3 elta3/src/elta3.c 2 "EF800 ELTA3")
     add_arm_plugin(fennel1_plugin fennel1 fennel1/src/fennel1.c 3 "EF800 Fennel1")
+endif()
+
+if(PM_BUILD_NATIVE_SIM)
+    set(NATIVE_CC "${CMAKE_C_COMPILER}")
+    set(NATIVE_LINKER_SCRIPT "${CMAKE_CURRENT_LIST_DIR}/cmake/native_sections.ld")
+    # Keep one text and one rodata section for the bounded native PluginManager
+    # ELF loader.  The ARM linker path retains section granularity and MPU
+    # placement; native-sim packages are relocatable host artifacts.
+    set(NATIVE_CFLAGS -m32 -std=c11 -Os -ffreestanding -fno-builtin -fno-common
+        -fno-pic -fno-pie -Wall -Wextra -Werror)
+    function(add_native_plugin target package_dir source plugin_id plugin_name)
+        set(image ${CMAKE_CURRENT_BINARY_DIR}/${target}.elf)
+        set(package ${CMAKE_CURRENT_BINARY_DIR}/${target}.pmp)
+        add_custom_command(OUTPUT ${image}
+            COMMAND ${NATIVE_CC} ${NATIVE_CFLAGS}
+                -I${CMAKE_CURRENT_LIST_DIR}/include
+                -I${CMAKE_CURRENT_LIST_DIR}/compat
+                -I${CMAKE_CURRENT_LIST_DIR}/common
+                -DEF800_PLUGIN_ID=${plugin_id}u
+                ${CMAKE_CURRENT_LIST_DIR}/${source}
+                ${CMAKE_CURRENT_LIST_DIR}/common/protocol.c
+                ${CMAKE_CURRENT_LIST_DIR}/common/plugin_runtime.c
+                ${CMAKE_CURRENT_LIST_DIR}/${package_dir}/descriptor.c
+                 -r -nostdlib -nostartfiles -nodefaultlibs
+                 -Wl,-T,${NATIVE_LINKER_SCRIPT} -o ${image}
+            DEPENDS ${source} ${COMMON_SOURCES} ${package_dir}/descriptor.c)
+        add_custom_command(OUTPUT ${package}
+            COMMAND ${Python3_EXECUTABLE} ${CMAKE_CURRENT_LIST_DIR}/tools/package_plugin.py
+                --image ${image} --output ${package} --plugin-id ${plugin_id}
+                --name "${plugin_name}" --version ${EF800_PLUGIN_VERSION} --target 2
+            COMMAND ${Python3_EXECUTABLE} ${CMAKE_CURRENT_LIST_DIR}/tools/verify_package.py
+                ${package} --plugin-id ${plugin_id}
+            DEPENDS ${image} tools/package_plugin.py tools/verify_package.py)
+        add_custom_target(${target} ALL DEPENDS ${package})
+    endfunction()
+    add_native_plugin(elta3_native_plugin elta3 elta3/src/elta3.c 2 "EF800 ELTA3 native_sim")
+    add_native_plugin(fennel1_native_plugin fennel1 fennel1/src/fennel1.c 3 "EF800 Fennel1 native_sim")
 endif()

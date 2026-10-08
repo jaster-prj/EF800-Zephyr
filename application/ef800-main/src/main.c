@@ -39,6 +39,10 @@
 #include "ef800_mcumgr_transport.h"
 #include "ef800_plugin_host.h"
 #include "ef800_measurement_plugin.h"
+#include "ef800_ui.h"
+#ifdef CONFIG_BOARD_NATIVE_SIM
+#include "ef800_virtual_frontpanel.h"
+#endif
 
 LOG_MODULE_REGISTER(ef800_main_app, LOG_LEVEL_INF);
 
@@ -108,6 +112,7 @@ static uint8_t selected_port_index;
 static uint8_t selected_builder_id;
 static uint32_t selected_plugin_id;
 static struct ef800_measurement_plugin_session measurement_plugin_session;
+static struct ef800_ui_state ui_state;
 
 enum application_menu {
 	APPLICATION_MENU_MAIN = 0,
@@ -223,6 +228,8 @@ static void display_measurement_plugin_menu(void);
 static void display_active_menu(void);
 static void display_measurement_editor(void);
 static void display_calculation_menu(void);
+static size_t active_menu_count(void);
+static void display_line(uint8_t row, const char *text);
 static void handle_measurement_editor_key(uint8_t key);
 static int trigger_measurement(bool fixed);
 static int send_measurement_input(uint32_t input);
@@ -234,6 +241,32 @@ static int port_uart_check_ready(uint8_t port_id, uint32_t connection);
 static int claim_loaded_port_assignments(void);
 static int reconcile_measurement_assignments(void);
 static int set_console_for_port(uint8_t port_id);
+#ifdef CONFIG_BOARD_NATIVE_SIM
+static int virtual_assign_plugin(void *context, uint8_t port_id,
+	uint32_t plugin_id, uint32_t connection);
+static int virtual_execute_plugin(void *context, uint8_t port_id);
+#endif
+
+static size_t ui_menu_count(void *context, enum ef800_ui_menu menu)
+{
+	ARG_UNUSED(context);
+	return menu == (enum ef800_ui_menu)active_menu ? active_menu_count() : 0U;
+}
+
+static void ui_render(void *context, const struct ef800_ui_state *state)
+{
+	ARG_UNUSED(context);
+	active_menu = (enum application_menu)state->menu;
+	menu_selection = state->selection;
+	if (state->diagnostic != EF800_UI_DIAGNOSTIC_NONE) {
+		display_line(0U, "Plugin recovery");
+		display_line(1U, state->diagnostic == EF800_UI_DIAGNOSTIC_TIMEOUT ?
+			"Plugin timed out" : "Plugin failed");
+		display_line(6U, "ENTER acknowledge");
+		return;
+	}
+	display_active_menu();
+}
 
 static int load_boot_metadata(void)
 {
@@ -383,6 +416,15 @@ static int reconcile_port_uart_state(void)
 	return result;
 }
 
+static uint8_t uart_owner_for_plugin(uint32_t plugin_id)
+{
+	const struct ef800_plugin_registry_entry *entry =
+		ef800_plugin_registry_find(&plugin_registry, plugin_id);
+
+	return entry != NULL && entry->info.kind == EF800_PLUGIN_KIND_MEASUREMENT ?
+		EF800_PORT_BUILDER_DEBUG : (uint8_t)plugin_id;
+}
+
 static int reconcile_measurement_assignments(void)
 {
 	int first_error = 0;
@@ -457,7 +499,7 @@ static int claim_loaded_port_assignments(void)
 			continue;
 		}
 		result = ef800_port_uart_claim(&port_uart_registry, port->id,
-						       (uint8_t)plugin_id,
+						       uart_owner_for_plugin(plugin_id),
 						       ef800_port_assignment_get_connection(
 							&port_assignments, port->id));
 		if (result != 0) {
@@ -2074,20 +2116,14 @@ static size_t active_menu_count(void)
 
 static void move_menu_selection(int direction)
 {
-	size_t count = active_menu_count();
+	const struct ef800_ui_render renderer = {
+		.render = ui_render,
+		.context = NULL,
+	};
 
-	if (count == 0U) {
-		menu_selection = 0U;
-		return;
-	}
-	if (direction < 0) {
-		menu_selection = menu_selection == 0U ?
-			(uint8_t)(count - 1U) : menu_selection - 1U;
-	} else if (direction > 0) {
-		menu_selection = menu_selection + 1U >= count ?
-			0U : menu_selection + 1U;
-	}
-	display_active_menu();
+	ui_state.menu = (enum ef800_ui_menu)active_menu;
+	ui_state.selection = menu_selection;
+	ef800_ui_move(&ui_state, direction, ui_menu_count, NULL, &renderer);
 }
 
 static void return_to_workspace_menu(void)
@@ -2433,6 +2469,132 @@ static int set_port_assignment_runtime(uint8_t port_id, uint8_t builder_id,
 	}
 	return result;
 }
+
+#ifdef CONFIG_BOARD_NATIVE_SIM
+static int virtual_assign_plugin(void *context, uint8_t port_id,
+	uint32_t plugin_id, uint32_t connection)
+{
+	const struct ef800_plugin_registry_entry *entry;
+	const struct ef800_port_descriptor *port;
+	uint8_t builder_id;
+	int result;
+
+	ARG_UNUSED(context);
+	if (plugin_id == 0U || port_id == 0U ||
+		(connection != EF800_PORT_CONNECTION_SERIAL &&
+		 connection != EF800_PORT_CONNECTION_SERIAL_FLOW_CONTROL)) {
+		return -EINVAL;
+	}
+	entry = ef800_plugin_registry_find(&plugin_registry, plugin_id);
+	port = ef800_port_at(port_id);
+	if (entry == NULL || port == NULL ||
+		!ef800_port_connection_is_valid(port_id, connection) ||
+		(entry->info.required_hardware != 0U &&
+		 (port->capabilities & entry->info.required_hardware) !=
+		 entry->info.required_hardware)) {
+		return -ENOENT;
+	}
+	builder_id = uart_owner_for_plugin(plugin_id);
+	result = ef800_port_uart_claim(&port_uart_registry, port_id, builder_id,
+		connection);
+	if (result != 0) {
+		LOG_WRN("Native plugin UART claim failed: %d", result);
+		return result;
+	}
+	result = ef800_port_assignment_set_plugin_with_connection(&port_assignments,
+		port_id, plugin_id, connection);
+	LOG_INF("Native plugin assignment record result: %d", result);
+	if (result == 0) {
+		result = persist_port_assignment_metadata();
+		LOG_INF("Native plugin metadata result: %d", result);
+	}
+	/* Native-sim UART device readiness is intentionally provided by the
+	 * virtual frontpanel, not by the physical-board routing probe.  The claim
+	 * above establishes ownership; invoking the board reconciliation pass
+	 * here would reject an otherwise valid virtual assignment with -ENOSYS. */
+	if (result != 0) {
+		LOG_WRN("Native plugin assignment failed: %d", result);
+	}
+	if (result != 0) {
+		(void)ef800_port_uart_release(&port_uart_registry, port_id, builder_id,
+			connection);
+	}
+	return result;
+}
+
+static int virtual_execute_plugin(void *context, uint8_t port_id)
+{
+	uint32_t plugin_id;
+	const struct ef800_port_uart_route *route;
+	const struct device *device;
+	struct ef800_measurement_serial_config config;
+	struct ef800_measurement_data data;
+	int result;
+
+	ARG_UNUSED(context);
+	if (port_id == 0U || port_id > EF800_PORT_COUNT ||
+		!ef800_port_assignment_is_assigned(&port_assignments, port_id)) {
+		LOG_WRN("Native plugin execute: port not assigned");
+		return -EINVAL;
+	}
+	plugin_id = ef800_port_assignment_get_plugin_id(&port_assignments, port_id);
+	if (ef800_plugin_registry_find(&plugin_registry, plugin_id) == NULL ||
+		ef800_plugin_registry_state_for(&plugin_registry, plugin_id) !=
+		EF800_PLUGIN_REGISTRY_READY) {
+		LOG_WRN("Native plugin execute: plugin %u unavailable", (unsigned)plugin_id);
+		return -ENOENT;
+	}
+	if (measurement_transports[port_id - 1U].uart == NULL) {
+		route = ef800_port_uart_for_connection(port_id,
+			ef800_port_assignment_get_connection(&port_assignments, port_id));
+		device = route == NULL ? NULL : port_uart_device(route->uart_id);
+		if (device == NULL) {
+			LOG_WRN("Native plugin execute: UART device unavailable");
+			return -ENODEV;
+		}
+		result = ef800_plugin_host_serial_config(plugin_id, NULL, &config);
+		if (result != 0) {
+			/* Some native PluginManager builds cannot instantiate a plugin just
+			 * to query defaults before a transport exists.  Use the shared
+			 * contract defaults; the actual measurement still goes through the
+			 * loaded plugin and Port transport below. */
+			if (plugin_id == EF800_PORT_BUILDER_ELTA3) {
+				ef800_elta3_default_serial_config(&config);
+				result = 0;
+			} else if (plugin_id == EF800_PORT_BUILDER_FTS3XX) {
+				ef800_fts3xx_default_serial_config(&config);
+				result = 0;
+			} else {
+				result = -EINVAL;
+			}
+		}
+		if (result != 0) {
+			LOG_WRN("Native plugin execute: serial config failed: %d", result);
+			return result;
+		}
+		result = ef800_measurement_zephyr_init_with_config(
+			&measurement_transports[port_id - 1U], device, &config);
+		if (result != 0) {
+			LOG_WRN("Native plugin execute: UART init failed: %d", result);
+			return result;
+		}
+	}
+	result = ef800_plugin_host_measure(plugin_id,
+		&measurement_transports[port_id - 1U].transport, &data);
+	if (result == 0) {
+		char line[STATUS_LINE_SIZE];
+		snprintk(line, sizeof(line), "Plugin %u: H%ld V%ld D%ld",
+			(unsigned)plugin_id, (long)data.horizontal_gon_1e4,
+			(long)data.vertical_gon_1e4, (long)data.distance_mm);
+		display_line(0U, "Native plugin result");
+		display_line(1U, line);
+	}
+	if (result != 0) {
+		LOG_WRN("Native plugin execute: measure failed: %d", result);
+	}
+	return result;
+}
+#endif
 
 static int remove_port_assignment_runtime(uint8_t port_id)
 {
@@ -3648,6 +3810,7 @@ int main(void)
 	uint16_t mcp_port;
 
 	/* Buffer output until the persisted port assignments select DebugConsole. */
+	ef800_ui_init(&ui_state);
 	(void)ef800_console_prepare();
 	/* Select the persisted target before slow foundation/QSPI initialization;
 	 * reconciliation below will correct it after all assignments are loaded. */
@@ -3685,6 +3848,12 @@ int main(void)
 		if (result != 0) {
 			LOG_ERR("Port assignment service initialization failed: %d", result);
 		} else {
+#ifdef CONFIG_BOARD_NATIVE_SIM
+			ef800_virtual_frontpanel_set_plugin_assign_callback(
+				virtual_assign_plugin, NULL);
+			ef800_virtual_frontpanel_set_plugin_execute_callback(
+				virtual_execute_plugin, NULL);
+#endif
 			result = load_boot_metadata();
 			if (result != 0) {
 				LOG_WRN("Boot metadata read failed: %d", result);

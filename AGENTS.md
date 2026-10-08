@@ -218,7 +218,7 @@ protocol frames to accept truncated responses.
 Build and run the native keyboard, protocol, RTC, and persistence tests with:
 
 ```powershell
-docker exec -w /workspace EF800_Devcontainer /opt/venv/bin/west twister -T application/tests -p native_sim --inline-logs
+docker exec -e ZEPHYR_BASE=/workspace/zephyr -w /workspace EF800_Devcontainer /opt/venv/bin/west twister -T application/tests -p native_sim --inline-logs --no-clean
 ```
 
 All four firmware builds and the native tests must pass before considering a

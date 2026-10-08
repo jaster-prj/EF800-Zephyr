@@ -12,12 +12,28 @@
 #include "lcd_bus.h"
 
 static struct t6963_emulator emulator;
+static uint8_t emulator_memory[8192];
 static uint8_t frame[TLX711A_FRAME_SIZE];
 static uint8_t last_frame[TLX711A_FRAME_SIZE];
 static volatile bool frame_pending;
 static volatile bool frame_sending;
 static bool frame_sent;
 static const struct gpio_dt_spec status_led = GPIO_DT_SPEC_GET(DT_ALIAS(led1), gpios);
+
+static void emulator_init(void)
+{
+	static const struct t6963_emulator_config config = {
+		.memory_size = sizeof(emulator_memory),
+		.hardware_columns = 40U,
+		.text_rows = 8U,
+		.font_width = 6U,
+		.text_area = 40U,
+		.graphics_area = 40U,
+	};
+
+	(void)t6963_emulator_init_config(&emulator, &config, emulator_memory,
+		sizeof(emulator_memory), frame, sizeof(frame));
+}
 
 static int led_init(void)
 {
@@ -49,7 +65,7 @@ static void lcd_transaction(bool command, uint8_t value)
 
 static void lcd_reset(void)
 {
-	t6963_emulator_init(&emulator);
+	emulator_init();
 	frame_pending = true;
 }
 
@@ -76,7 +92,7 @@ int main(void)
 	if (ret != 0) {
 		return ret;
 	}
-	t6963_emulator_init(&emulator);
+	emulator_init();
 	/* The CDC device is initialized by Zephyr before main(). */
 	ret = transport_init();
 	if (ret != 0) {
@@ -118,7 +134,7 @@ int main(void)
 			frame_pending = false;
 			frame_sending = true;
 			irq_unlock(key);
-			t6963_emulator_frame(&emulator, frame);
+		t6963_emulator_frame(&emulator, frame, sizeof(frame));
 			if (!frame_sent || memcmp(frame, last_frame, sizeof(frame)) != 0) {
 				transport_send_frame(frame, sizeof(frame));
 				memcpy(last_frame, frame, sizeof(frame));

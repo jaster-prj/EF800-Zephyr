@@ -3,6 +3,8 @@
 #include "ef800_measurement.h"
 
 #include <errno.h>
+
+#include <errno.h>
 #include <limits.h>
 #include <stdio.h>
 #include <string.h>
@@ -185,6 +187,22 @@ void ef800_fts3xx_default_serial_config(
 		.stop_bits = 1U,
 		.flow_control = EF800_MEASUREMENT_FLOW_NONE,
 	};
+}
+
+int ef800_measurement_serial_config_for_builder(uint32_t builder_id,
+	uint32_t connection, struct ef800_measurement_serial_config *config)
+{
+	if (config == NULL) {
+		return -EINVAL;
+	}
+	if (builder_id == EF800_PORT_BUILDER_ELTA3) {
+		ef800_elta3_default_serial_config(config);
+		if (connection == EF800_PORT_CONNECTION_SERIAL_FLOW_CONTROL) {
+			config->flow_control = EF800_MEASUREMENT_FLOW_RTS_CTS;
+		}
+		return 0;
+	}
+	return -EINVAL;
 }
 
 int ef800_elta3_up(const struct ef800_measurement_transport *transport)

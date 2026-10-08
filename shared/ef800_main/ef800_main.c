@@ -6,6 +6,7 @@
 #include <errno.h>
 #include <string.h>
 #include <stdint.h>
+#include <stdio.h>
 
 #include <zephyr/device.h>
 #include <zephyr/devicetree.h>
@@ -22,6 +23,9 @@
 #include "ef800_ports.h"
 #include "ef800_update.h"
 #include "ef800_watchdog.h"
+#ifdef CONFIG_BOARD_NATIVE_SIM
+#include "ef800_virtual_profile.h"
+#endif
 
 uint32_t get_fattime(void)
 {
@@ -43,6 +47,8 @@ uint32_t get_fattime(void)
 #include <zephyr/fs/fs_sys.h>
 
 LOG_MODULE_REGISTER(ef800_main, LOG_LEVEL_INF);
+
+#define EF800_MAIN_DISK_NAME "EF800"
 
 #if DT_HAS_ALIAS(status_led)
 static const struct gpio_dt_spec status_led =
@@ -499,12 +505,26 @@ int ef800_storage_mount(void)
 	if (storage_mounted) {
 		return 0;
 	}
+#ifdef CONFIG_BOARD_NATIVE_SIM
+	if (!ef800_virtual_profile_available(5U)) {
+		return -ENODEV;
+	}
+#endif
 	if (usb_msd_assignment_active() && usb_vbus_present()) {
 		LOG_INF("QSPI FAT mount skipped; USB MSD owns the disk");
 		return -EBUSY;
 	}
 
 	result = fs_mount(&storage_mount);
+	#if CONFIG_EF800_MAIN_STORAGE_FORMAT_ON_MOUNT_FAILURE
+	if (result != 0) {
+		LOG_WRN("Storage mount failed; formatting configured virtual volume: %d", result);
+		result = fs_mkfs(FS_FATFS, (uintptr_t)EF800_MAIN_DISK_NAME ":", NULL, 0);
+		if (result == 0) {
+			result = fs_mount(&storage_mount);
+		}
+	}
+	#endif
 	if (result != 0) {
 		LOG_WRN("QSPI FAT mount failed: %d (no format attempted)", result);
 		return result;

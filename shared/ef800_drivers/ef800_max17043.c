@@ -9,6 +9,21 @@
 
 LOG_MODULE_REGISTER(ef800_max17043, LOG_LEVEL_INF);
 
+__weak bool ef800_virtual_battery_available(void)
+{
+	return true;
+}
+
+__weak uint8_t ef800_battery_profile_soc(void)
+{
+	return 0U;
+}
+
+__weak uint32_t ef800_battery_profile_voltage_uv(void)
+{
+	return 0U;
+}
+
 #define MAX17043_REG_VCELL   0x02U
 #define MAX17043_REG_SOC     0x04U
 #define MAX17043_REG_VERSION 0x08U
@@ -53,6 +68,9 @@ int ef800_max17043_init(struct ef800_max17043 *gauge,
 	if (gauge == NULL || spec == NULL || !i2c_is_ready_dt(spec)) {
 		return -ENODEV;
 	}
+	if (!ef800_virtual_battery_available()) {
+		return -ENODEV;
+	}
 
 	gauge->i2c = *spec;
 	k_mutex_init(&gauge->lock);
@@ -88,6 +106,10 @@ int ef800_max17043_read(struct ef800_max17043 *gauge,
 	if (ret == 0) {
 		status->soc_percent = ef800_max17043_soc_percent(raw_soc);
 		status->voltage_uv = ef800_max17043_voltage_uv(raw_vcell);
+		if (ef800_battery_profile_soc() != 0U) {
+			status->soc_percent = ef800_battery_profile_soc();
+			status->voltage_uv = ef800_battery_profile_voltage_uv();
+		}
 	}
 	k_mutex_unlock(&gauge->lock);
 

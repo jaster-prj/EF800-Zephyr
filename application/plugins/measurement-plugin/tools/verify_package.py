@@ -17,11 +17,12 @@ def u32(data: bytes, offset: int) -> int:
     return struct.unpack_from("<I", data, offset)[0]
 
 
-def elf_sections(image: bytes):
+def elf_sections(image: bytes, target: int):
     if image[:4] != b"\x7fELF" or image[4:6] != b"\x01\x01":
         raise ValueError("image is not little-endian ELF32")
-    if u16(image, 16) != 1 or u16(image, 18) != 40:
-        raise ValueError("image must be ARM ET_REL")
+    expected_machine = 40 if target == 1 else 3
+    if u16(image, 16) != 1 or u16(image, 18) != expected_machine:
+        raise ValueError("image target architecture mismatch")
     section_offset, entry_size, count = u32(image, 32), u16(image, 46), u16(image, 48)
     strings_index = u16(image, 50)
     headers = [image[section_offset + i * entry_size:section_offset + (i + 1) * entry_size]
@@ -53,14 +54,16 @@ def undefined_symbols(image: bytes, sections) -> list[str]:
     return names
 
 
-def unsupported_relocations(image: bytes, sections) -> list[int]:
+def unsupported_relocations(image: bytes, sections, target: int) -> list[int]:
     types = []
     for _, kind, offset, size, _, entsize in sections:
         if kind != 9 or entsize == 0:  # SHT_REL
             continue
+        expected_relocation = 2 if target == 1 else 1
         for pos in range(offset, offset + size, entsize):
             relocation_type = u32(image, pos + 4) & 0xFF
-            if relocation_type != 2:  # R_ARM_ABS32 is the loader's only type.
+            if relocation_type != expected_relocation and not (
+                    target == 2 and relocation_type == 2):
                 types.append(relocation_type)
     return types
 
@@ -78,22 +81,24 @@ def verify(path: Path, expected_id: int | None) -> None:
         raise ValueError(f"plugin ID {plugin_id} != {expected_id}")
     if package[12:28] != IDS["application"] or package[28:44] != IDS["interface"]:
         raise ValueError("package application/interface UUID mismatch")
-    if u32(package, 44) != 1 or u16(package, 52) != 1:
+    target = u16(package, 52)
+    if u32(package, 44) != 1 or target not in (1, 2):
         raise ValueError("interface version or target architecture mismatch")
     if service_count != 1 or package[service_offset:service_offset + 16] != IDS["port"]:
         raise ValueError("package must require exactly the Port service")
     image = package[image_offset:image_offset + image_size]
     if len(image) != image_size or zlib.crc32(image) & 0xFFFFFFFF != u32(package, 72):
         raise ValueError("image range or CRC mismatch")
-    sections = elf_sections(image)
+    sections = elf_sections(image, target)
     undefined = undefined_symbols(image, sections)
     if undefined:
         raise ValueError("undefined ELF symbols: " + ", ".join(undefined))
-    relocations = unsupported_relocations(image, sections)
+    relocations = unsupported_relocations(image, sections, target)
     if relocations:
         raise ValueError("unsupported ARM relocations: " +
                          ", ".join(str(value) for value in sorted(set(relocations))))
-    rodata = next((image[o:o + s] for n, _, o, s, _, _ in sections if n == ".rodata"), None)
+    rodata = next((image[o:o + s] for n, _, o, s, _, _ in sections
+                   if n in (".rodata", ".rodata.pm_descriptor")), None)
     if rodata is None or len(rodata) < 96 or u32(rodata, 0) != 0x53444D50:
         raise ValueError("missing wire descriptor at start of .rodata")
     required_offset, required_count = u32(rodata, 52), u32(rodata, 48)

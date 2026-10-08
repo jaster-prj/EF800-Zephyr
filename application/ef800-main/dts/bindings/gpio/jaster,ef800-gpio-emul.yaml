@@ -1,0 +1,20 @@
+description: EF800 native-sim GPIO controller with output observation
+compatible: "jaster,ef800-gpio-emul"
+include: [gpio-controller.yaml, base.yaml]
+properties:
+  rising-edge:
+    type: boolean
+  falling-edge:
+    type: boolean
+  high-level:
+    type: boolean
+  low-level:
+    type: boolean
+  ngpios:
+    type: int
+    required: true
+  "#gpio-cells":
+    const: 2
+gpio-cells:
+  - pin
+  - flags

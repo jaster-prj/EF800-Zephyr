@@ -56,7 +56,18 @@ during a controller read cycle. The data pins have no internal pull resistors.
 All control signals, including `FS` and active-low `RESET`, are inputs. An
 active-low reset resets the emulated controller and clears its virtual RAM.
 
-This first increment handles graphics RAM writes and the standard address/home/
-area commands. It reports the controller ready during status reads. Text
-character rendering and full read-cycle emulation can be added after capturing
-the target firmware's actual T6963C command sequence.
+The emulator uses a configurable T6963C profile. The default TLX/EF800 profile
+is 8 KiB, 40 columns, 6x8 characters, and 240 x 64 pixels; conformance tests
+can provide larger RAM and alternate supported geometries. Display RAM remains
+byte-addressable while the published framebuffer remains one bit per pixel.
+
+The supported command model includes address/home/area and offset registers,
+text and graphics rendering, internal and external character-generator RAM,
+OR/EXOR/AND and attribute modes, cursor state, auto-read/write, incrementing,
+decrementing and fixed data access, screen peek/copy, bit set/reset, and
+dynamic status/readback behavior. Rendering is dirty-region based: changed
+register or RAM state refreshes only affected packed pixels where possible, and
+the complete framebuffer is published only when at least one pixel changes.
+
+This remains behavioral emulation. It does not reproduce STM32 registers,
+electrical LCD timing, scan waveforms, or hardware qualification evidence.

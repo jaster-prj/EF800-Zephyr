@@ -1,0 +1,9 @@
+tests:
+  shared.virtual_storage:
+    tags:
+      - ef800
+      - virtual
+      - storage
+    harness: ztest
+    platform_allow:
+      - native_sim

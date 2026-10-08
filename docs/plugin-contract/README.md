@@ -77,6 +77,14 @@ Plugin packages are discovered at MainApplication startup only when internal
 storage is reachable. USB MSD ownership is unchanged; changing USB mode
 restarts the application and provides the package update boundary.
 
+The native-sim browser deployment provides an additional development-only
+package update boundary: a native-sim `.PMP` can be uploaded through the local
+web gateway, written atomically to the virtual FAT `/plugins` directory, and
+activated only after the user explicitly restarts the simulator. Native-sim
+packages use a host-native ELF target and are behavioral evidence only; they do
+not qualify physical ARM package loading, MPU containment, signatures, or
+production package security.
+
 The host lifecycle is:
 
 ```text

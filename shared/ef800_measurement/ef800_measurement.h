@@ -59,6 +59,8 @@ void ef800_elta3_default_serial_config(
 	struct ef800_measurement_serial_config *config);
 void ef800_fts3xx_default_serial_config(
 	struct ef800_measurement_serial_config *config);
+int ef800_measurement_serial_config_for_builder(uint32_t builder_id,
+	uint32_t connection, struct ef800_measurement_serial_config *config);
 int ef800_elta3_up(const struct ef800_measurement_transport *transport);
 int ef800_elta3_down(const struct ef800_measurement_transport *transport);
 int ef800_elta3_enter(const struct ef800_measurement_transport *transport);

@@ -326,7 +326,7 @@ int ef800_port_assignment_encode(const struct ef800_port_assignment_state *state
 	buffer[4] = state->port_id;
 	buffer[5] = 0U;
 	buffer[6] = 0U;
-	buffer[7] = 0U;
+	buffer[7] = state->builder_id == EF800_PORT_BUILDER_NONE ? 0xA5U : 0U;
 	sys_put_le32(plugin_id, &buffer[8]);
 	sys_put_le32(state->connection, &buffer[12]);
 	/* The record is self-describing; the full record is covered by its checksum. */
@@ -345,15 +345,19 @@ int ef800_port_assignment_decode(const uint8_t *buffer, size_t length,
 		buffer[0] != 'P' || buffer[1] != 'A' ||
 		buffer[2] != EF800_PORT_ASSIGNMENT_VERSION ||
 		buffer[3] != EF800_PORT_ASSIGNMENT_RECORD_SIZE ||
-		buffer[5] != 0U || buffer[6] != 0U || buffer[7] != 0U ||
+		buffer[5] != 0U || buffer[6] != 0U ||
+		(buffer[7] != 0U && buffer[7] != 0xA5U) ||
 		sys_get_le16(&buffer[14]) != assignment_checksum(buffer)) {
 		return -EINVAL;
 	}
 
 	decoded.port_id = buffer[4];
 	decoded.plugin_id = sys_get_le32(&buffer[8]);
-	decoded.builder_id = decoded.plugin_id <= UINT8_MAX ?
-		(uint8_t)decoded.plugin_id : EF800_PORT_BUILDER_NONE;
+	/* Preserve legacy builder records, but mark external plugin records so a
+	 * native package ID cannot collide with a built-in builder ID. */
+	decoded.builder_id = buffer[7] == 0xA5U ? EF800_PORT_BUILDER_NONE :
+		(decoded.plugin_id <= UINT8_MAX ? (uint8_t)decoded.plugin_id :
+		 EF800_PORT_BUILDER_NONE);
 	decoded.connection = (uint8_t)sys_get_le32(&buffer[12]);
 	decoded.assigned = true;
 	if (decoded.plugin_id == 0U ||
@@ -610,7 +614,10 @@ int ef800_port_assignment_set_plugin_with_connection(
 	struct ef800_port_assignment_state *current;
 	struct ef800_port_assignment_state next = {
 		.port_id = port_id,
-		.builder_id = plugin_id <= UINT8_MAX ? (uint8_t)plugin_id : 0U,
+		/* External plugin assignments must not be validated as legacy device
+		 * builders.  This also keeps native package IDs separate from the
+		 * one-byte built-in builder namespace. */
+		.builder_id = EF800_PORT_BUILDER_NONE,
 		.plugin_id = plugin_id,
 		.connection = (uint8_t)connection,
 		.assigned = true,

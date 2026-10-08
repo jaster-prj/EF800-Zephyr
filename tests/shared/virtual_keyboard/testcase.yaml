@@ -1,0 +1,9 @@
+tests:
+  shared.virtual_keyboard:
+    tags:
+      - ef800
+      - virtual
+      - keyboard
+    harness: ztest
+    platform_allow:
+      - native_sim

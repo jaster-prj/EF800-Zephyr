@@ -1,0 +1,9 @@
+tests:
+  shared.virtual_serial:
+    tags:
+      - ef800
+      - virtual
+      - serial
+    harness: ztest
+    platform_allow:
+      - native_sim

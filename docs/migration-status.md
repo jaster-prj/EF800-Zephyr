@@ -25,6 +25,20 @@ Latest software baseline:
   Unsigned arbitrary executable plugins remain disabled for release.
 - MainApplication is linked at `0x08030000` and the keyboard image at
   `0x08000000` on the L431 controller.
+- Virtual EF800 behavioral target is available on `native_sim` with a live
+  240 x 64 display model, semantic keypad protocol, deterministic peripheral
+  controls, and a host front-panel transport. It is deployable with separate
+  simulator and localhost browser-gateway containers using Docker Compose.
+  This target is behavioral
+  evidence only and does not close any STM32, MPU, boot, electrical, QSPI, or
+  USB hardware gate.
+- The production-composition native-sim target now boots through emulated
+  MCP23017, DS3231, MAX17048, GPIO, UART, T6963, keyboard, and FAT-storage
+  paths. Its native-sim profile controls remain behavioral evidence only and
+  do not qualify physical peripheral wiring, electrical timing, or ARM code.
+- Physical and native-sim MainApplication builds now share the
+  `application/ef800-main` source manifest; target-specific overlays and
+  adapters remain separate.
 
 Latest controlled hardware observations:
 
@@ -106,6 +120,21 @@ Plugin integration checkpoint:
 
 - T6963 command surface, GPIO bus implementation, reset handling, readback,
   cleanup error propagation, and bounded status polling.
+- Shared configurable T6963C emulation supports caller-owned 8 KiB or 64 KiB
+  RAM profiles, packed one-bit framebuffer rendering, text/graphics composition,
+  custom characters, attributes, cursor state, and dirty-region updates.
+- Native-sim display tests cover EF800 packed graphics pixels, 64 KiB address
+  space, text/custom/attribute/cursor rendering, and suppression of unchanged
+  framebuffer state.
+- The complete native-sim Twister run passes 18/18 configurations and 82/82
+  test cases when reusing the persistent container workspace with `--no-clean`.
+- Native-sim PMP upload, atomic virtual-FAT installation, explicit simulator
+  restart, package rediscovery, and bounded virtual serial docking are available
+  through the local Compose web deployment. Native package execution remains
+  behavioral evidence and does not close ARM, MPU, signing, or production
+  package-security gates.
+- The production `ef800-main` native-sim smoke run reaches `T6963 LCD ready
+  (240x64, 40 columns x 8 rows)` and starts the virtual front-panel bridge.
 - Shared board I2C pin electrical configuration for production and hwdebug.
 - Persistent legacy-style LCD header and one-row separator.
 - Menu body redraws preserve the header; menu entries use rows 3 through 7.

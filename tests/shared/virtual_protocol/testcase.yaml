@@ -1,0 +1,9 @@
+tests:
+  shared.virtual_protocol:
+    tags:
+      - ef800
+      - virtual
+      - protocol
+    harness: ztest
+    platform_allow:
+      - native_sim

@@ -117,6 +117,14 @@ int ef800_measurement_zephyr_init_with_config(
 		.flow_ctrl = flow_control,
 	};
 	result = uart_configure(uart, &uart_config);
+	#ifdef CONFIG_BOARD_NATIVE_SIM
+	/* native_sim UART emulation provides the byte stream but does not
+	 * implement physical framing configuration.  Keep the plugin-declared
+	 * framing for diagnostics while allowing the emulated transport. */
+	if (result == -EINVAL || result == -ENOTSUP) {
+		result = 0;
+	}
+	#endif
 	if (result != 0) {
 		return result;
 	}

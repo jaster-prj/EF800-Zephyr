@@ -56,6 +56,14 @@ config EF800_MAIN_RUNTIME_BATTERY_PERIOD_MS
 	default 10000
 	range 1000 600000
 
+config EF800_MAIN_STORAGE_FORMAT_ON_MOUNT_FAILURE
+	bool "Format storage after mount failure"
+	default n
+	help
+	  Format and retry the EF800 FAT volume when the initial mount fails.
+	  Keep disabled for physical targets so a mount failure never formats a
+	  fitted volume. Native simulation may enable this for disposable storage.
+
 config EF800_MCUMGR_SERIAL_TRANSPORT
 	bool
 	default y

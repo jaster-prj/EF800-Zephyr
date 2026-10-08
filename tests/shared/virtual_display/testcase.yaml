@@ -1,0 +1,9 @@
+tests:
+  shared.virtual_display:
+    tags:
+      - ef800
+      - virtual
+      - display
+    harness: ztest
+    platform_allow:
+      - native_sim

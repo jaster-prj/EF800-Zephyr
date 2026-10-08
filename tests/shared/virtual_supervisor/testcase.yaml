@@ -1,0 +1,9 @@
+tests:
+  shared.virtual_supervisor:
+    tags:
+      - ef800
+      - virtual
+      - plugin
+    harness: ztest
+    platform_allow:
+      - native_sim
