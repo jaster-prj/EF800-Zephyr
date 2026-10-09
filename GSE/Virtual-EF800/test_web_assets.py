@@ -21,8 +21,25 @@ class WebAssetTests(unittest.TestCase):
         self.assertIn("putImageData", self.js)
 
     def test_keypad_has_all_semantic_keys(self):
-        for key in ("up", "down", "left", "right", "enter", "esc"):
+        for key in ("up", "down", "left", "right", "enter", "escape"):
             self.assertIn(f'data-key="{key}"', self.html)
+
+    def test_keypad_has_complete_canonical_inventory_without_aliases(self):
+        import re
+        keys = re.findall(r'data-key="([^"]+)"', self.html)
+        self.assertEqual(len(keys), 59)
+        self.assertEqual(len(set(keys)), 59)
+        self.assertNotIn("esc", keys)
+        self.assertNotIn("return", keys)
+        self.assertNotIn("back", keys)
+        self.assertNotIn("control", keys)
+
+    def test_keypad_has_held_state_and_accessible_pressed_state(self):
+        self.assertIn('aria-pressed="false"', self.html)
+        self.assertIn("setKeyHeld", self.js)
+        self.assertIn("pendingDown", self.js)
+        self.assertIn("release-all", self.js)
+        self.assertIn("aria-pressed=\"true\"", (ROOT / "web/style.css").read_text(encoding="utf-8"))
 
     def test_diagnostics_panel_is_bounded_and_labeled(self):
         self.assertIn('native-sim behavioral evidence', self.html)

@@ -9,5 +9,10 @@ pre { min-height: 8em; background: white; padding: .75rem; overflow: auto; }
 #logs { height: 14rem; min-height: 14rem; margin: .5rem 0; font: .8rem ui-monospace, monospace; white-space: pre-wrap; }
 label { margin: .25rem .5rem 0 0; }
 .controls, .keypad { display: flex; flex-wrap: wrap; gap: .5rem; margin-top: 1rem; }
+.keypad { flex-direction: column; align-items: stretch; overflow-x: auto; }
+.key-row { display: flex; gap: .35rem; min-width: 48rem; }
+.key-row button { flex: 1 0 3rem; min-width: 3rem; font-size: .8rem; }
+.key-row .key-space { flex: 3 0 9rem; }
 button { min-width: 5rem; min-height: 2.5rem; touch-action: none; }
 button:disabled { opacity: .5; }
+button.held, button[aria-pressed="true"] { background: #111111; color: #eeeeee; }

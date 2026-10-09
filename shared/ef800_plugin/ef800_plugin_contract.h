@@ -5,7 +5,7 @@
 #include <stddef.h>
 #include <stdint.h>
 
-#define EF800_PLUGIN_CONTRACT_VERSION 2u
+#define EF800_PLUGIN_CONTRACT_VERSION 3u
 
 #define EF800_PLUGIN_MAX_NAME_LENGTH 31u
 #define EF800_PLUGIN_MAX_VERSION_LENGTH 15u
@@ -34,7 +34,7 @@
 #define EF800_PLUGIN_METADATA_UUID_BYTES \
 	0x65u, 0x66u, 0x38u, 0x30u, 0x30u, 0x2du, 0x6du, 0x65u, \
 	0x74u, 0x61u, 0x2du, 0x76u, 0x31u, 0x00u, 0x00u, 0x01u
-#define EF800_PLUGIN_METADATA_VERSION 1u
+#define EF800_PLUGIN_METADATA_VERSION 2u
 
 #define EF800_PLUGIN_UI_SERVICE_UUID_BYTES \
 	0x65u, 0x66u, 0x38u, 0x30u, 0x30u, 0x2du, 0x75u, 0x69u, \
@@ -84,6 +84,11 @@ struct ef800_plugin_metadata {
 	uint32_t measurement_ui_version;
 	uint32_t measurement_ui_size;
 	uint32_t measurement_actions;
+	uint32_t serial_baudrate;
+	uint8_t serial_data_bits;
+	uint8_t serial_parity;
+	uint8_t serial_stop_bits;
+	uint8_t serial_flow_control;
 };
 
 struct ef800_calculation_api {
@@ -106,6 +111,11 @@ struct ef800_plugin_descriptor_info {
 	uint32_t capabilities;
 	uint32_t required_hardware;
 	uint32_t measurement_actions;
+	uint32_t serial_baudrate;
+	uint8_t serial_data_bits;
+	uint8_t serial_parity;
+	uint8_t serial_stop_bits;
+	uint8_t serial_flow_control;
 	enum ef800_plugin_kind kind;
 	enum ef800_plugin_menu_category menu_category;
 	char name[EF800_PLUGIN_MAX_NAME_LENGTH + 1u];

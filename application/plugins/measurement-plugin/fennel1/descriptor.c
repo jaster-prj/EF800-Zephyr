@@ -40,6 +40,7 @@ static const struct ef800_plugin_metadata ef800_metadata = {
     sizeof(struct ef800_plugin_metadata), EF800_PLUGIN_HARDWARE_SERIAL,
     EF800_MEASUREMENT_UI_API_VERSION, sizeof(struct ef800_measurement_api),
     EF800_MEASUREMENT_ACTION_MEASURE,
+    9600u, 8u, EF800_SERIAL_PARITY_NONE, 1u, EF800_SERIAL_FLOW_NONE,
 };
 
 __attribute__((section(".rodata.pm_descriptor"), used))

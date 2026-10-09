@@ -24,7 +24,21 @@ from protocol import (FRAME_SIZE, MSG_ACK, MSG_CAPABILITIES, MSG_KEY_DOWN,
 
 MAX_BROWSER_MESSAGE = 1024
 MAX_PLUGIN_PACKAGE = 32 * 1024
-VALID_KEYS = {"up", "down", "left", "right", "enter", "esc"}
+
+# One canonical browser name per occupied EF800 keyboard position.  Aliases
+# accepted by the native resolver (return, esc, back, control) are deliberately
+# not exposed as additional browser controls.
+CANONICAL_KEYS = (
+    "a", "b", "c", "d", "e", "f", "g", "h", "i", "j", "k", "l",
+    "m", "n", "o", "p", "q", "r", "s", "t", "u", "v", "w", "x",
+    "y", "z", "0", "1", "2", "3", "4", "5", "6", "7", "8", "9",
+    "comma", "period", "minus", "plus", "less", "caret", "space", "tab",
+    "enter", "escape", "backspace", "delete", "insert", "off", "up",
+    "down", "left", "right", "shift", "ctrl", "alt", "caps", "on",
+)
+VALID_KEYS = frozenset(CANONICAL_KEYS)
+COMPATIBILITY_ALIASES = frozenset(("esc", "return", "back", "control"))
+VALID_KEYS = VALID_KEYS | COMPATIBILITY_ALIASES
 
 
 class Gateway:
@@ -368,7 +382,8 @@ class Gateway:
                     self.held_keys.add(key)
                 else:
                     self.held_keys.discard(key)
-            return {"type": "ack", "command": command, "accepted": accepted}
+            return {"type": "ack", "command": command, "key": key,
+                    "accepted": accepted}
         if command == "release-all" and self.controller is ws:
             await self.release_all()
             return {"type": "ack", "command": command, "accepted": True}

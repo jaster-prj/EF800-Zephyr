@@ -9,13 +9,42 @@ sys.path.insert(0, str(pathlib.Path(__file__).parent))
 from protocol import LOG_GAP, encode_log_record
 
 try:
-    from gateway import Gateway
+    from gateway import CANONICAL_KEYS, Gateway
 except ModuleNotFoundError:
     Gateway = None
 
 
 @unittest.skipIf(Gateway is None, "aiohttp is installed in the gateway image")
 class GatewayStateTests(unittest.IsolatedAsyncioTestCase):
+    class Writer:
+        def __init__(self):
+            self.messages = []
+
+        def write(self, message):
+            self.messages.append(message)
+
+        async def drain(self):
+            return None
+
+    async def test_canonical_key_inventory_and_compatibility_aliases(self):
+        self.assertEqual(len(CANONICAL_KEYS), 59)
+        self.assertEqual(len(set(CANONICAL_KEYS)), 59)
+        gateway = Gateway()
+        gateway.writer = self.Writer()
+        controller = object()
+        gateway.controller = controller
+        for key in ("a", "backspace", "shift", "on", "up"):
+            result = await gateway.handle_browser_message(
+                controller, {"version": 1, "command": "key-down", "key": key})
+            self.assertTrue(result["accepted"])
+            self.assertEqual(result["key"], key)
+        result = await gateway.handle_browser_message(
+            controller, {"version": 1, "command": "key-down", "key": "esc"})
+        self.assertTrue(result["accepted"])
+        result = await gateway.handle_browser_message(
+            controller, {"version": 1, "command": "key-down", "key": "not-a-key"})
+        self.assertEqual(result["error"], "invalid key")
+
     async def test_controller_is_exclusive_and_release_clears_keys(self):
         gateway = Gateway()
         first = object()
@@ -24,6 +53,33 @@ class GatewayStateTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual((await gateway.handle_browser_message(second, {"version": 1, "command": "acquire"}))["error"], "controller occupied")
         self.assertFalse((await gateway.handle_browser_message(first, {"version": 1, "command": "key-down", "key": "right"}))["accepted"])
         await gateway.handle_browser_message(first, {"version": 1, "command": "release"})
+        self.assertFalse(gateway.held_keys)
+
+    async def test_release_all_clears_held_keys(self):
+        gateway = Gateway()
+        gateway.writer = self.Writer()
+        controller = object()
+        gateway.controller = controller
+        await gateway.handle_browser_message(
+            controller, {"version": 1, "command": "key-down", "key": "shift"})
+        await gateway.handle_browser_message(
+            controller, {"version": 1, "command": "key-down", "key": "a"})
+        self.assertEqual(gateway.held_keys, {"shift", "a"})
+        result = await gateway.handle_browser_message(
+            controller, {"version": 1, "command": "release-all"})
+        self.assertTrue(result["accepted"])
+        self.assertFalse(gateway.held_keys)
+
+    async def test_key_release_updates_held_key_tracking(self):
+        gateway = Gateway()
+        gateway.writer = self.Writer()
+        controller = object()
+        gateway.controller = controller
+        await gateway.handle_browser_message(
+            controller, {"version": 1, "command": "key-down", "key": "ctrl"})
+        result = await gateway.handle_browser_message(
+            controller, {"version": 1, "command": "key-up", "key": "ctrl"})
+        self.assertTrue(result["accepted"])
         self.assertFalse(gateway.held_keys)
 
     async def test_browser_message_is_bounded(self):

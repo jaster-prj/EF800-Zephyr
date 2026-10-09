@@ -36,7 +36,8 @@
   function setStatus(message) { status.textContent = message; }
   function send(message) {
     if (socket && socket.readyState === WebSocket.OPEN)
-      socket.send(JSON.stringify({version: 1, ...message}));
+      { socket.send(JSON.stringify({version: 1, ...message})); return true; }
+    return false;
   }
   function renderPixels(hex) {
     if (!hex || hex.length !== FRAME_SIZE * 2) return;
@@ -70,6 +71,12 @@
     simulatorRestart.disabled = !simulator;
     pluginAssign.disabled = !simulator;
     pluginExecute.disabled = !simulator;
+  }
+  function setKeyHeld(key, isHeld) {
+    const button = buttons.find(candidate => candidate.dataset.key === key);
+    if (!button) return;
+    button.classList.toggle('held', isHeld);
+    button.setAttribute('aria-pressed', String(isHeld));
   }
   function severityRank(value) { return {DEBUG: 0, INFO: 1, WARNING: 2, ERROR: 3, PANIC: 4}[value] ?? 0; }
   function renderLogs() {
@@ -151,6 +158,7 @@
       let message; try { message = JSON.parse(event.data); } catch (_) { return; }
       if (message.type === 'status') {
         simulator = !!message.simulatorConnected;
+        if (!message.controller || !message.simulatorConnected) clearHeld();
         controller = !!message.controller && controller;
          setStatus(`${simulator ? 'Simulator connected' : 'Simulator disconnected'} - ${controller ? 'controller' : 'viewer'}${message.stale ? ' (display stale)' : ''}${message.capabilities ? ` - ${message.capabilities}` : ''}`);
         updateControls();
@@ -174,10 +182,20 @@
           `Plugin registry error: ${message.error}`;
       } else if (message.type === 'ack' && message.command === 'acquire') {
         controller = !!message.accepted; updateControls();
+      } else if (message.type === 'ack' &&
+                 (message.command === 'key-down' || message.command === 'key-up')) {
+        const key = message.key;
+        if (message.command === 'key-down') pendingDown.delete(key);
+        else pendingUp.delete(key);
+        if (message.accepted) {
+          if (message.command === 'key-down') held.add(key);
+          else held.delete(key);
+          setKeyHeld(key, message.command === 'key-down');
+        }
       }
     };
     socket.onclose = () => {
-      controller = false; simulator = false; held.clear(); updateControls();
+      controller = false; simulator = false; clearHeld(); updateControls();
       setStatus('Disconnected; retrying...'); clearTimeout(reconnectTimer); reconnectTimer = setTimeout(connect, 1000);
     };
   }
@@ -196,18 +214,53 @@
   logsClear.onclick = () => { logRecords.length = 0; lastLogSequence = null; renderLogs(); };
   logsSeverity.onchange = renderLogs;
   logsAutoscroll.onchange = renderLogs;
-  function keyDown(key) { if (!controller || held.has(key)) return; held.add(key); send({command: 'key-down', key}); }
-  function keyUp(key) { if (!held.has(key)) return; held.delete(key); send({command: 'key-up', key}); }
+  const pendingDown = new Set(), pendingUp = new Set();
+  function clearHeld() {
+    held.clear(); pendingDown.clear(); pendingUp.clear();
+    buttons.forEach(button => {
+      button.classList.remove('held');
+      button.setAttribute('aria-pressed', 'false');
+    });
+  }
+  function keyDown(key) {
+    if (!controller || held.has(key) || pendingDown.has(key)) return;
+    if (send({command: 'key-down', key})) pendingDown.add(key);
+  }
+  function keyUp(key) {
+    if (!held.has(key) && !pendingDown.has(key)) return;
+    if (send({command: 'key-up', key})) pendingUp.add(key);
+  }
   buttons.forEach(button => {
     const key = button.dataset.key;
     button.addEventListener('pointerdown', event => { event.preventDefault(); keyDown(key); });
     button.addEventListener('pointerup', event => { event.preventDefault(); keyUp(key); });
+    button.addEventListener('pointercancel', () => keyUp(key));
     button.addEventListener('pointerleave', () => keyUp(key));
   });
-  const keys = {ArrowUp: 'up', ArrowDown: 'down', ArrowLeft: 'left', ArrowRight: 'right', Enter: 'enter', Escape: 'esc'};
-  window.addEventListener('keydown', event => { if (keys[event.key]) { event.preventDefault(); keyDown(keys[event.key]); } });
-  window.addEventListener('keyup', event => { if (keys[event.key]) { event.preventDefault(); keyUp(keys[event.key]); } });
-  function releaseHeld() { if (controller) send({command: 'release-all'}); held.clear(); }
+  const keys = {
+    ArrowUp: 'up', ArrowDown: 'down', ArrowLeft: 'left', ArrowRight: 'right',
+    Enter: 'enter', Escape: 'escape', Backspace: 'backspace', Delete: 'delete',
+    Insert: 'insert', Tab: 'tab', Shift: 'shift', Control: 'ctrl', Alt: 'alt',
+    CapsLock: 'caps', ' ': 'space', ',': 'comma', '.': 'period', '-': 'minus',
+    '+': 'plus', '<': 'less', '^': 'caret'
+  };
+  function keyForEvent(event) {
+    if (keys[event.key]) return keys[event.key];
+    if (event.key.length === 1 && /^[a-z0-9]$/i.test(event.key)) return event.key.toLowerCase();
+    return null;
+  }
+  window.addEventListener('keydown', event => {
+    const key = keyForEvent(event);
+    if (key) { event.preventDefault(); keyDown(key); }
+  });
+  window.addEventListener('keyup', event => {
+    const key = keyForEvent(event);
+    if (key) { event.preventDefault(); keyUp(key); }
+  });
+  function releaseHeld() {
+    if (controller) send({command: 'release-all'});
+    clearHeld();
+  }
   window.addEventListener('blur', releaseHeld);
   window.addEventListener('beforeunload', releaseHeld);
   updateControls(); connect();

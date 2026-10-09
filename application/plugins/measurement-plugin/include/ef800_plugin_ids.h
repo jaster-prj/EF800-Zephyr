@@ -17,7 +17,7 @@
 #define EF800_PLUGIN_METADATA_UUID_BYTES \
     0x65u, 0x66u, 0x38u, 0x30u, 0x30u, 0x2du, 0x6du, 0x65u, \
     0x74u, 0x61u, 0x2du, 0x76u, 0x31u, 0x00u, 0x00u, 0x01u
-#define EF800_PLUGIN_METADATA_VERSION 1u
+#define EF800_PLUGIN_METADATA_VERSION 2u
 #define EF800_PLUGIN_HARDWARE_SERIAL (1u << 0)
 
 struct ef800_plugin_metadata {
@@ -28,6 +28,11 @@ struct ef800_plugin_metadata {
     uint32_t measurement_ui_version;
     uint32_t measurement_ui_size;
     uint32_t measurement_actions;
+    uint32_t serial_baudrate;
+    uint8_t serial_data_bits;
+    uint8_t serial_parity;
+    uint8_t serial_stop_bits;
+    uint8_t serial_flow_control;
 };
 
 static const pm_uuid_t EF800_APPLICATION_ID = {{EF800_APPLICATION_UUID_BYTES}};

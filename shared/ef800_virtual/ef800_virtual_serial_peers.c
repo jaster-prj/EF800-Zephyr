@@ -25,8 +25,13 @@ struct virtual_peer {
 };
 
 static struct virtual_peer peers[PEER_COUNT] = {
-	{ .uart = DEVICE_DT_GET(DT_NODELABEL(usart1)), .available = true },
-	{ .uart = DEVICE_DT_GET(DT_NODELABEL(usart3)), .available = true },
+	/* EF800 Port 1 is UART3; Port 2 is USART1. */
+	{ .uart = DEVICE_DT_GET(DT_NODELABEL(usart3)),
+		.response = {'A', '\r', '\n'}, .response_length = 3U, .available = true },
+	{ .uart = DEVICE_DT_GET(DT_NODELABEL(usart1)),
+		.response = {'1','2','3','4',' ','0','4','5','2','7','0','0',' ',
+			'0','9','0','0','0','0','0','\r','\n'},
+		.response_length = 22U, .available = true },
 };
 
 static void peer_work(struct k_work *work)

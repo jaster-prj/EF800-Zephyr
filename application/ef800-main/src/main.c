@@ -96,6 +96,7 @@ static struct ef800_measurement_zephyr_transport measurement_transports[EF800_PO
 static uint8_t measurement_port_ids[EF800_PORT_COUNT];
 static size_t measurement_port_count;
 static uint8_t selected_measurement_port;
+static char assigned_plugin_names[EF800_PORT_COUNT][EF800_PLUGIN_MAX_NAME_LENGTH + 1U];
 static bool measurement_pending;
 static bool measurement_fixed;
 static int32_t measurement_number;
@@ -227,6 +228,7 @@ static void display_measurement_actions(void);
 static void display_measurement_plugin_menu(void);
 static void display_active_menu(void);
 static void display_measurement_editor(void);
+static const char *measurement_device_title(uint8_t port_id);
 static void display_calculation_menu(void);
 static size_t active_menu_count(void);
 static void display_line(uint8_t row, const char *text);
@@ -242,6 +244,41 @@ static int claim_loaded_port_assignments(void);
 static int reconcile_measurement_assignments(void);
 static int set_console_for_port(uint8_t port_id);
 #ifdef CONFIG_BOARD_NATIVE_SIM
+static int initialize_virtual_measurement_transport(uint8_t port_id,
+	uint32_t plugin_id)
+{
+	const struct ef800_port_uart_route *route;
+	const struct device *device;
+	struct ef800_measurement_serial_config config;
+	const struct ef800_plugin_registry_entry *entry;
+
+	if (port_id == 0U || port_id > EF800_PORT_COUNT || plugin_id == 0U) {
+		return -EINVAL;
+	}
+	if (measurement_transports[port_id - 1U].uart != NULL) {
+		return 0;
+	}
+	entry = ef800_plugin_registry_find(&plugin_registry, plugin_id);
+	if (entry == NULL || entry->state != EF800_PLUGIN_REGISTRY_READY ||
+		entry->info.serial_baudrate == 0U || entry->info.serial_data_bits == 0U ||
+		entry->info.serial_stop_bits == 0U) {
+		return -EINVAL;
+	}
+	route = ef800_port_uart_for_connection(port_id,
+		ef800_port_assignment_get_connection(&port_assignments, port_id));
+	device = route == NULL ? NULL : port_uart_device(route->uart_id);
+	if (device == NULL) {
+		return -ENODEV;
+	}
+	config.baudrate = entry->info.serial_baudrate;
+	config.data_bits = entry->info.serial_data_bits;
+	config.parity = entry->info.serial_parity;
+	config.stop_bits = entry->info.serial_stop_bits;
+	config.flow_control = entry->info.serial_flow_control;
+	return ef800_measurement_zephyr_init_with_config(
+		&measurement_transports[port_id - 1U], device, &config);
+}
+
 static int virtual_assign_plugin(void *context, uint8_t port_id,
 	uint32_t plugin_id, uint32_t connection);
 static int virtual_execute_plugin(void *context, uint8_t port_id);
@@ -1378,15 +1415,24 @@ static void display_port_assignment_ports(void)
 		size_t index = first + row;
 		const struct ef800_port_descriptor *port = ef800_port_at(index);
 		const struct ef800_port_device_descriptor *device = NULL;
+		bool plugin_assigned = false;
 		const struct ef800_port_connection_descriptor *connection = NULL;
+		uint32_t plugin_id = EF800_PORT_BUILDER_NONE;
 
 		if (port == NULL) {
 			display_line((uint8_t)(3U + row), "");
 			continue;
 		}
 		if (ef800_port_assignment_is_assigned(&port_assignments, port->id)) {
-			device = ef800_port_device_get(
-				ef800_port_assignment_get_builder(&port_assignments, port->id));
+			plugin_id = ef800_port_assignment_get_plugin_id(&port_assignments,
+				port->id);
+			if (ef800_port_assignment_get_builder(&port_assignments, port->id) ==
+				EF800_PORT_BUILDER_NONE) {
+				plugin_assigned = plugin_id != EF800_PORT_BUILDER_NONE;
+			} else {
+				device = ef800_port_device_get(
+					ef800_port_assignment_get_builder(&port_assignments, port->id));
+			}
 			for (size_t connection_index = 0U;
 				 connection_index < ef800_port_connection_count(port->id);
 				 ++connection_index) {
@@ -1402,11 +1448,13 @@ static void display_port_assignment_ports(void)
 		}
 		snprintk(line, sizeof(line), "%c %c %s: %s%s%s%s",
 			index == menu_selection ? '>' : ' ', port->shortcut, port->title,
-			device == NULL ? "none" : device->title,
+			device != NULL ? device->title :
+			plugin_assigned ? measurement_device_title(port->id) : "none",
 			connection == NULL ? "" : " / ",
 			connection == NULL ? "" : connection->name,
 			device != NULL && ef800_port_uart_can_claim(
-				&port_uart_registry, port->id, device->builder_id,
+				&port_uart_registry, port->id,
+				device->builder_id,
 				ef800_port_assignment_get_connection(&port_assignments,
 								     port->id)) != 0 ?
 				" (UART unavailable)" : "");
@@ -1474,7 +1522,8 @@ static size_t port_assignment_device_count(void)
 		++index) {
 		const struct ef800_plugin_registry_entry *plugin =
 			ef800_plugin_registry_at(&plugin_registry, index);
-		if (plugin != NULL && plugin->info.kind == EF800_PLUGIN_KIND_MEASUREMENT &&
+		if (plugin != NULL && plugin->state == EF800_PLUGIN_REGISTRY_READY &&
+			plugin->info.kind == EF800_PLUGIN_KIND_MEASUREMENT &&
 			plugin_hardware_matches_port(plugin, port)) {
 			++count;
 		}
@@ -1515,7 +1564,8 @@ static const struct ef800_plugin_registry_entry *plugin_at_selection(
 		++index) {
 		const struct ef800_plugin_registry_entry *plugin =
 			ef800_plugin_registry_at(&plugin_registry, index);
-		if (plugin != NULL && plugin->info.kind == EF800_PLUGIN_KIND_MEASUREMENT &&
+		if (plugin != NULL && plugin->state == EF800_PLUGIN_REGISTRY_READY &&
+			plugin->info.kind == EF800_PLUGIN_KIND_MEASUREMENT &&
 			plugin_hardware_matches_port(plugin, port) &&
 			selection-- == 0U) {
 			return plugin;
@@ -1528,9 +1578,11 @@ static void display_port_assignment_devices(void)
 {
 	const struct ef800_port_descriptor *port = ef800_port_at(selected_port_index);
 	const struct ef800_port_device_descriptor *current;
+	bool current_plugin_assigned = false;
 	char line[STATUS_LINE_SIZE];
 	size_t row = 3U;
 	size_t device_index = 0U;
+	uint32_t current_plugin_id;
 
 	if (port == NULL) {
 		return;
@@ -1538,12 +1590,23 @@ static void display_port_assignment_devices(void)
 	display_line(0U, "Port assignment");
 	snprintk(line, sizeof(line), "Port %u: %s", port->id, port->title);
 	display_line(1U, line);
-	current = ef800_port_device_get(ef800_port_assignment_get_builder(
-		&port_assignments, port->id));
+	current_plugin_id = ef800_port_assignment_get_plugin_id(&port_assignments,
+		port->id);
+	if (ef800_port_assignment_get_builder(&port_assignments, port->id) ==
+		EF800_PORT_BUILDER_NONE) {
+		current = NULL;
+		current_plugin_assigned = current_plugin_id != EF800_PORT_BUILDER_NONE;
+	} else {
+		current = ef800_port_device_get(ef800_port_assignment_get_builder(
+			&port_assignments, port->id));
+	}
 	if (!ef800_port_assignment_is_assigned(&port_assignments, port->id)) {
 		current = NULL;
+		current_plugin_assigned = false;
 	}
-	snprintk(line, sizeof(line), "Current: %s%s", current == NULL ? "none" : current->title,
+		snprintk(line, sizeof(line), "Current: %s%s",
+		current != NULL ? current->title :
+		current_plugin_assigned ? measurement_device_title(port->id) : "none",
 		port->fixed ? " (fixed)" : "");
 	display_line(2U, line);
 	for (size_t index = 0U; index < ef800_port_device_count(); ++index) {
@@ -1692,10 +1755,21 @@ static void display_port_debug_confirmation(void)
 static const char *measurement_device_title(uint8_t port_id)
 {
 	uint32_t plugin_id = ef800_port_assignment_get_plugin_id(&port_assignments, port_id);
-	const struct ef800_plugin_registry_entry *plugin =
-		ef800_plugin_registry_find(&plugin_registry, plugin_id);
-
-	return plugin == NULL ? "unknown" : plugin->info.name;
+	if (!ef800_port_assignment_is_assigned(&port_assignments, port_id) ||
+		plugin_id == EF800_PORT_BUILDER_NONE) {
+		return "none";
+	}
+	if (assigned_plugin_names[port_id - 1U][0] == '\0') {
+		const struct ef800_plugin_registry_entry *entry =
+			ef800_plugin_registry_find(&plugin_registry, plugin_id);
+		if (entry != NULL) {
+			strncpy(assigned_plugin_names[port_id - 1U], entry->info.name,
+				sizeof(assigned_plugin_names[0]) - 1U);
+			assigned_plugin_names[port_id - 1U][sizeof(assigned_plugin_names[0]) - 1U] = '\0';
+		}
+	}
+	return assigned_plugin_names[port_id - 1U][0] == '\0' ?
+		"assigned plugin" : assigned_plugin_names[port_id - 1U];
 }
 
 static int load_measurement_ports(void)
@@ -1728,8 +1802,8 @@ static void display_measurement_devices(void)
 			display_line((uint8_t)(3U + row), "");
 			continue;
 		}
-		snprintk(line, sizeof(line), "%c Port %u: %s",
-			index == menu_selection ? '>' : ' ', measurement_port_ids[index],
+		snprintk(line, sizeof(line), "%c %s",
+			index == menu_selection ? '>' : ' ',
 			measurement_device_title(measurement_port_ids[index]));
 		display_line((uint8_t)(3U + row), line);
 	}
@@ -1746,7 +1820,7 @@ static void display_measurement_actions(void)
 	size_t first = menu_selection >= 3U ? menu_selection - 3U : 0U;
 
 	display_line(0U, "Measurement");
-	snprintk(line, sizeof(line), "Port %u: %s", selected_measurement_port,
+	snprintk(line, sizeof(line), "%s",
 		measurement_device_title(selected_measurement_port));
 	display_line(1U, line);
 	if (measurement_pending) {
@@ -1779,8 +1853,9 @@ static bool selected_measurement_has_submenu(void)
 	const struct ef800_plugin_registry_entry *entry =
 		ef800_plugin_registry_find(&plugin_registry, plugin_id);
 
-	return entry != NULL && entry->info.kind == EF800_PLUGIN_KIND_MEASUREMENT &&
-		entry->state == EF800_PLUGIN_REGISTRY_READY;
+	return entry != NULL && entry->state == EF800_PLUGIN_REGISTRY_READY &&
+		entry->info.kind == EF800_PLUGIN_KIND_MEASUREMENT &&
+		entry->info.measurement_actions != 0U;
 }
 
 static size_t measurement_plugin_action_count(void)
@@ -2508,6 +2583,10 @@ static int virtual_assign_plugin(void *context, uint8_t port_id,
 		result = persist_port_assignment_metadata();
 		LOG_INF("Native plugin metadata result: %d", result);
 	}
+	if (result == 0) {
+		result = initialize_virtual_measurement_transport(port_id, plugin_id);
+		LOG_INF("Native plugin transport initialization result: %d", result);
+	}
 	/* Native-sim UART device readiness is intentionally provided by the
 	 * virtual frontpanel, not by the physical-board routing probe.  The claim
 	 * above establishes ownership; invoking the board reconciliation pass
@@ -2525,9 +2604,6 @@ static int virtual_assign_plugin(void *context, uint8_t port_id,
 static int virtual_execute_plugin(void *context, uint8_t port_id)
 {
 	uint32_t plugin_id;
-	const struct ef800_port_uart_route *route;
-	const struct device *device;
-	struct ef800_measurement_serial_config config;
 	struct ef800_measurement_data data;
 	int result;
 
@@ -2545,35 +2621,7 @@ static int virtual_execute_plugin(void *context, uint8_t port_id)
 		return -ENOENT;
 	}
 	if (measurement_transports[port_id - 1U].uart == NULL) {
-		route = ef800_port_uart_for_connection(port_id,
-			ef800_port_assignment_get_connection(&port_assignments, port_id));
-		device = route == NULL ? NULL : port_uart_device(route->uart_id);
-		if (device == NULL) {
-			LOG_WRN("Native plugin execute: UART device unavailable");
-			return -ENODEV;
-		}
-		result = ef800_plugin_host_serial_config(plugin_id, NULL, &config);
-		if (result != 0) {
-			/* Some native PluginManager builds cannot instantiate a plugin just
-			 * to query defaults before a transport exists.  Use the shared
-			 * contract defaults; the actual measurement still goes through the
-			 * loaded plugin and Port transport below. */
-			if (plugin_id == EF800_PORT_BUILDER_ELTA3) {
-				ef800_elta3_default_serial_config(&config);
-				result = 0;
-			} else if (plugin_id == EF800_PORT_BUILDER_FTS3XX) {
-				ef800_fts3xx_default_serial_config(&config);
-				result = 0;
-			} else {
-				result = -EINVAL;
-			}
-		}
-		if (result != 0) {
-			LOG_WRN("Native plugin execute: serial config failed: %d", result);
-			return result;
-		}
-		result = ef800_measurement_zephyr_init_with_config(
-			&measurement_transports[port_id - 1U], device, &config);
+		result = initialize_virtual_measurement_transport(port_id, plugin_id);
 		if (result != 0) {
 			LOG_WRN("Native plugin execute: UART init failed: %d", result);
 			return result;
@@ -2701,6 +2749,7 @@ static void commit_port_assignment_connection(void)
 	const struct ef800_port_connection_descriptor *connection =
 		connection_at_selection(menu_selection);
 	uint8_t old_builder_id;
+	uint8_t claim_builder_id;
 	uint32_t old_plugin_id;
 	uint32_t old_connection;
 	uint8_t old_debug_port = 0U;
@@ -2754,6 +2803,12 @@ static void commit_port_assignment_connection(void)
 		}
 		return;
 	}
+	/* A plugin selection uses builder_id zero while the selected plugin ID is
+	 * still a small integer (for example native-sim plugin 2 or 3).  Do not
+	 * reinterpret that plugin ID as a built-in device builder such as MSD;
+	 * measurement plugins claim the DebugDevice-compatible serial route. */
+	claim_builder_id = selected_builder_id == 0U ?
+		uart_owner_for_plugin(selected_plugin_id) : selected_builder_id;
 	if (old_builder_id != EF800_PORT_BUILDER_NONE) {
 		result = ef800_port_uart_release(&port_uart_registry, port->id,
 							 old_builder_id, old_connection);
@@ -2763,8 +2818,7 @@ static void commit_port_assignment_connection(void)
 		}
 	}
 	result = ef800_port_uart_claim(&port_uart_registry, port->id,
-						       selected_plugin_id <= UINT8_MAX ?
-						       (uint8_t)selected_plugin_id : 0U,
+						       claim_builder_id,
 						       connection->capability);
 	if (result != 0) {
 		if (old_builder_id != EF800_PORT_BUILDER_NONE) {
@@ -2774,7 +2828,7 @@ static void commit_port_assignment_connection(void)
 		display_port_assignment_result("Connection unavailable", result);
 		return;
 	}
-	result = selected_plugin_id > UINT8_MAX ?
+	result = selected_builder_id == 0U ?
 		ef800_port_assignment_set_plugin_with_connection(&port_assignments,
 			port->id, selected_plugin_id, connection->capability) :
 		set_port_assignment_runtime(port->id, selected_builder_id,
@@ -2783,10 +2837,29 @@ static void commit_port_assignment_connection(void)
 		result = persist_port_assignment_metadata();
 	}
 	if (result == 0) {
+	#ifdef CONFIG_BOARD_NATIVE_SIM
+		/* Native-sim plugin assignments use the virtual frontpanel UART
+		 * boundary; physical console routing is intentionally unavailable. */
+		if (selected_builder_id == 0U) {
+			result = initialize_virtual_measurement_transport(port->id,
+				selected_plugin_id);
+		} else {
+			result = reconcile_port_uart_state();
+		}
+	#else
 		result = reconcile_port_uart_state();
+	#endif
 	}
 	if (result == 0) {
 		char line[STATUS_LINE_SIZE];
+		const struct ef800_plugin_registry_entry *assigned_plugin =
+			ef800_plugin_registry_find(&plugin_registry, selected_plugin_id);
+		if (assigned_plugin != NULL && port->id <= EF800_PORT_COUNT) {
+			strncpy(assigned_plugin_names[port->id - 1U],
+				assigned_plugin->info.name,
+				sizeof(assigned_plugin_names[0]) - 1U);
+			assigned_plugin_names[port->id - 1U][sizeof(assigned_plugin_names[0]) - 1U] = '\0';
+		}
 			snprintk(line, sizeof(line), "Assigned plugin %u to port %u",
 			(unsigned)selected_plugin_id, port->id);
 		display_port_assignment_result(line, 0);
@@ -2799,7 +2872,7 @@ static void commit_port_assignment_connection(void)
 		display_port_assignment_ports();
 	} else {
 		(void)ef800_port_uart_release(&port_uart_registry, port->id,
-						       selected_builder_id, connection->capability);
+						       claim_builder_id, connection->capability);
 		(void)ef800_port_assignment_import_plugin_with_connection(&port_assignments,
 			port->id, old_plugin_id, old_connection);
 		if (old_builder_id != EF800_PORT_BUILDER_NONE) {
@@ -2909,13 +2982,10 @@ static void activate_menu_entry(void)
 			if (selected_measurement_has_submenu()) {
 				uint32_t plugin_id = ef800_port_assignment_get_plugin_id(&port_assignments,
 					selected_measurement_port);
-				const struct ef800_plugin_registry_entry *entry =
-					ef800_plugin_registry_find(&plugin_registry, plugin_id);
-				int session_result = entry != NULL ?
-					ef800_plugin_host_measurement_session_open(
+				int session_result = ef800_plugin_host_measurement_session_open(
 						&measurement_plugin_session, plugin_id,
-						&measurement_transports[selected_measurement_port - 1U].transport) : -ENODEV;
-				if (session_result != 0 || entry == NULL) {
+						&measurement_transports[selected_measurement_port - 1U].transport);
+				if (session_result != 0) {
 					display_line(6U, "Plugin unavailable");
 					return;
 				}

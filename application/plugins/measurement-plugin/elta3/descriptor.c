@@ -49,6 +49,7 @@ static const struct ef800_plugin_metadata ef800_metadata = {
         (EF800_MEASUREMENT_ACTION_MEASURE | EF800_MEASUREMENT_ACTION_UP |
          EF800_MEASUREMENT_ACTION_DOWN | EF800_MEASUREMENT_ACTION_ENTER) :
         EF800_MEASUREMENT_ACTION_MEASURE,
+    1200u, 7u, EF800_SERIAL_PARITY_ODD, 2u, EF800_SERIAL_FLOW_NONE,
 };
 
 __attribute__((section(".rodata.pm_descriptor"), used))

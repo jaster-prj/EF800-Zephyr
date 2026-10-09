@@ -9,3 +9,5 @@
 # Local signing material and generated firmware packages.
 /keys/
 /artifacts/
+__pycache__/
+.pyc

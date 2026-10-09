@@ -4,6 +4,11 @@
 #include <errno.h>
 #include <string.h>
 
+#if CONFIG_BOARD_NATIVE_SIM
+#include <sys/mman.h>
+#include <unistd.h>
+#endif
+
 #include <zephyr/kernel.h>
 #include <zephyr/logging/log.h>
 
@@ -42,11 +47,31 @@ static struct pm_manager *manager;
 static struct ef800_plugin_registry *active_registry;
 static bool ready;
 K_MUTEX_DEFINE(plugin_host_mutex);
-static struct pm_plugin_descriptor descriptor;
-static uint8_t plugin_text[EF800_PLUGIN_TEXT_SIZE] __aligned(4);
-static uint8_t plugin_rodata[EF800_PLUGIN_RODATA_SIZE] __aligned(4);
-static uint8_t plugin_data[EF800_PLUGIN_DATA_SIZE] __aligned(4);
-static uint8_t plugin_bss[EF800_PLUGIN_BSS_SIZE] __aligned(4);
+static struct pm_plugin_descriptor descriptor_slots[EF800_PLUGIN_MAX_ENTRIES];
+static uint32_t descriptor_slot_ids[EF800_PLUGIN_MAX_ENTRIES];
+static bool descriptor_slot_used[EF800_PLUGIN_MAX_ENTRIES];
+
+struct plugin_image_slot {
+	bool used;
+#if CONFIG_BOARD_NATIVE_SIM
+	uint8_t *text;
+	uint8_t *rodata;
+	uint8_t *data;
+	uint8_t *bss;
+#else
+	uint8_t text[EF800_PLUGIN_TEXT_SIZE] __aligned(4);
+	uint8_t rodata[EF800_PLUGIN_RODATA_SIZE] __aligned(4);
+	uint8_t data[EF800_PLUGIN_DATA_SIZE] __aligned(4);
+	uint8_t bss[EF800_PLUGIN_BSS_SIZE] __aligned(4);
+#endif
+};
+
+#if CONFIG_BOARD_NATIVE_SIM
+#define EF800_PLUGIN_IMAGE_SLOT_COUNT EF800_PLUGIN_MAX_ENTRIES
+#else
+#define EF800_PLUGIN_IMAGE_SLOT_COUNT 1U
+#endif
+static struct plugin_image_slot plugin_image_slots[EF800_PLUGIN_IMAGE_SLOT_COUNT];
 static struct ef800_port_api port_api;
 static struct pm_service service_items[1];
 static struct pm_service_table service_table;
@@ -156,6 +181,27 @@ static int adapt_descriptor(const struct pm_wire_plugin_descriptor *wire,
 		.context = &arm_adapter,
 #endif
 	};
+	struct pm_plugin_descriptor *descriptor_slot = NULL;
+	for (size_t index = 0U; index < ARRAY_SIZE(descriptor_slots); ++index) {
+		if (descriptor_slot_used[index] &&
+			descriptor_slot_ids[index] == wire->plugin_id) {
+			descriptor_slot = &descriptor_slots[index];
+			break;
+		}
+	}
+	if (descriptor_slot == NULL) {
+		for (size_t index = 0U; index < ARRAY_SIZE(descriptor_slots); ++index) {
+			if (!descriptor_slot_used[index]) {
+				descriptor_slot_used[index] = true;
+				descriptor_slot_ids[index] = wire->plugin_id;
+				descriptor_slot = &descriptor_slots[index];
+				break;
+			}
+		}
+	}
+	if (descriptor_slot == NULL) {
+		return PM_ENOMEM;
+	}
 	int status;
 
 	ARG_UNUSED(manifest);
@@ -165,11 +211,20 @@ static int adapt_descriptor(const struct pm_wire_plugin_descriptor *wire,
 #else
 	status = pm_arm_entry_adapter_validate(&arm_adapter, image);
 #endif
-	if (status == PM_OK) {
-		status = pm_wire_descriptor_bind(wire, image, &bind, &descriptor);
+	if (status != PM_OK) {
+		LOG_WRN("Plugin entry adapter validation failed: %d text=%p size=%u",
+			status, image == NULL ? NULL : image->text,
+			(unsigned)(image == NULL ? 0U : image->text_size));
 	}
 	if (status == PM_OK) {
-		*result = &descriptor;
+		status = pm_wire_descriptor_bind(wire, image, &bind, descriptor_slot);
+		if (status != PM_OK) {
+			LOG_WRN("Plugin wire descriptor bind failed: %d create=0x%08x destroy=0x%08x",
+				status, wire->create_address, wire->destroy_address);
+		}
+	}
+	if (status == PM_OK) {
+		*result = descriptor_slot;
 	}
 	return status;
 }
@@ -178,26 +233,71 @@ static int allocate_image(void *context, size_t text_size, size_t rodata_size,
 	size_t data_size, size_t bss_size, uint8_t **text, uint8_t **rodata,
 	uint8_t **data, uint8_t **bss)
 {
+	struct plugin_image_slot *slot;
+
 	ARG_UNUSED(context);
-	if (text_size > sizeof(plugin_text) || rodata_size > sizeof(plugin_rodata) ||
-		data_size > sizeof(plugin_data) || bss_size > sizeof(plugin_bss)) {
+	if (text == NULL || rodata == NULL || data == NULL || bss == NULL ||
+		text_size > EF800_PLUGIN_TEXT_SIZE ||
+		rodata_size > EF800_PLUGIN_RODATA_SIZE ||
+		data_size > EF800_PLUGIN_DATA_SIZE || bss_size > EF800_PLUGIN_BSS_SIZE) {
 		return PM_EOVERFLOW;
 	}
-	*text = plugin_text;
-	*rodata = plugin_rodata;
-	*data = plugin_data;
-	*bss = plugin_bss;
-	return PM_OK;
+	for (size_t index = 0U; index < ARRAY_SIZE(plugin_image_slots); ++index) {
+		slot = &plugin_image_slots[index];
+		if (!slot->used) {
+#if CONFIG_BOARD_NATIVE_SIM
+			slot->text = mmap(NULL, EF800_PLUGIN_TEXT_SIZE,
+				PROT_READ | PROT_WRITE | PROT_EXEC,
+				MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
+			slot->rodata = mmap(NULL, EF800_PLUGIN_RODATA_SIZE,
+				PROT_READ | PROT_WRITE | PROT_EXEC,
+				MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
+			slot->data = mmap(NULL, EF800_PLUGIN_DATA_SIZE,
+				PROT_READ | PROT_WRITE | PROT_EXEC,
+				MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
+			slot->bss = mmap(NULL, EF800_PLUGIN_BSS_SIZE,
+				PROT_READ | PROT_WRITE | PROT_EXEC,
+				MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
+			if (slot->text == MAP_FAILED || slot->rodata == MAP_FAILED ||
+				slot->data == MAP_FAILED || slot->bss == MAP_FAILED) {
+				if (slot->text != MAP_FAILED) munmap(slot->text, EF800_PLUGIN_TEXT_SIZE);
+				if (slot->rodata != MAP_FAILED) munmap(slot->rodata, EF800_PLUGIN_RODATA_SIZE);
+				if (slot->data != MAP_FAILED) munmap(slot->data, EF800_PLUGIN_DATA_SIZE);
+				if (slot->bss != MAP_FAILED) munmap(slot->bss, EF800_PLUGIN_BSS_SIZE);
+				slot->text = slot->rodata = slot->data = slot->bss = NULL;
+				return PM_ENOMEM;
+			}
+#endif
+			slot->used = true;
+			*text = slot->text;
+			*rodata = slot->rodata;
+			*data = slot->data;
+			*bss = slot->bss;
+			return PM_OK;
+		}
+	}
+	return PM_ENOMEM;
 }
 
 static void free_image(void *context, uint8_t *text, uint8_t *rodata,
 	uint8_t *data, uint8_t *bss)
 {
 	ARG_UNUSED(context);
-	ARG_UNUSED(text);
-	ARG_UNUSED(rodata);
-	ARG_UNUSED(data);
-	ARG_UNUSED(bss);
+	for (size_t index = 0U; index < ARRAY_SIZE(plugin_image_slots); ++index) {
+		struct plugin_image_slot *slot = &plugin_image_slots[index];
+		if (slot->text == text && slot->rodata == rodata &&
+			slot->data == data && slot->bss == bss) {
+#if CONFIG_BOARD_NATIVE_SIM
+			munmap(slot->text, EF800_PLUGIN_TEXT_SIZE);
+			munmap(slot->rodata, EF800_PLUGIN_RODATA_SIZE);
+			munmap(slot->data, EF800_PLUGIN_DATA_SIZE);
+			munmap(slot->bss, EF800_PLUGIN_BSS_SIZE);
+			slot->text = slot->rodata = slot->data = slot->bss = NULL;
+#endif
+			slot->used = false;
+			return;
+		}
+	}
 }
 
 static int port_write(void *context, const uint8_t *data, uint32_t length)
@@ -309,7 +409,9 @@ static int activate_measurement(uint32_t plugin_id,
 static void deactivate_measurement(uint32_t plugin_id)
 {
 	(void)pm_manager_destroy_instance(manager, plugin_id);
+	#if !CONFIG_BOARD_NATIVE_SIM
 	(void)pm_manager_unload(manager, plugin_id);
+	#endif
 }
 
 int ef800_plugin_host_measurement_session_open(
@@ -344,6 +446,27 @@ int ef800_plugin_host_measurement_session_open(
 	service_table.count = ARRAY_SIZE(service_items);
 	contract.services = service_items;
 	contract.service_count = service_table.count;
+	#if CONFIG_BOARD_NATIVE_SIM
+	/* Native discovery keeps the validated image resident. Reuse that
+	 * descriptor instead of loading a second copy into another bounded slot. */
+	session->loaded_id = plugin_id;
+	{
+		const struct pm_plugin_descriptor *loaded_descriptor = NULL;
+		if (pm_manager_get_descriptor(manager, plugin_id, &loaded_descriptor) == PM_OK &&
+			loaded_descriptor != NULL) {
+			LOG_INF("Native session descriptor plugin=%u create=%p destroy=%p services=%u",
+				(unsigned)plugin_id, loaded_descriptor->create,
+				loaded_descriptor->destroy,
+				(unsigned)loaded_descriptor->required_service_count);
+		}
+	}
+	LOG_INF("Native session: creating plugin %u instance", (unsigned)plugin_id);
+	status = pm_manager_create_instance(manager, session->loaded_id);
+	LOG_INF("Native session: create result %d", status);
+	if (status != PM_OK) {
+		return status;
+	}
+	#else
 	status = pm_manager_load_available(manager, (size_t)available_index(plugin_id),
 		&package_config, &session->loaded_id);
 	if (status != PM_OK) {
@@ -354,9 +477,18 @@ int ef800_plugin_host_measurement_session_open(
 		status = pm_manager_get_instance(manager, session->loaded_id,
 			(void **)&instance);
 	}
+	#endif
+	#if CONFIG_BOARD_NATIVE_SIM
+	LOG_INF("Native session: getting plugin %u instance", (unsigned)session->loaded_id);
+	status = pm_manager_get_instance(manager, session->loaded_id,
+		(void **)&instance);
+	LOG_INF("Native session: get result %d instance=%p", status, instance);
+	#endif
 	if (status != PM_OK) {
 		(void)pm_manager_destroy_instance(manager, session->loaded_id);
+	#if !CONFIG_BOARD_NATIVE_SIM
 		(void)pm_manager_unload(manager, session->loaded_id);
+	#endif
 		return status;
 	}
 	session->plugin_id = plugin_id;
@@ -480,7 +612,9 @@ void ef800_plugin_host_measurement_session_close(
 	}
 	if (manager != NULL && session->loaded_id != 0U) {
 		(void)pm_manager_destroy_instance(manager, session->loaded_id);
+	#if !CONFIG_BOARD_NATIVE_SIM
 		(void)pm_manager_unload(manager, session->loaded_id);
+	#endif
 	}
 	*session = (struct ef800_measurement_plugin_session){0};
 }
@@ -636,6 +770,11 @@ static void inspect_available_metadata(void)
 					if (entry != NULL) {
 						entry->info.measurement_actions =
 							metadata->measurement_actions;
+						entry->info.serial_baudrate = metadata->serial_baudrate;
+						entry->info.serial_data_bits = metadata->serial_data_bits;
+						entry->info.serial_parity = metadata->serial_parity;
+						entry->info.serial_stop_bits = metadata->serial_stop_bits;
+						entry->info.serial_flow_control = metadata->serial_flow_control;
 					}
 				}
 			}
@@ -724,6 +863,8 @@ int ef800_plugin_host_measure(uint32_t plugin_id,
 	};
 	int status = activate_measurement(plugin_id, transport,
 		(void **)&instance);
+	LOG_INF("Native runtime plugin %u activate=%d instance=%p",
+		(unsigned)plugin_id, status, instance);
 
 	if (status != 0) {
 		return status;
@@ -733,6 +874,8 @@ int ef800_plugin_host_measure(uint32_t plugin_id,
 		return -EPROTO;
 	}
 	status = instance->api->measure(instance, &result);
+	LOG_INF("Native runtime plugin %u measure=%d",
+		(unsigned)plugin_id, status);
 	if (status == PM_OK && measurement != NULL) {
 		measurement->distance_mm = result.distance_mm;
 		measurement->horizontal_gon_1e4 = result.horizontal_gon_1e4;
@@ -740,6 +883,7 @@ int ef800_plugin_host_measure(uint32_t plugin_id,
 		measurement->control = result.control;
 	}
 	deactivate_measurement(plugin_id);
+	LOG_INF("Native runtime plugin %u deactivated", (unsigned)plugin_id);
 	return status == PM_OK ? 0 : -EIO;
 }
 
