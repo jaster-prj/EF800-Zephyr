@@ -4,7 +4,7 @@
 
 #include <stdint.h>
 
-#define EF800_MEASUREMENT_API_VERSION 2u
+#define EF800_MEASUREMENT_API_VERSION 3u
 #define EF800_MEASUREMENT_UI_API_VERSION 1u
 #define EF800_MEASUREMENT_SCREEN_ROWS 6u
 #define EF800_MEASUREMENT_SCREEN_COLUMNS 40u
@@ -32,6 +32,12 @@ enum ef800_measurement_input {
 #define EF800_MEASUREMENT_ACTION_UP (1u << 1)
 #define EF800_MEASUREMENT_ACTION_DOWN (1u << 2)
 #define EF800_MEASUREMENT_ACTION_ENTER (1u << 3)
+#define EF800_MEASUREMENT_ACTION_CODE (1u << 4)
+#define EF800_MEASUREMENT_ACTION_POINT (1u << 5)
+#define EF800_MEASUREMENT_ACTION_STAFF_HEIGHT (1u << 6)
+#define EF800_MEASUREMENT_ACTION_SAVE (1u << 7)
+#define EF800_MEASUREMENT_ACTION_DISCARD (1u << 8)
+#define EF800_MEASUREMENT_ACTION_FIX (1u << 9)
 #endif
 
 enum ef800_measurement_key_code {
@@ -101,6 +107,12 @@ struct ef800_measurement_result {
     uint32_t reserved_words[3];
 };
 
+struct ef800_measurement_context {
+    uint32_t struct_size;
+    int32_t point_number;
+    char code[49];
+};
+
 struct ef800_measurement_api {
     uint32_t abi_version;
     uint32_t struct_size;
@@ -115,7 +127,12 @@ struct ef800_measurement_api {
     int32_t (*handle_key)(void *instance,
         const struct ef800_measurement_key_event *event,
         uint32_t *result);
-    uint32_t reserved[2];
+    int32_t (*set_context)(void *instance,
+        const struct ef800_measurement_context *context);
+    int32_t (*get_workspace_record)(void *instance, char *buffer,
+        uint32_t capacity, uint32_t *length);
+    int32_t (*workspace_record_result)(void *instance, int32_t status);
+    uint32_t reserved[1];
 };
 
 /* pm_plugin_create returns a pointer to this object as its opaque instance. */

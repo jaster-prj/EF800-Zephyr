@@ -32,6 +32,9 @@ struct ef800_persistence_backend {
 	void *context;
 	int (*read)(void *context, enum ef800_persistence_root root,
 		    const char *name, void *buffer, size_t capacity, size_t *length);
+	int (*read_range)(void *context, enum ef800_persistence_root root,
+			 const char *name, size_t offset, void *buffer,
+			 size_t capacity, size_t *length);
 	int (*write)(void *context, enum ef800_persistence_root root,
 		     const char *name, const void *buffer, size_t length);
 	int (*append)(void *context, enum ef800_persistence_root root,
@@ -56,6 +59,10 @@ bool ef800_persistence_valid_name(const char *name);
 int ef800_persistence_read(struct ef800_persistence *storage,
 			   enum ef800_persistence_root root, const char *name,
 			   void *buffer, size_t capacity, size_t *length);
+int ef800_persistence_read_range(struct ef800_persistence *storage,
+				 enum ef800_persistence_root root, const char *name,
+				 size_t offset, void *buffer, size_t capacity,
+				 size_t *length);
 int ef800_persistence_write(struct ef800_persistence *storage,
 			    enum ef800_persistence_root root, const char *name,
 			    const void *buffer, size_t length);

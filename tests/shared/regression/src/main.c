@@ -447,12 +447,12 @@ ZTEST(keyboard_protocol, test_position_record_format)
 
 	zassert_true(ef800_position_format_record(&entry, record, sizeof(record)) > 0,
 		     NULL);
-	zassert_str_equal(record, "-STP1 1.234 P001 \r");
+	zassert_str_equal(record, "-STP1 1.234 P001 \r\n");
 
 	entry.height_millimeters = -500;
 	zassert_true(ef800_position_format_record(&entry, record, sizeof(record)) > 0,
 		     NULL);
-	zassert_str_equal(record, "-STP1 -0.500 P001 \r");
+	zassert_str_equal(record, "-STP1 -0.500 P001 \r\n");
 }
 
 ZTEST(keyboard_protocol, test_position_append_to_workspace)
@@ -475,8 +475,36 @@ ZTEST(keyboard_protocol, test_position_append_to_workspace)
 	zassert_ok(ef800_position_append(&workspace, &position), NULL);
 	zassert_ok(ef800_persistence_read(&storage, EF800_PERSISTENCE_DATA,
 					 "survey.dat", content, sizeof(content), &length), NULL);
-	zassert_equal(length, strlen("-STP1 2.500 P001 \r"), NULL);
-	zassert_mem_equal(content, "-STP1 2.500 P001 \r", length, NULL);
+	zassert_equal(length, strlen("-STP1 2.500 P001 \r\n"), NULL);
+	zassert_mem_equal(content, "-STP1 2.500 P001 \r\n", length, NULL);
+}
+
+ZTEST(keyboard_protocol, test_workspace_range_read_supports_large_files)
+{
+	struct ef800_persistence_fake fake;
+	struct ef800_persistence storage;
+	struct ef800_workspace workspace;
+	char content[6000];
+	char range[32] = {0};
+	size_t length;
+
+	for (size_t index = 0U; index < sizeof(content); ++index) {
+		content[index] = (char)('A' + (index % 26U));
+	}
+	ef800_persistence_fake_init(&fake);
+	zassert_ok(ef800_persistence_init(&storage, &fake.backend), NULL);
+	zassert_ok(ef800_workspace_init(&workspace, &storage), NULL);
+	zassert_ok(ef800_workspace_create(&workspace, "large"), NULL);
+	zassert_ok(ef800_workspace_append(&workspace, content, sizeof(content)), NULL);
+	zassert_ok(ef800_workspace_size(&workspace, &length), NULL);
+	zassert_equal(length, sizeof(content), NULL);
+	zassert_ok(ef800_workspace_read_range(&workspace, 5000U, 5032U,
+			range, sizeof(range), &length), NULL);
+	zassert_equal(length, sizeof(range), NULL);
+	zassert_equal(range[0], content[5000], NULL);
+	zassert_equal(range[31], content[5031], NULL);
+	zassert_true(ef800_workspace_line_is_position("-STP 1.000 CODE"), NULL);
+	zassert_false(ef800_workspace_line_is_position("1 1.000 2.000"), NULL);
 }
 #endif
 
@@ -1171,6 +1199,76 @@ ZTEST(keyboard_protocol, test_measurement_append_to_workspace)
 						 "survey.dat", content, sizeof(content), &length), NULL);
 	zassert_str_equal(content, "7 100.0000 1.234 50.5000 1.500 P001\r", NULL);
 	zassert_equal(length, strlen(content), NULL);
+}
+
+ZTEST(keyboard_protocol, test_plugin_measurements_append_complete_records)
+{
+	struct ef800_persistence_fake fake;
+	struct ef800_persistence storage;
+	struct ef800_workspace workspace;
+	struct ef800_measurement_record fennel = {
+		.number = 8,
+		.data = {
+			.distance_mm = 1234,
+			.horizontal_gon_1e4 = 2000000,
+			.vertical_gon_1e4 = 1000000,
+		},
+		.staff_height_mm = 1600,
+		.code = "F001",
+	};
+	struct ef800_measurement_record elta = {
+		.number = 9,
+		.data = {
+			.distance_mm = 2345,
+			.horizontal_gon_1e4 = 3000000,
+			.vertical_gon_1e4 = 1100000,
+		},
+		.staff_height_mm = 1700,
+		.code = "E001",
+	};
+	char content[256] = {0};
+	size_t length;
+
+	ef800_persistence_fake_init(&fake);
+	zassert_ok(ef800_persistence_init(&storage, &fake.backend), NULL);
+	zassert_ok(ef800_workspace_init(&workspace, &storage), NULL);
+	zassert_ok(ef800_workspace_create(&workspace, "plugins"), NULL);
+	zassert_ok(ef800_measurement_append(&workspace, &fennel), NULL);
+	zassert_ok(ef800_measurement_append(&workspace, &elta), NULL);
+	zassert_ok(ef800_persistence_read(&storage, EF800_PERSISTENCE_DATA,
+		"plugins.dat", content, sizeof(content), &length), NULL);
+	zassert_str_equal(content,
+		"8 200.0000 1.234 100.0000 1.600 F001\r"
+		"9 300.0000 2.345 110.0000 1.700 E001\r", NULL);
+	zassert_equal(length, strlen(content), NULL);
+}
+
+ZTEST(keyboard_protocol, test_workspace_measurement_context_tracks_last_record)
+{
+	struct ef800_persistence_fake fake;
+	struct ef800_persistence storage;
+	struct ef800_workspace workspace;
+	struct ef800_workspace reloaded;
+	const char first[] = "4 100.0000 1.000 50.0000 1.200 OLD\r";
+	const char position[] = "-STP 1 2 3\r";
+	const char second[] = "5 110.0000 2.000 60.0000 1.300 NEW\r";
+
+	ef800_persistence_fake_init(&fake);
+	zassert_ok(ef800_persistence_init(&storage, &fake.backend), NULL);
+	zassert_ok(ef800_workspace_init(&workspace, &storage), NULL);
+	zassert_ok(ef800_workspace_create(&workspace, "context"), NULL);
+	zassert_ok(ef800_workspace_append(&workspace, first, sizeof(first) - 1U), NULL);
+	zassert_equal(ef800_workspace_current_point_number(&workspace), 4, NULL);
+	zassert_str_equal(ef800_workspace_current_code(&workspace), "OLD", NULL);
+	zassert_ok(ef800_workspace_append(&workspace, position, sizeof(position) - 1U), NULL);
+	zassert_equal(ef800_workspace_current_point_number(&workspace), 4, NULL);
+	zassert_ok(ef800_workspace_append(&workspace, second, sizeof(second) - 1U), NULL);
+	zassert_equal(ef800_workspace_current_point_number(&workspace), 5, NULL);
+	zassert_str_equal(ef800_workspace_current_code(&workspace), "NEW", NULL);
+	zassert_ok(ef800_workspace_init(&reloaded, &storage), NULL);
+	zassert_ok(ef800_workspace_load_current(&reloaded), NULL);
+	zassert_equal(ef800_workspace_current_point_number(&reloaded), 5, NULL);
+	zassert_str_equal(ef800_workspace_current_code(&reloaded), "NEW", NULL);
 }
 
 ZTEST(keyboard_protocol, test_measurement_device_plugins)

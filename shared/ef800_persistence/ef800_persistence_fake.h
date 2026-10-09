@@ -5,7 +5,7 @@
 #include "ef800_persistence.h"
 
 #define EF800_PERSISTENCE_FAKE_FILE_COUNT 32U
-#define EF800_PERSISTENCE_FAKE_FILE_SIZE 512U
+#define EF800_PERSISTENCE_FAKE_FILE_SIZE 8192U
 
 struct ef800_persistence_fake_file {
 	bool used;

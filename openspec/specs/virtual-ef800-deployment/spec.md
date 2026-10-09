@@ -7,18 +7,22 @@ Provide an independently deployable Docker Compose runtime for the Virtual EF800
 ## Requirements
 
 ### Requirement: Run Virtual EF800 independently of the development container
-The system SHALL provide a dedicated Alpine runtime image that runs the Linux Zephyr `native_sim` Virtual EF800 binary produced by `EF800_Devcontainer`, without using the long-lived development container as the runtime container.
+The system SHALL provide a dedicated minimal runtime image that runs the Linux Zephyr `native_sim` Virtual EF800 binary produced by `EF800_Devcontainer`, without using the long-lived development container as the runtime container. The runtime SHALL include the glibc dependencies required by the dynamically linked native-sim executable and SHALL supervise explicit simulator restarts.
 
 #### Scenario: Build a deployable simulator image
 - **WHEN** a developer builds the Virtual EF800 deployment from a clean repository checkout
-- **THEN** the documented development build produces the native-sim executable and the Alpine image packages that binary without embedding the Zephyr workspace or compiler
+- **THEN** the documented development build produces the native-sim executable and the runtime image packages that binary and its required runtime libraries without embedding the Zephyr workspace or compiler
 
 #### Scenario: Start the simulator runtime
 - **WHEN** the dedicated simulator container starts
-- **THEN** it runs the Virtual EF800 `native_sim` executable as its foreground process and listens for its front-panel client on the Compose network
+- **THEN** it runs the Virtual EF800 `native_sim` executable as a non-root process and listens for its front-panel and bounded control clients on the Compose network
+
+#### Scenario: Restart the simulator explicitly
+- **WHEN** the simulator receives an accepted restart request after a package upload
+- **THEN** it exits through the supervised restart path and the runtime starts a fresh native-sim process using the same virtual storage volume
 
 ### Requirement: Orchestrate the simulator and web front panel with Docker Compose
-The system SHALL provide a documented Docker Compose application containing separate simulator and web-front-panel services on a private application network.
+The system SHALL provide a documented Docker Compose application containing separate simulator and web-front-panel services on a private application network, with the web service able to upload packages and configure bounded virtual devices through the simulator control connection.
 
 #### Scenario: Start the complete deployment
 - **WHEN** a developer starts the documented Compose application

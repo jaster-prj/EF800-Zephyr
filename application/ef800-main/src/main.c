@@ -119,9 +119,12 @@ enum application_menu {
 	APPLICATION_MENU_MAIN = 0,
 	APPLICATION_MENU_SETTINGS,
 	APPLICATION_MENU_WORKSPACE,
+	APPLICATION_MENU_WORKSPACE_MANAGEMENT,
+	APPLICATION_MENU_WORKSPACE_VIEW,
 	APPLICATION_MENU_WORKSPACE_CREATE,
 	APPLICATION_MENU_WORKSPACE_SELECT,
 	APPLICATION_MENU_WORKSPACE_LIST,
+	APPLICATION_MENU_WORKSPACE_DELETE_CONFIRMATION,
 	APPLICATION_MENU_POSITION,
 	APPLICATION_MENU_PORTS,
 	APPLICATION_MENU_PORT_DEVICES,
@@ -140,6 +143,17 @@ static char workspace_input[EF800_WORKSPACE_NAME_MAX + 1U];
 static uint8_t workspace_input_length;
 static char workspace_names[WORKSPACE_LIST_MAX][EF800_WORKSPACE_NAME_MAX + 1U];
 static size_t workspace_name_count;
+#define WORKSPACE_VIEW_ROWS 4U
+#define WORKSPACE_VIEW_COLUMNS (LCD_COLUMNS)
+static char workspace_view_lines[WORKSPACE_VIEW_ROWS][WORKSPACE_VIEW_COLUMNS + 1U];
+static size_t workspace_view_line_starts[WORKSPACE_VIEW_ROWS];
+static size_t workspace_view_line_ends[WORKSPACE_VIEW_ROWS];
+static size_t workspace_view_line_count;
+static size_t workspace_view_start;
+static size_t workspace_view_end;
+static size_t workspace_view_file_size;
+static bool workspace_view_active;
+static bool workspace_view_position_only;
 
 enum position_editor_field {
 	POSITION_EDITOR_STP = 0,
@@ -206,18 +220,28 @@ static const char *const menu_shortcuts[] = {"w", "s", "m", "c", "e"};
 static const char *const settings_items[] = {
 	"Set time",
 	"Port assignment",
+	"Workspace management",
 };
-static const char *const settings_shortcuts[] = {"z", "p"};
+static const char *const settings_shortcuts[] = {"z", "p", "w"};
 static const char *const workspace_items[] = {
+	"Show Measurements",
+	"Show current Position",
+};
+static const char *const workspace_management_items[] = {
 	"Restore current",
 	"Load existing",
 	"New workspace",
 	"List workspaces",
+	"Delete workspace",
 };
-static const char *const workspace_shortcuts[] = {"l", "e", "n", "i"};
+static const char *const workspace_shortcuts[] = {"l", "e", "n", "i", "d"};
+static const char *const workspace_view_shortcuts[] = {"m", "p"};
 
 static void start_time_editor(void);
 static void display_workspace_list(void);
+static void display_workspace_management_menu(void);
+static void display_workspace_view(void);
+static void display_workspace_delete_confirmation(void);
 static void display_position_editor(void);
 static void display_port_assignment_ports(void);
 static void display_port_assignment_devices(void);
@@ -1398,8 +1422,319 @@ static void display_settings_menu(void)
 
 static void display_workspace_menu(void)
 {
-	display_menu_entries("Workspace", workspace_items, workspace_shortcuts,
+	display_menu_entries("Workspace", workspace_items, workspace_view_shortcuts,
 				     ARRAY_SIZE(workspace_items));
+}
+
+static void display_workspace_management_menu(void)
+{
+	display_menu_entries("Workspace management", workspace_management_items,
+				     workspace_shortcuts,
+				     ARRAY_SIZE(workspace_management_items));
+}
+
+static void workspace_view_reset(void)
+{
+	memset(workspace_view_lines, 0, sizeof(workspace_view_lines));
+	memset(workspace_view_line_starts, 0, sizeof(workspace_view_line_starts));
+	memset(workspace_view_line_ends, 0, sizeof(workspace_view_line_ends));
+	workspace_view_line_count = 0U;
+	workspace_view_start = 0U;
+	workspace_view_end = 0U;
+	workspace_view_file_size = 0U;
+	workspace_view_active = false;
+	workspace_view_position_only = false;
+}
+
+static void workspace_view_add_line(size_t start, size_t end,
+					const char *line, bool keep_last)
+{
+	size_t index;
+
+	if (keep_last && workspace_view_line_count >= WORKSPACE_VIEW_ROWS) {
+		for (index = 1U; index < WORKSPACE_VIEW_ROWS; ++index) {
+			memcpy(workspace_view_lines[index - 1U], workspace_view_lines[index],
+			       sizeof(workspace_view_lines[0]));
+			workspace_view_line_starts[index - 1U] = workspace_view_line_starts[index];
+			workspace_view_line_ends[index - 1U] = workspace_view_line_ends[index];
+		}
+		workspace_view_line_count = WORKSPACE_VIEW_ROWS - 1U;
+	}
+	if (workspace_view_line_count >= WORKSPACE_VIEW_ROWS) {
+		return;
+	}
+	index = workspace_view_line_count++;
+	workspace_view_line_starts[index] = start;
+	workspace_view_line_ends[index] = end;
+	strncpy(workspace_view_lines[index], line, WORKSPACE_VIEW_COLUMNS);
+	workspace_view_lines[index][WORKSPACE_VIEW_COLUMNS] = '\0';
+}
+
+static int workspace_view_load_range(size_t start, size_t end, bool keep_last)
+{
+	uint8_t buffer[EF800_WORKSPACE_SNAPSHOT_MAX];
+	size_t length;
+	size_t line_start = start;
+	size_t line_length = 0U;
+	char line[WORKSPACE_VIEW_COLUMNS + 1U];
+	bool skipping_partial = start != 0U;
+	int result;
+
+	if (end < start || end - start > sizeof(buffer)) {
+		return -EFBIG;
+	}
+	result = ef800_workspace_read_range(&workspace, start, end, buffer,
+					       sizeof(buffer), &length);
+	if (result != 0) {
+		return result;
+	}
+	if (skipping_partial && start > 0U) {
+		uint8_t previous;
+		size_t previous_length;
+
+		result = ef800_workspace_read_range(&workspace, start - 1U, start,
+						       &previous, 1U, &previous_length);
+		if (result != 0) {
+			return result;
+		}
+		skipping_partial = previous_length == 0U || previous != '\n';
+	}
+	workspace_view_line_count = 0U;
+	memset(workspace_view_lines, 0, sizeof(workspace_view_lines));
+	for (size_t index = 0U; index < length; ++index) {
+		char character = (char)buffer[index];
+
+		if (skipping_partial) {
+			if (character == '\n') {
+				skipping_partial = false;
+				line_start = start + index + 1U;
+			}
+			continue;
+		}
+		if (character == '\n') {
+			line[line_length] = '\0';
+			workspace_view_add_line(line_start, start + index + 1U, line,
+						keep_last);
+			line_length = 0U;
+			line_start = start + index + 1U;
+		} else if (character != '\r') {
+			if (line_length < WORKSPACE_VIEW_COLUMNS) {
+				line[line_length++] = character;
+			}
+		}
+	}
+	if (!skipping_partial && line_start < end) {
+		line[line_length] = '\0';
+		workspace_view_add_line(line_start, end, line, keep_last);
+	}
+	if (workspace_view_line_count == 0U) {
+		return -ENODATA;
+	}
+	workspace_view_start = workspace_view_line_starts[0];
+	workspace_view_end = workspace_view_line_ends[workspace_view_line_count - 1U];
+	return 0;
+}
+
+static int workspace_view_find_previous_start(size_t position, size_t *start)
+{
+	uint8_t buffer[EF800_WORKSPACE_SNAPSHOT_MAX];
+	size_t range_start;
+	size_t length;
+	int result;
+
+	if (position == 0U || start == NULL) {
+		return -ENOENT;
+	}
+	range_start = position > sizeof(buffer) ? position - sizeof(buffer) : 0U;
+	result = ef800_workspace_read_range(&workspace, range_start, position, buffer,
+					       sizeof(buffer), &length);
+	if (result != 0) {
+		return result;
+	}
+	for (size_t index = length; index > 1U; --index) {
+		if (buffer[index - 2U] == '\n') {
+			*start = range_start + index - 1U;
+			return 0;
+		}
+	}
+	*start = range_start;
+	return 0;
+}
+
+static int workspace_view_find_next_end(size_t position, size_t *end)
+{
+	uint8_t buffer[EF800_WORKSPACE_SNAPSHOT_MAX];
+	size_t range_end = MIN(workspace_view_file_size,
+				       position + sizeof(buffer));
+	size_t length;
+	int result;
+
+	if (position >= workspace_view_file_size || end == NULL) {
+		return -ENOENT;
+	}
+	result = ef800_workspace_read_range(&workspace, position, range_end, buffer,
+					       sizeof(buffer), &length);
+	if (result != 0) {
+		return result;
+	}
+	for (size_t index = 0U; index < length; ++index) {
+		if (buffer[index] == '\n') {
+			*end = position + index + 1U;
+			return 0;
+		}
+	}
+	*end = range_end;
+	return *end > position ? 0 : -ENOENT;
+}
+
+static int workspace_view_open_measurements(void)
+{
+	size_t raw_start;
+	int result;
+
+	workspace_view_reset();
+	if (!ef800_workspace_is_selected(&workspace)) {
+		return -ENODEV;
+	}
+	result = ef800_workspace_size(&workspace, &workspace_view_file_size);
+	if (result != 0 || workspace_view_file_size == 0U) {
+		return result != 0 ? result : -ENODATA;
+	}
+	raw_start = workspace_view_file_size > EF800_WORKSPACE_SNAPSHOT_MAX ?
+		workspace_view_file_size - EF800_WORKSPACE_SNAPSHOT_MAX : 0U;
+	result = workspace_view_load_range(raw_start, workspace_view_file_size, true);
+	if (result == 0) {
+		workspace_view_active = true;
+	}
+	return result;
+}
+
+static int workspace_view_move(int direction)
+{
+	size_t next_start;
+	size_t next_end;
+	int result;
+
+	if (!workspace_view_active || workspace_view_line_count == 0U) {
+		return -EINVAL;
+	}
+	if (direction < 0) {
+		result = workspace_view_find_previous_start(workspace_view_start,
+							   &next_start);
+		if (result != 0 || next_start == workspace_view_start) {
+			return -ENOENT;
+		}
+		next_end = workspace_view_start;
+	} else {
+		if (workspace_view_end >= workspace_view_file_size ||
+		    workspace_view_line_count < 2U) {
+			return -ENOENT;
+		}
+		next_start = workspace_view_line_starts[1];
+		result = workspace_view_find_next_end(workspace_view_end, &next_end);
+		if (result != 0) {
+			return result;
+		}
+	}
+	if (next_end - next_start > EF800_WORKSPACE_SNAPSHOT_MAX) {
+		next_start = next_end - EF800_WORKSPACE_SNAPSHOT_MAX;
+	}
+	return workspace_view_load_range(next_start, next_end, false);
+}
+
+static int workspace_view_find_position(void)
+{
+	uint8_t buffer[EF800_WORKSPACE_SNAPSHOT_MAX];
+	char line[WORKSPACE_VIEW_COLUMNS + 1U];
+	size_t offset = 0U;
+	size_t line_length = 0U;
+	size_t length;
+	int result;
+
+	workspace_view_reset();
+	if (!ef800_workspace_is_selected(&workspace)) {
+		return -ENODEV;
+	}
+	result = ef800_workspace_size(&workspace, &workspace_view_file_size);
+	if (result != 0) {
+		return result;
+	}
+	while (offset < workspace_view_file_size) {
+		size_t end = MIN(workspace_view_file_size,
+					 offset + sizeof(buffer));
+		result = ef800_workspace_read_range(&workspace, offset, end, buffer,
+						       sizeof(buffer), &length);
+		if (result != 0) {
+			return result;
+		}
+		for (size_t index = 0U; index < length; ++index) {
+			char character = (char)buffer[index];
+			if (character == '\n') {
+				line[line_length] = '\0';
+				if (ef800_workspace_line_is_position(line)) {
+					strncpy(workspace_view_lines[0], line,
+						WORKSPACE_VIEW_COLUMNS);
+					workspace_view_lines[0][WORKSPACE_VIEW_COLUMNS] = '\0';
+					workspace_view_line_count = 1U;
+				}
+				line_length = 0U;
+			} else if (character != '\r') {
+				if (line_length < WORKSPACE_VIEW_COLUMNS) {
+					line[line_length++] = character;
+				}
+			}
+		}
+		offset += length;
+		if (length == 0U) {
+			break;
+		}
+	}
+	if (line_length != 0U) {
+		line[line_length] = '\0';
+		if (ef800_workspace_line_is_position(line)) {
+			strncpy(workspace_view_lines[0], line, WORKSPACE_VIEW_COLUMNS);
+			workspace_view_lines[0][WORKSPACE_VIEW_COLUMNS] = '\0';
+			workspace_view_line_count = 1U;
+		}
+	}
+	workspace_view_active = true;
+	workspace_view_position_only = true;
+	return 0;
+}
+
+static void display_workspace_view(void)
+{
+	char workspace_line[STATUS_LINE_SIZE];
+
+	for (uint8_t row = 0U; row < 8U; ++row) {
+		display_line(row, "");
+	}
+
+	display_line(0U, workspace_view_position_only ? "Current Position" :
+								"Show Measurements");
+	if (ef800_workspace_is_selected(&workspace)) {
+		snprintk(workspace_line, sizeof(workspace_line), "Workspace: %s",
+				 ef800_workspace_get_name(&workspace));
+		display_line(1U, workspace_line);
+	} else {
+		display_line(1U, "Workspace: none");
+	}
+	if (!workspace_view_active) {
+		display_line(3U, "Workspace unavailable");
+		display_line(7U, "ESC back");
+		return;
+	}
+	if (workspace_view_position_only) {
+		display_line(3U, workspace_view_line_count == 0U ?
+					"No position" : workspace_view_lines[0]);
+		display_line(7U, "ESC back");
+		return;
+	}
+	for (size_t row = 0U; row < WORKSPACE_VIEW_ROWS; ++row) {
+		display_line((uint8_t)(3U + row), row < workspace_view_line_count ?
+					workspace_view_lines[row] : "");
+	}
+	display_line(7U, "UP/DOWN scroll  ESC back");
 }
 
 static void display_port_assignment_ports(void)
@@ -1867,10 +2202,13 @@ static size_t measurement_plugin_action_count(void)
 		&measurement_plugin_session, &display) != 0) {
 		return 0U;
 	}
-	return ((display.actions & EF800_MEASUREMENT_ACTION_MEASURE) != 0U) +
-		((display.actions & EF800_MEASUREMENT_ACTION_UP) != 0U) +
-		((display.actions & EF800_MEASUREMENT_ACTION_DOWN) != 0U) +
-		((display.actions & EF800_MEASUREMENT_ACTION_ENTER) != 0U);
+	size_t count = 0U;
+	for (uint32_t action = 1U; action != 0U; action <<= 1U) {
+		if ((display.actions & action) != 0U) {
+			++count;
+		}
+	}
+	return count;
 }
 
 static void close_measurement_plugin_session(void)
@@ -1878,10 +2216,34 @@ static void close_measurement_plugin_session(void)
 	ef800_plugin_host_measurement_session_close(&measurement_plugin_session);
 }
 
+static void append_plugin_workspace_record(void)
+{
+	char record[256];
+	size_t length;
+	int result = ef800_plugin_host_measurement_session_workspace_record(
+		&measurement_plugin_session, record, sizeof(record), &length);
+
+	if (result == -ENODATA) {
+		return;
+	}
+	if (result != 0) {
+		display_line(6U, "Plugin record unavailable");
+		return;
+	}
+	result = ef800_workspace_append(&workspace, record, length);
+	(void)ef800_plugin_host_measurement_session_workspace_result(
+		&measurement_plugin_session, result);
+	display_line(6U, result == 0 ? "Measurement saved" : "Save failed");
+}
+
 static void display_measurement_plugin_menu(void)
 {
 	struct ef800_measurement_display display;
 	char line[STATUS_LINE_SIZE];
+
+	for (uint8_t row = 0U; row < 8U; ++row) {
+		display_line(row, "");
+	}
 
 	if (ef800_plugin_host_measurement_session_render(
 		&measurement_plugin_session, &display) != 0) {
@@ -1894,7 +2256,7 @@ static void display_measurement_plugin_menu(void)
 	display_line(1U, line);
 	display_line(2U, "Select action");
 	for (size_t index = 0U; index < display.row_count && index < 4U; ++index) {
-		snprintk(line, sizeof(line), "%c %s", index == menu_selection ? '>' : ' ',
+		snprintk(line, sizeof(line), "%c %s", index == display.selected_action ? '>' : ' ',
 			display.rows[index]);
 		display_line((uint8_t)(3U + index), line);
 	}
@@ -2041,7 +2403,7 @@ static void handle_measurement_editor_key(uint8_t key)
 			measurement_editor.active = false;
 			active_menu = APPLICATION_MENU_MEASUREMENT_ACTIONS;
 			menu_selection = 0U;
-			display_measurement_actions();
+			display_active_menu();
 		}
 		return;
 	}
@@ -2118,6 +2480,15 @@ static void display_active_menu(void)
 	case APPLICATION_MENU_WORKSPACE:
 		display_workspace_menu();
 		break;
+	case APPLICATION_MENU_WORKSPACE_MANAGEMENT:
+		display_workspace_management_menu();
+		break;
+	case APPLICATION_MENU_WORKSPACE_VIEW:
+		display_workspace_view();
+		break;
+	case APPLICATION_MENU_WORKSPACE_DELETE_CONFIRMATION:
+		display_workspace_delete_confirmation();
+		break;
 	case APPLICATION_MENU_PORTS:
 		display_port_assignment_ports();
 		break;
@@ -2164,6 +2535,12 @@ static size_t active_menu_count(void)
 		return ARRAY_SIZE(settings_items);
 	case APPLICATION_MENU_WORKSPACE:
 		return ARRAY_SIZE(workspace_items);
+	case APPLICATION_MENU_WORKSPACE_MANAGEMENT:
+		return ARRAY_SIZE(workspace_management_items);
+	case APPLICATION_MENU_WORKSPACE_VIEW:
+		return 0U;
+	case APPLICATION_MENU_WORKSPACE_DELETE_CONFIRMATION:
+		return 1U;
 	case APPLICATION_MENU_WORKSPACE_SELECT:
 	case APPLICATION_MENU_WORKSPACE_LIST:
 		return workspace_name_count;
@@ -2208,6 +2585,13 @@ static void return_to_workspace_menu(void)
 	display_workspace_menu();
 }
 
+static void return_to_workspace_management_menu(void)
+{
+	active_menu = APPLICATION_MENU_WORKSPACE_MANAGEMENT;
+	menu_selection = 0U;
+	display_workspace_management_menu();
+}
+
 static void return_to_main_menu(void)
 {
 	active_menu = APPLICATION_MENU_MAIN;
@@ -2217,8 +2601,16 @@ static void return_to_main_menu(void)
 
 static void return_from_child_menu(void)
 {
-	if (active_menu == APPLICATION_MENU_WORKSPACE ||
-	    active_menu == APPLICATION_MENU_SETTINGS) {
+	if (active_menu == APPLICATION_MENU_WORKSPACE_VIEW) {
+		workspace_view_reset();
+		return_to_workspace_menu();
+	} else if (active_menu == APPLICATION_MENU_WORKSPACE) {
+		return_to_main_menu();
+	} else if (active_menu == APPLICATION_MENU_WORKSPACE_MANAGEMENT) {
+		active_menu = APPLICATION_MENU_SETTINGS;
+		menu_selection = 2U;
+		display_settings_menu();
+	} else if (active_menu == APPLICATION_MENU_SETTINGS) {
 		return_to_main_menu();
 	} else if (active_menu == APPLICATION_MENU_PORTS) {
 		active_menu = APPLICATION_MENU_SETTINGS;
@@ -2247,9 +2639,19 @@ static void return_from_child_menu(void)
 		measurement_editor.active = false;
 		active_menu = APPLICATION_MENU_MEASUREMENT_ACTIONS;
 		menu_selection = 0U;
-		display_measurement_actions();
+		display_active_menu();
+	} else if (active_menu == APPLICATION_MENU_WORKSPACE_DELETE_CONFIRMATION) {
+		active_menu = APPLICATION_MENU_WORKSPACE_MANAGEMENT;
+		menu_selection = 4U;
+		display_workspace_management_menu();
+	} else if (active_menu == APPLICATION_MENU_WORKSPACE_CREATE ||
+		   active_menu == APPLICATION_MENU_WORKSPACE_SELECT ||
+		   active_menu == APPLICATION_MENU_WORKSPACE_LIST) {
+		active_menu = APPLICATION_MENU_WORKSPACE_MANAGEMENT;
+		menu_selection = 0U;
+		display_workspace_management_menu();
 	} else {
-		return_to_workspace_menu();
+		return_to_main_menu();
 	}
 }
 
@@ -2266,11 +2668,30 @@ static void display_workspace_input(void)
 {
 	char line[STATUS_LINE_SIZE];
 
+	for (uint8_t row = 0U; row < 8U; ++row) {
+		display_line(row, "");
+	}
+
 	display_line(0U, "New workspace");
 	display_line(1U, "Use letters, numbers, _ - .");
 	snprintk(line, sizeof(line), "> %s", workspace_input);
 	display_line(4U, line);
 	display_line(6U, "ENTER create  ESC cancel");
+}
+
+static void display_workspace_delete_confirmation(void)
+{
+	char line[STATUS_LINE_SIZE];
+
+	for (uint8_t row = 0U; row < 8U; ++row) {
+		display_line(row, "");
+	}
+	display_line(0U, "Delete workspace?");
+	snprintk(line, sizeof(line), "%s", ef800_workspace_get_name(&workspace) == NULL ?
+		"No workspace selected" : ef800_workspace_get_name(&workspace));
+	display_line(2U, line);
+	display_line(4U, "ENTER delete");
+	display_line(5U, "ESC cancel");
 }
 
 static void display_workspace_list(void)
@@ -2319,6 +2740,10 @@ static const char *position_editor_prompt(enum position_editor_field field)
 static void display_position_editor(void)
 {
 	char line[STATUS_LINE_SIZE];
+
+	for (uint8_t row = 0U; row < 8U; ++row) {
+		display_line(row, "");
+	}
 
 	display_line(0U, "Enter position");
 	if (ef800_workspace_is_selected(&workspace)) {
@@ -2487,9 +2912,39 @@ static void activate_workspace_entry(void)
 	case 3U:
 		open_workspace_list(false);
 		break;
+	case 4U:
+		active_menu = APPLICATION_MENU_WORKSPACE_DELETE_CONFIRMATION;
+		menu_selection = 0U;
+		display_workspace_delete_confirmation();
+		break;
 	default:
 		break;
 	}
+}
+
+static void activate_workspace_view_entry(void)
+{
+	int result;
+
+	workspace_view_position_only = menu_selection == 1U;
+	result = workspace_view_position_only ? workspace_view_find_position() :
+		workspace_view_open_measurements();
+	workspace_view_position_only = menu_selection == 1U;
+	active_menu = APPLICATION_MENU_WORKSPACE_VIEW;
+	menu_selection = 0U;
+	if (result != 0) {
+		workspace_view_reset();
+		if (result == -ENODEV) {
+			display_line(3U, "Workspace not selected");
+		} else if (result == -ENODATA) {
+			display_line(3U, "No workspace data");
+		} else {
+			display_line(3U, "Workspace read failed");
+		}
+		display_line(7U, "ESC back");
+		return;
+	}
+	display_workspace_view();
 }
 
 static void display_port_assignment_result(const char *operation, int result)
@@ -2930,10 +3385,32 @@ static void activate_menu_entry(void)
 	if (active_menu == APPLICATION_MENU_SETTINGS) {
 		if (menu_selection == 0U) {
 			start_time_editor();
-		} else {
+		} else if (menu_selection == 1U) {
 			active_menu = APPLICATION_MENU_PORTS;
 			menu_selection = 0U;
 			display_port_assignment_ports();
+		} else {
+			active_menu = APPLICATION_MENU_WORKSPACE_MANAGEMENT;
+			menu_selection = 0U;
+			display_workspace_management_menu();
+		}
+		return;
+	}
+	if (active_menu == APPLICATION_MENU_WORKSPACE) {
+		activate_workspace_view_entry();
+		return;
+	}
+	if (active_menu == APPLICATION_MENU_WORKSPACE_MANAGEMENT) {
+		activate_workspace_entry();
+		return;
+	}
+	if (active_menu == APPLICATION_MENU_WORKSPACE_DELETE_CONFIRMATION) {
+		int result = ef800_workspace_delete_selected(&workspace);
+		display_workspace_result("Delete workspace", result);
+		if (result == 0) {
+			active_menu = APPLICATION_MENU_WORKSPACE_MANAGEMENT;
+			menu_selection = 4U;
+			display_workspace_management_menu();
 		}
 		return;
 	}
@@ -2982,9 +3459,21 @@ static void activate_menu_entry(void)
 			if (selected_measurement_has_submenu()) {
 				uint32_t plugin_id = ef800_port_assignment_get_plugin_id(&port_assignments,
 					selected_measurement_port);
+				struct ef800_measurement_context context = {
+					.struct_size = sizeof(context),
+					.point_number = ef800_workspace_current_point_number(&workspace),
+				};
+				const char *current_code = ef800_workspace_current_code(&workspace);
+				if (current_code != NULL) {
+					strncpy(context.code, current_code, sizeof(context.code) - 1U);
+				}
 				int session_result = ef800_plugin_host_measurement_session_open(
 						&measurement_plugin_session, plugin_id,
 						&measurement_transports[selected_measurement_port - 1U].transport);
+				if (session_result == 0) {
+					session_result = ef800_plugin_host_measurement_session_set_context(
+						&measurement_plugin_session, &context);
+				}
 				if (session_result != 0) {
 					display_line(6U, "Plugin unavailable");
 					return;
@@ -2999,43 +3488,14 @@ static void activate_menu_entry(void)
 	if (active_menu == APPLICATION_MENU_MEASUREMENT_ACTIONS) {
 		int result;
 		if (selected_measurement_has_submenu()) {
-			struct ef800_measurement_display plugin_display;
-			if (ef800_plugin_host_measurement_session_render(
-				&measurement_plugin_session, &plugin_display) != 0) {
-				display_line(6U, "Plugin display unavailable");
-				return;
-			}
-			if (menu_selection == 0U) {
-				struct ef800_measurement_data data;
-				result = ef800_plugin_host_measurement_session_measure(
-					&measurement_plugin_session, &data);
-				if (result == 0) {
-					if (measurement_number == INT32_MAX) {
-						display_line(6U, "Measurement number exhausted");
-						return;
-					}
-					measurement_record.number = ++measurement_number;
-					measurement_record.data = data;
-					measurement_record.staff_height_mm = 0;
-					strncpy(measurement_record.code, measurement_code,
-						sizeof(measurement_record.code) - 1U);
-					measurement_record.code[sizeof(measurement_record.code) - 1U] = '\0';
-					measurement_pending = true;
-					active_menu = APPLICATION_MENU_MEASUREMENT_EDITOR;
-					start_measurement_editor();
-				} else {
-					display_line(6U, "Measurement failed");
-				}
+			bool consumed = false;
+			result = ef800_plugin_host_measurement_session_key(
+				&measurement_plugin_session, '\r', &consumed);
+			if (result == 0 && consumed) {
+				append_plugin_workspace_record();
+				display_active_menu();
 			} else {
-				bool consumed = false;
-				uint8_t key = (plugin_display.actions & EF800_MEASUREMENT_ACTION_UP) != 0U &&
-					menu_selection == 1U ? 'u' :
-					(plugin_display.actions & EF800_MEASUREMENT_ACTION_DOWN) != 0U &&
-					menu_selection == 1U ? 'd' : 'e';
-				result = ef800_plugin_host_measurement_session_key(
-					&measurement_plugin_session, key, &consumed);
-				display_line(6U, result == 0 && consumed ? "Device command sent" :
-					"Device command failed");
+				display_line(6U, "Plugin action failed");
 			}
 			return;
 		}
@@ -3110,7 +3570,7 @@ static void handle_workspace_dialog_key(uint8_t key)
 			workspace_input[--workspace_input_length] = '\0';
 			display_workspace_input();
 		} else {
-			return_to_workspace_menu();
+			return_to_workspace_management_menu();
 		}
 		return;
 	}
@@ -3123,7 +3583,7 @@ static void handle_workspace_dialog_key(uint8_t key)
 			result = ef800_workspace_create(&workspace, workspace_input);
 			display_workspace_result("Create workspace", result);
 			if (result == 0) {
-				return_to_workspace_menu();
+				return_to_workspace_management_menu();
 			}
 			return;
 		}
@@ -3133,7 +3593,7 @@ static void handle_workspace_dialog_key(uint8_t key)
 						workspace_names[menu_selection]);
 			display_workspace_result("Load workspace", result);
 			if (result == 0) {
-				return_to_workspace_menu();
+				return_to_workspace_management_menu();
 			}
 		}
 		return;
@@ -3155,6 +3615,25 @@ static bool handle_application_key(uint8_t key)
 	if (position_editor.active) {
 		handle_position_editor_key(key);
 		return true;
+	}
+	if (active_menu == APPLICATION_MENU_WORKSPACE_VIEW) {
+		if (key == 0x1BU || key == 0x08U || key == 0x7FU) {
+			return_from_child_menu();
+			return true;
+		}
+		if (key == 'u' || key == 'U') {
+			if (workspace_view_move(-1) == 0) {
+				display_workspace_view();
+			}
+			return true;
+		}
+		if (key == 'd' || key == 'D') {
+			if (workspace_view_move(1) == 0) {
+				display_workspace_view();
+			}
+			return true;
+		}
+		return false;
 	}
 	if (measurement_editor.active) {
 		handle_measurement_editor_key(key);
@@ -3196,6 +3675,12 @@ static bool handle_application_key(uint8_t key)
 	} else if (active_menu == APPLICATION_MENU_SETTINGS) {
 		shortcuts = settings_shortcuts;
 		count = ARRAY_SIZE(settings_items);
+	} else if (active_menu == APPLICATION_MENU_WORKSPACE) {
+		shortcuts = workspace_view_shortcuts;
+		count = ARRAY_SIZE(workspace_items);
+	} else if (active_menu == APPLICATION_MENU_WORKSPACE_MANAGEMENT) {
+		shortcuts = workspace_shortcuts;
+		count = ARRAY_SIZE(workspace_management_items);
 	} else if (active_menu == APPLICATION_MENU_PORTS) {
 		for (size_t index = 0U; index < ef800_port_count(); ++index) {
 			if (key == (uint8_t)ef800_port_at(index)->shortcut) {
@@ -3239,7 +3724,7 @@ static bool handle_application_key(uint8_t key)
 		return false;
 	} else {
 		shortcuts = workspace_shortcuts;
-		count = ARRAY_SIZE(workspace_items);
+		count = 0U;
 	}
 	for (size_t index = 0U; index < count; ++index) {
 		if (key == (uint8_t)shortcuts[index][0]) {
@@ -3747,11 +4232,38 @@ static void handle_keyboard_event(uint32_t event)
 	if (time_editor.active) {
 		return;
 	}
+	if (measurement_editor.active) {
+		if ((event & KB_EVENT_ARROWLEFT) != 0U) {
+			return_from_child_menu();
+		}
+		return;
+	}
 	if (position_editor.active) {
 		if ((event & KB_EVENT_ARROWLEFT) != 0U) {
 			return_from_position_editor();
 		}
 		return;
+	}
+	if (active_menu == APPLICATION_MENU_MEASUREMENT_ACTIONS &&
+		measurement_plugin_session.state == EF800_MEASUREMENT_SESSION_ACTIVE) {
+		uint32_t input = (event & KB_EVENT_ARROWUP) != 0U ?
+			EF800_MEASUREMENT_INPUT_UP :
+			(event & KB_EVENT_ARROWDOWN) != 0U ? EF800_MEASUREMENT_INPUT_DOWN :
+		(event & KB_EVENT_ARROWRIGHT) != 0U ? EF800_MEASUREMENT_INPUT_ENTER : 0U;
+		if (input != 0U) {
+			int result;
+			if (input == EF800_MEASUREMENT_INPUT_ENTER) {
+				bool consumed = false;
+				result = ef800_plugin_host_measurement_session_key(
+					&measurement_plugin_session, '\r', &consumed);
+				if (result == 0 && consumed) append_plugin_workspace_record();
+			} else {
+				result = ef800_plugin_host_measurement_session_input(
+					&measurement_plugin_session, input);
+			}
+			display_active_menu();
+			return;
+		}
 	}
 	if ((event & KB_EVENT_ARROWUP) != 0U) {
 		move_menu_selection(-1);

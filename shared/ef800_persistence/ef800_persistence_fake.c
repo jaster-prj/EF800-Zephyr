@@ -60,6 +60,28 @@ static int fake_read(void *context, enum ef800_persistence_root root,
 	return 0;
 }
 
+static int fake_read_range(void *context, enum ef800_persistence_root root,
+				   const char *name, size_t offset, void *buffer,
+				   size_t capacity, size_t *length)
+{
+	struct ef800_persistence_fake *fake = context;
+	struct ef800_persistence_fake_file *file = find_file(fake, root, name);
+	size_t available;
+
+	if (file == NULL) {
+		return -ENOENT;
+	}
+	if (offset > file->length) {
+		return -EINVAL;
+	}
+	available = file->length - offset;
+	*length = available < capacity ? available : capacity;
+	if (*length != 0U) {
+		memcpy(buffer, file->data + offset, *length);
+	}
+	return 0;
+}
+
 static int fake_write(void *context, enum ef800_persistence_root root,
 			      const char *name, const void *buffer, size_t length)
 {
@@ -156,6 +178,7 @@ void ef800_persistence_fake_init(struct ef800_persistence_fake *fake)
 	memset(fake, 0, sizeof(*fake));
 	fake->backend.context = fake;
 	fake->backend.read = fake_read;
+	fake->backend.read_range = fake_read_range;
 	fake->backend.write = fake_write;
 	fake->backend.append = fake_append;
 	fake->backend.stat = fake_stat;

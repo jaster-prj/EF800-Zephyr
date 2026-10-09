@@ -19,8 +19,12 @@ struct virtual_peer {
 	size_t response_length;
 	int32_t delay_ms;
 	int32_t error;
-	bool available;
-	uint32_t transaction_count;
+ bool available;
+ uint32_t transaction_count;
+ uint8_t command[16];
+ size_t command_length;
+	uint8_t pending_command[16];
+	size_t pending_command_length;
 	struct k_work_delayable work;
 };
 
@@ -41,29 +45,49 @@ static void peer_work(struct k_work *work)
 	if (!peer->available || peer->error != 0 || peer->response_length == 0U) {
 		return;
 	}
-	if (peer->response_length == 3U && peer->response[0] == 'A' &&
-		peer->response[1] == '\r' && peer->response[2] == '\n' &&
-		peer->transaction_count > 1U) {
+	if (peer == &peers[0] && peer->pending_command_length >= 3U &&
+		peer->pending_command[0] == 'S' && peer->pending_command[1] == '1' &&
+		peer->pending_command[2] == '4') {
+		static const uint8_t acknowledge[] = {'A', '\r', '\n'};
+		(void)uart_emul_put_rx_data(peer->uart, acknowledge,
+			sizeof(acknowledge));
+	} else if (peer == &peers[0] && peer->pending_command_length >= 1U &&
+		peer->pending_command[0] == 'B') {
 		static const uint8_t elta3_measurement[] =
 			"#48 0 1.234; 100.0000; 50.5000\r\n";
 		(void)uart_emul_put_rx_data(peer->uart, elta3_measurement,
 			sizeof(elta3_measurement) - 1U);
+	} else if (peer == &peers[0] && peer->pending_command_length >= 1U &&
+		peer->pending_command[0] == 'Q') {
+		/* Elta3's Q command ends a readout and has no response. */
 	} else {
 		(void)uart_emul_put_rx_data(peer->uart, peer->response,
 			peer->response_length);
 	}
+	peer->pending_command_length = 0U;
 }
 
 static void peer_tx_ready(const struct device *dev, size_t size, void *context)
 {
 	struct virtual_peer *peer = context;
-	uint8_t discarded[PEER_SCRIPT_SIZE];
+	uint8_t bytes[PEER_SCRIPT_SIZE];
+	uint32_t length;
 
 	ARG_UNUSED(size);
-	(void)uart_emul_get_tx_data(dev, discarded, sizeof(discarded));
-	if (peer->available) {
-		peer->transaction_count++;
-		k_work_reschedule(&peer->work, K_MSEC(MAX(peer->delay_ms, 0)));
+	length = uart_emul_get_tx_data(dev, bytes, sizeof(bytes));
+	for (uint32_t index = 0U; index < length; ++index) {
+		if (peer->command_length < sizeof(peer->command)) {
+			peer->command[peer->command_length++] = bytes[index];
+		}
+		if (bytes[index] == '\n') {
+			memcpy(peer->pending_command, peer->command, peer->command_length);
+			peer->pending_command_length = peer->command_length;
+			peer->transaction_count++;
+			if (peer->available) {
+				k_work_reschedule(&peer->work, K_MSEC(MAX(peer->delay_ms, 0)));
+			}
+			peer->command_length = 0U;
+		}
 	}
 }
 
@@ -80,6 +104,7 @@ int ef800_virtual_serial_peer_set(uint8_t port, const uint8_t *response,
 	memcpy(peer->response, response, length);
 	peer->response_length = length;
 	peer->transaction_count = 0U;
+	peer->command_length = 0U;
 	peer->delay_ms = delay_ms;
 	peer->error = error;
 	peer->available = available;

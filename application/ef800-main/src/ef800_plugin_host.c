@@ -533,6 +533,25 @@ int ef800_plugin_host_measurement_session_measure(
 	return status == PM_OK ? 0 : -EIO;
 }
 
+int ef800_plugin_host_measurement_session_set_context(
+	struct ef800_measurement_plugin_session *session,
+	const struct ef800_measurement_context *context)
+{
+	struct ef800_measurement_instance *instance;
+
+	if (session == NULL || context == NULL || session->state !=
+		EF800_MEASUREMENT_SESSION_ACTIVE) {
+		return -EINVAL;
+	}
+	instance = session->instance;
+	if (instance == NULL || instance->api == NULL ||
+		instance->api->set_context == NULL ||
+		context->struct_size < sizeof(*context)) {
+		return -ENOTSUP;
+	}
+	return instance->api->set_context(instance, context) == PM_OK ? 0 : -EIO;
+}
+
 int ef800_plugin_host_measurement_session_input(
 	struct ef800_measurement_plugin_session *session, uint32_t input)
 {
@@ -543,7 +562,7 @@ int ef800_plugin_host_measurement_session_input(
 	struct ef800_measurement_instance *instance;
 
 	if (session == NULL || session->state != EF800_MEASUREMENT_SESSION_ACTIVE ||
-		action == 0U || (session->actions & action) == 0U) {
+		action == 0U) {
 		return -ENOTSUP;
 	}
 	instance = session->instance;
@@ -602,6 +621,52 @@ int ef800_plugin_host_measurement_session_render(
 	}
 	return instance->api->render(instance, display) == PM_OK ?
 		validate_measurement_display(display) : -EIO;
+}
+
+int ef800_plugin_host_measurement_session_workspace_record(
+	struct ef800_measurement_plugin_session *session, char *buffer,
+	size_t capacity, size_t *length)
+{
+	struct ef800_measurement_instance *instance;
+	uint32_t output_length = 0U;
+	int status;
+
+	if (session == NULL || buffer == NULL || length == NULL || capacity == 0U ||
+		session->state != EF800_MEASUREMENT_SESSION_ACTIVE) {
+		return -EINVAL;
+	}
+	instance = session->instance;
+	if (instance == NULL || instance->api == NULL ||
+		instance->api->get_workspace_record == NULL) {
+		return -ENOTSUP;
+	}
+	status = instance->api->get_workspace_record(instance, buffer,
+		(uint32_t)capacity, &output_length);
+	if (status == PM_ENOENT) {
+		return -ENODATA;
+	}
+	if (status != PM_OK || output_length >= capacity) {
+		return status == PM_OK ? -EOVERFLOW : -EIO;
+	}
+	*length = output_length;
+	return 0;
+}
+
+int ef800_plugin_host_measurement_session_workspace_result(
+	struct ef800_measurement_plugin_session *session, int status)
+{
+	struct ef800_measurement_instance *instance;
+
+	if (session == NULL || session->state != EF800_MEASUREMENT_SESSION_ACTIVE) {
+		return -EINVAL;
+	}
+	instance = session->instance;
+	if (instance == NULL || instance->api == NULL ||
+		instance->api->workspace_record_result == NULL) {
+		return -ENOTSUP;
+	}
+	return instance->api->workspace_record_result(instance, status) == PM_OK ?
+		0 : -EIO;
 }
 
 void ef800_plugin_host_measurement_session_close(

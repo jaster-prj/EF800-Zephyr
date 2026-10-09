@@ -40,6 +40,9 @@ int ef800_plugin_host_serial_config(uint32_t plugin_id,
 int ef800_plugin_host_measurement_session_open(
 	struct ef800_measurement_plugin_session *session, uint32_t plugin_id,
 	const struct ef800_measurement_transport *transport);
+int ef800_plugin_host_measurement_session_set_context(
+	struct ef800_measurement_plugin_session *session,
+	const struct ef800_measurement_context *context);
 int ef800_plugin_host_measurement_session_measure(
 	struct ef800_measurement_plugin_session *session,
 	struct ef800_measurement_data *measurement);
@@ -51,6 +54,11 @@ int ef800_plugin_host_measurement_session_key(
 int ef800_plugin_host_measurement_session_render(
 	struct ef800_measurement_plugin_session *session,
 	struct ef800_measurement_display *display);
+int ef800_plugin_host_measurement_session_workspace_record(
+	struct ef800_measurement_plugin_session *session, char *buffer,
+	size_t capacity, size_t *length);
+int ef800_plugin_host_measurement_session_workspace_result(
+	struct ef800_measurement_plugin_session *session, int status);
 void ef800_plugin_host_measurement_session_close(
 	struct ef800_measurement_plugin_session *session);
 int ef800_plugin_host_calculate(uint32_t plugin_id,

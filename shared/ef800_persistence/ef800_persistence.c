@@ -72,6 +72,7 @@ int ef800_persistence_init(struct ef800_persistence *storage,
 			   const struct ef800_persistence_backend *backend)
 {
 	if (storage == NULL || backend == NULL || backend->read == NULL ||
+	    backend->read_range == NULL ||
 	    backend->write == NULL || backend->append == NULL ||
 	    backend->stat == NULL || backend->list == NULL ||
 	    backend->remove == NULL) {
@@ -79,6 +80,20 @@ int ef800_persistence_init(struct ef800_persistence *storage,
 	}
 	storage->backend = backend;
 	return 0;
+}
+
+int ef800_persistence_read_range(struct ef800_persistence *storage,
+				 enum ef800_persistence_root root, const char *name,
+				 size_t offset, void *buffer, size_t capacity,
+				 size_t *length)
+{
+	int ret = validate_operation(storage, root, name);
+
+	if (ret != 0 || length == NULL || (buffer == NULL && capacity != 0U)) {
+		return ret != 0 ? ret : -EINVAL;
+	}
+	return storage->backend->read_range(storage->backend->context, root, name,
+					    offset, buffer, capacity, length);
 }
 
 int ef800_persistence_read(struct ef800_persistence *storage,

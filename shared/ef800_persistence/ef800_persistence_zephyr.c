@@ -79,6 +79,62 @@ static int zephyr_read(void *context, enum ef800_persistence_root root,
 	return 0;
 }
 
+static int zephyr_read_range(void *context, enum ef800_persistence_root root,
+				     const char *name, size_t offset, void *buffer,
+				     size_t capacity, size_t *length)
+{
+	struct fs_dirent fs_entry;
+	struct fs_file_t file;
+	ssize_t read_length;
+	char path[EF800_PERSISTENCE_MAX_PATH];
+	size_t requested;
+	int ret;
+
+	ARG_UNUSED(context);
+	if (!ef800_storage_is_mounted()) {
+		return -ENOTSUP;
+	}
+	ret = build_path(root, name, path, sizeof(path));
+	if (ret != 0) {
+		return ret;
+	}
+	ret = fs_stat(path, &fs_entry);
+	if (ret != 0) {
+		return ret;
+	}
+	if (fs_entry.type != FS_DIR_ENTRY_FILE) {
+		return -EISDIR;
+	}
+	if (offset > fs_entry.size) {
+		return -EINVAL;
+	}
+	requested = MIN(capacity, (size_t)fs_entry.size - offset);
+	*length = 0U;
+	if (requested == 0U) {
+		return 0;
+	}
+	ret = ef800_storage_open(&file, (enum ef800_storage_root)root, name,
+					 FS_O_READ);
+	if (ret != 0) {
+		return ret;
+	}
+	ret = fs_seek(&file, (off_t)offset, FS_SEEK_SET);
+	if (ret != 0) {
+		(void)fs_close(&file);
+		return ret;
+	}
+	read_length = fs_read(&file, buffer, requested);
+	ret = fs_close(&file);
+	if (read_length < 0) {
+		return (int)read_length;
+	}
+	if (ret != 0) {
+		return ret;
+	}
+	*length = (size_t)read_length;
+	return 0;
+}
+
 static int write_file(struct fs_file_t *file, const void *buffer, size_t length)
 {
 	const uint8_t *bytes = buffer;
@@ -225,6 +281,7 @@ static int zephyr_remove(void *context, enum ef800_persistence_root root,
 
 static const struct ef800_persistence_backend zephyr_backend = {
 	.read = zephyr_read,
+	.read_range = zephyr_read_range,
 	.write = zephyr_write,
 	.append = zephyr_append,
 	.stat = zephyr_stat,
@@ -243,6 +300,15 @@ static int unavailable_read(void *context, enum ef800_persistence_root root,
 				   const char *name, void *buffer, size_t capacity, size_t *length)
 {
 	ARG_UNUSED(context); ARG_UNUSED(root); ARG_UNUSED(name);
+	ARG_UNUSED(buffer); ARG_UNUSED(capacity); ARG_UNUSED(length);
+	return -ENOTSUP;
+}
+
+static int unavailable_read_range(void *context, enum ef800_persistence_root root,
+					 const char *name, size_t offset, void *buffer,
+					 size_t capacity, size_t *length)
+{
+	ARG_UNUSED(context); ARG_UNUSED(root); ARG_UNUSED(name); ARG_UNUSED(offset);
 	ARG_UNUSED(buffer); ARG_UNUSED(capacity); ARG_UNUSED(length);
 	return -ENOTSUP;
 }
@@ -289,6 +355,7 @@ const struct ef800_persistence_backend *ef800_persistence_zephyr_backend(void)
 {
 	static const struct ef800_persistence_backend backend = {
 		.read = unavailable_read,
+		.read_range = unavailable_read_range,
 		.write = unavailable_write,
 		.append = unavailable_append,
 		.stat = unavailable_stat,

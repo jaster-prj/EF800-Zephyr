@@ -121,7 +121,7 @@ int ef800_position_format_record(const struct ef800_position_entry *entry,
 	}
 	whole = absolute_height / 1000;
 	fraction = absolute_height % 1000;
-	length = snprintk(buffer, buffer_size, "-%s %s%lld.%03lld %s \r",
+	length = snprintk(buffer, buffer_size, "-%s %s%lld.%03lld %s \r\n",
 				  entry->stp, sign, (long long)whole, (long long)fraction,
 				  entry->code);
 	if (length < 0 || (size_t)length >= buffer_size) {

@@ -107,6 +107,7 @@ if(PM_BUILD_NATIVE_SIM)
                 ${CMAKE_CURRENT_LIST_DIR}/${source}
                 ${CMAKE_CURRENT_LIST_DIR}/common/protocol.c
                 ${CMAKE_CURRENT_LIST_DIR}/common/plugin_runtime.c
+                ${CMAKE_CURRENT_LIST_DIR}/common/freestanding.c
                 ${CMAKE_CURRENT_LIST_DIR}/${package_dir}/descriptor.c
                  -r -nostdlib -nostartfiles -nodefaultlibs
                  -Wl,-T,${NATIVE_LINKER_SCRIPT} -o ${image}

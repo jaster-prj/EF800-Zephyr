@@ -68,6 +68,15 @@ The existing EF800 release framing remains `E0 F0 <code>`.
 
 Plugin integration checkpoint:
 
+- The measurement-plugin workflow now keeps code, point number, staff height,
+  Save, Discard, and Fixmessung inside the Elta3 and Fennel1 packages. The
+  workspace service retains the last measurement point/code context and updates
+  it after successful opaque-record appends; MainApplication only transfers
+  context and performs the generic append/acknowledgement boundary.
+- Plugin host tests cover serialized Save records and Fixmessung point
+  advancement for both packages. The native shared suite passes 19/19
+  configurations and 92/92 test cases after the workspace-context increment.
+
 - Elta3 and Fennel1 (the existing FTS3XX adapter, persisted ID 3) are registered
   through the EF800 static device-plugin
   registry using the stable persisted builder IDs `2` and `3`.
@@ -126,7 +135,7 @@ Plugin integration checkpoint:
 - Native-sim display tests cover EF800 packed graphics pixels, 64 KiB address
   space, text/custom/attribute/cursor rendering, and suppression of unchanged
   framebuffer state.
-- The complete native-sim Twister run passes 18/18 configurations and 82/82
+- The complete native-sim Twister run passes 19/19 configurations and 90/90
   test cases when reusing the persistent container workspace with `--no-clean`.
 - Native-sim PMP upload, atomic virtual-FAT installation, explicit simulator
   restart, package rediscovery, and bounded virtual serial docking are available

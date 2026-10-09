@@ -53,6 +53,26 @@ ZTEST(shared_ui, test_parent_navigation_preserves_expected_settings_entry)
 	zassert_equal(state.menu, EF800_UI_MENU_MAIN, NULL);
 }
 
+ZTEST(shared_ui, test_workspace_view_returns_to_workspace_menu)
+{
+	struct ef800_ui_state state;
+
+	ef800_ui_init(&state);
+	ef800_ui_enter(&state, EF800_UI_MENU_WORKSPACE_VIEW, NULL);
+	ef800_ui_back(&state, NULL);
+	zassert_equal(state.menu, EF800_UI_MENU_WORKSPACE, NULL);
+}
+
+ZTEST(shared_ui, test_workspace_management_returns_to_settings)
+{
+	struct ef800_ui_state state;
+
+	ef800_ui_init(&state);
+	ef800_ui_enter(&state, EF800_UI_MENU_WORKSPACE_MANAGEMENT, NULL);
+	ef800_ui_back(&state, NULL);
+	zassert_equal(state.menu, EF800_UI_MENU_SETTINGS, NULL);
+}
+
 ZTEST(shared_ui, test_plugin_and_editor_state_is_host_owned)
 {
 	struct ef800_ui_state state;

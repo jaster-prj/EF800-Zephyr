@@ -71,6 +71,14 @@ void ef800_ui_back(struct ef800_ui_state *state,
 		state->menu = EF800_UI_MENU_MAIN;
 		state->selection = 0U;
 		break;
+	case EF800_UI_MENU_WORKSPACE_MANAGEMENT:
+		state->menu = EF800_UI_MENU_SETTINGS;
+		state->selection = 2U;
+		break;
+	case EF800_UI_MENU_WORKSPACE_VIEW:
+		state->menu = EF800_UI_MENU_WORKSPACE;
+		state->selection = 0U;
+		break;
 	case EF800_UI_MENU_PORTS:
 		state->menu = EF800_UI_MENU_SETTINGS;
 		state->selection = 1U;

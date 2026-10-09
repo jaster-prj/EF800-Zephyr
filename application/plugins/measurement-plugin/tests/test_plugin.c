@@ -95,13 +95,58 @@ int main(void)
     assert(key_result == EF800_MEASUREMENT_KEY_CONSUMED);
     assert(instance->api->handle_input(instance, EF800_MEASUREMENT_INPUT_UP) == PM_OK);
     assert(instance->api->handle_input(instance, EF800_MEASUREMENT_INPUT_DOWN) == PM_OK);
+    fake.input_offset = 0u;
     assert(instance->api->handle_input(instance, EF800_MEASUREMENT_INPUT_ENTER) == PM_OK);
 #else
     assert(instance->api->handle_input(instance, EF800_MEASUREMENT_INPUT_UP) == PM_ENOTSUP);
+    assert(fake.output_size == sizeof(expected) - 1u);
     event.character = 'u';
     assert(instance->api->handle_key(instance, &event, &key_result) == PM_OK);
     assert(key_result == EF800_MEASUREMENT_KEY_UNSUPPORTED);
 #endif
+    {
+        struct ef800_measurement_context context = {
+            sizeof(context), 7, "CTX"
+        };
+        char record[128];
+        uint32_t record_length = 0u;
+        fake.input_offset = 0u;
+        fake.output_size = 0u;
+        assert(instance->api->set_context(instance, &context) == PM_OK);
+        assert(instance->api->handle_input(instance, EF800_MEASUREMENT_INPUT_ENTER) == PM_OK);
+        assert(instance->api->handle_input(instance, EF800_MEASUREMENT_INPUT_ENTER) == PM_OK);
+        assert(instance->api->handle_input(instance, EF800_MEASUREMENT_INPUT_ENTER) == PM_OK);
+        assert(instance->api->handle_input(instance, EF800_MEASUREMENT_INPUT_ENTER) == PM_OK);
+        assert(instance->api->handle_input(instance, EF800_MEASUREMENT_INPUT_ENTER) == PM_OK);
+        assert(instance->api->get_workspace_record(instance, record, sizeof(record),
+            &record_length) == PM_OK);
+        assert(record_length > 0u);
+        assert(strstr(record, "CTX") != 0);
+        assert(instance->api->workspace_record_result(instance, 0) == PM_OK);
+
+        fake.input_offset = 0u;
+        assert(instance->api->handle_input(instance, EF800_MEASUREMENT_INPUT_ENTER) == PM_OK);
+        assert(instance->api->handle_input(instance, EF800_MEASUREMENT_INPUT_ENTER) == PM_OK);
+        assert(instance->api->handle_input(instance, EF800_MEASUREMENT_INPUT_ENTER) == PM_OK);
+        assert(instance->api->handle_input(instance, EF800_MEASUREMENT_INPUT_ENTER) == PM_OK);
+        assert(instance->api->handle_input(instance, EF800_MEASUREMENT_INPUT_DOWN) == PM_OK);
+        assert(instance->api->handle_input(instance, EF800_MEASUREMENT_INPUT_DOWN) == PM_OK);
+        assert(instance->api->handle_input(instance, EF800_MEASUREMENT_INPUT_ENTER) == PM_OK);
+        assert(instance->api->get_workspace_record(instance, record, sizeof(record),
+            &record_length) == PM_OK);
+        assert(strncmp(record, "8 ", 2u) == 0);
+        fake.input_offset = 0u;
+        assert(instance->api->workspace_record_result(instance, 0) == PM_OK);
+        assert(instance->api->handle_input(instance, EF800_MEASUREMENT_INPUT_ENTER) == PM_OK);
+        assert(instance->api->handle_input(instance, EF800_MEASUREMENT_INPUT_ENTER) == PM_OK);
+        assert(instance->api->handle_input(instance, EF800_MEASUREMENT_INPUT_ENTER) == PM_OK);
+        assert(instance->api->handle_input(instance, EF800_MEASUREMENT_INPUT_ENTER) == PM_OK);
+        assert(instance->api->handle_input(instance, EF800_MEASUREMENT_INPUT_ENTER) == PM_OK);
+        assert(instance->api->get_workspace_record(instance, record, sizeof(record),
+            &record_length) == PM_OK);
+        assert(strncmp(record, "9 ", 2u) == 0);
+        assert(instance->api->workspace_record_result(instance, 0) == PM_OK);
+    }
     assert(pm_plugin_destroy(instance) == PM_OK);
     assert(pm_plugin_create(&(struct pm_service_table){0u, 0}, &opaque) == PM_ENOENT);
     return 0;
