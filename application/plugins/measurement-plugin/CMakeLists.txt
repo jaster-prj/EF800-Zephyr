@@ -31,12 +31,12 @@ target_compile_definitions(elta3_host_test PRIVATE
     TEST_CONTROL=48u TEST_HAS_INPUT=1)
 add_test(NAME elta3_protocol COMMAND elta3_host_test)
 
-add_host_plugin_test(fennel1_host_test fennel1/src/fennel1.c)
-target_compile_definitions(fennel1_host_test PRIVATE
+add_host_plugin_test(fts3xx_host_test fts3xx/src/fts3xx.c)
+target_compile_definitions(fts3xx_host_test PRIVATE
     TEST_ELTA3=0
     TEST_BAUD=9600u TEST_DATA_BITS=8u TEST_PARITY=0u TEST_STOP_BITS=1u
     TEST_CONTROL=0u TEST_HAS_INPUT=0)
-add_test(NAME fennel1_protocol COMMAND fennel1_host_test)
+add_test(NAME fts3xx_protocol COMMAND fts3xx_host_test)
 
 if(PM_ARM_TOOLCHAIN_PREFIX)
     set(ARM_CC "${PM_ARM_TOOLCHAIN_PREFIX}-gcc")
@@ -84,7 +84,7 @@ if(PM_ARM_TOOLCHAIN_PREFIX)
     endfunction()
 
     add_arm_plugin(elta3_plugin elta3 elta3/src/elta3.c 2 "EF800 ELTA3")
-    add_arm_plugin(fennel1_plugin fennel1 fennel1/src/fennel1.c 3 "EF800 Fennel1")
+    add_arm_plugin(fts3xx_plugin fts3xx fts3xx/src/fts3xx.c 3 "EF800 FTS3XX")
 endif()
 
 if(PM_BUILD_NATIVE_SIM)
@@ -122,5 +122,5 @@ if(PM_BUILD_NATIVE_SIM)
         add_custom_target(${target} ALL DEPENDS ${package})
     endfunction()
     add_native_plugin(elta3_native_plugin elta3 elta3/src/elta3.c 2 "EF800 ELTA3 native_sim")
-    add_native_plugin(fennel1_native_plugin fennel1 fennel1/src/fennel1.c 3 "EF800 Fennel1 native_sim")
+    add_native_plugin(fts3xx_native_plugin fts3xx fts3xx/src/fts3xx.c 3 "EF800 FTS3XX native_sim")
 endif()

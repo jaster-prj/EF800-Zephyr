@@ -1,4 +1,4 @@
-﻿# Measurement Plugin Owned UI Specification
+# Measurement Plugin Owned UI Specification
 
 ## Purpose
 Define package-owned measurement workflow, display, input, and host-resource boundaries.
@@ -12,8 +12,8 @@ Each valid measurement `.pmp` package SHALL declare its complete measurement wor
 - **WHEN** the Elta3 package is loaded and assigned to a compatible ready port
 - **THEN** its display exposes measurement, up, down, enter, and its complete pending-result workflow according to the package declaration
 
-#### Scenario: Fennel1 declares measurement only
-- **WHEN** the Fennel1 package is loaded and assigned to a compatible ready port
+#### Scenario: FTS3XX declares measurement only
+- **WHEN** the FTS3XX package is loaded and assigned to a compatible ready port
 - **THEN** its display exposes measurement without unsupported directional actions and owns the complete pending-result workflow
 
 ### Requirement: Measurement packages handle logical keyboard input
@@ -21,7 +21,7 @@ Each valid measurement `.pmp` package SHALL declare its complete measurement wor
 Measurement packages SHALL receive logical keyboard events for their complete workflow through the plugin contract and SHALL return explicit consumed, unsupported, navigation, or error results. Packages SHALL not receive raw keyboard UART framing or access the keyboard device directly. MainApplication SHALL only forward generic input and host-service outcomes.
 
 #### Scenario: Plugin consumes a workflow action
-- **WHEN** MainApplication forwards a logical action key to an active Elta3 or Fennel1 session
+- **WHEN** MainApplication forwards a logical action key to an active Elta3 or FTS3XX session
 - **THEN** the selected package handles the action and returns a result that tells MainApplication whether the event was consumed
 
 #### Scenario: Host global key has precedence
@@ -32,8 +32,8 @@ Measurement packages SHALL receive logical keyboard events for their complete wo
 - **WHEN** the plugin completes Save or Fixmessung for a valid pending result
 - **THEN** the plugin returns a bounded serialized workspace line and MainApplication performs only the generic workspace append operation
 
-#### Scenario: Unsupported Fennel1 direction is selected
-- **WHEN** a directional logical action is sent to a Fennel1 package that does not declare that action
+#### Scenario: Unsupported FTS3XX direction is selected
+- **WHEN** a directional logical action is sent to a FTS3XX package that does not declare that action
 - **THEN** the package returns an explicit unsupported result and does not emit a device command
 
 ### Requirement: Measurement packages provide bounded display models
@@ -68,13 +68,13 @@ MainApplication SHALL retain ownership of raw keyboard decoding, LCD hardware ac
 - **WHEN** the user leaves the package submenu or the assignment becomes unavailable
 - **THEN** MainApplication stops package calls, destroys the package instance, and releases the port after package teardown
 
-### Requirement: Elta3 and Fennel1 are independently packaged
+### Requirement: Elta3 and FTS3XX are independently packaged
 
-The build SHALL produce independently installable `.pmp` packages from `application/plugins/measurement-plugin/elta3` and `application/plugins/measurement-plugin/fennel1`. Each package SHALL contain its own descriptor, complete measurement behavior, submenu/input behavior, display-model behavior, serialized workspace-record behavior, and stable plugin identity. The common workflow SHALL not be duplicated inside MainApplication.
+The build SHALL produce independently installable `.pmp` packages from `application/plugins/measurement-plugin/elta3` and `application/plugins/measurement-plugin/fts3xx`. Each package SHALL contain its own descriptor, complete measurement behavior, submenu/input behavior, display-model behavior, serialized workspace-record behavior, and stable plugin identity. The common workflow SHALL not be duplicated inside MainApplication.
 
 #### Scenario: Both package targets are built
 - **WHEN** the measurement-plugin build is configured for package generation
-- **THEN** it produces separately verifiable Elta3 and Fennel1 `.pmp` artifacts without compiling either implementation into MainApplication
+- **THEN** it produces separately verifiable Elta3 and FTS3XX `.pmp` artifacts without compiling either implementation into MainApplication
 
 #### Scenario: One package is unavailable
 - **WHEN** only one of the two `.pmp` files is present or valid at startup
@@ -91,5 +91,3 @@ The host SHALL validate the UI, logical-input, submenu, serialized-output, and d
 #### Scenario: Package lacks the required contract
 - **WHEN** a package advertises an older or incompatible measurement UI contract
 - **THEN** MainApplication rejects it before execution and records a diagnosable incompatibility state
-
-

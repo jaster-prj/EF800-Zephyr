@@ -8,7 +8,7 @@
 #ifndef EF800_PLUGIN_ID
 #error EF800_PLUGIN_ID is required
 #endif
-#define EF800_PLUGIN_NAME "EF800 Fennel1"
+#define EF800_PLUGIN_NAME "EF800 FTS3XX"
 #define EF800_PLUGIN_VERSION "1.0.0"
 
 struct ef800_wire_descriptor {

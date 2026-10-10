@@ -14,7 +14,7 @@ The critical safety distinction is between abandoning an isolated worker and res
 - Keep MainApplication's UI/navigation thread alive and independently schedulable during plugin work.
 - Mediate and validate every host-resource operation across the privilege boundary.
 - Recover from attributable plugin-worker faults and timeouts by discarding the worker, cleaning up host-owned state, quarantining the package, and returning through host navigation.
-- Preserve normal Elta3, Fennel1, Measurement UI, Calculation, UART ownership, and workspace behavior for successful invocations.
+- Preserve normal Elta3, FTS3XX, Measurement UI, Calculation, UART ownership, and workspace behavior for successful invocations.
 - Retain fatal/reboot behavior for faults that are privileged, interrupt-context, kernel-related, nested, or not conclusively attributable to the plugin worker.
 - Establish target evidence for MPU access control, W^X, stack protection, timeout handling, cleanup, and fault classification before enabling arbitrary external executable plugins.
 
@@ -87,7 +87,7 @@ Plugins no longer receive privileged transport pointers or callbacks that execut
 
 Privileged service execution copies inputs into host-owned storage before use and copies validated outputs back only within the declared range. Driver handles, Zephyr objects, host context pointers, workspace objects, and MMIO addresses never cross into user memory. Port reads and writes continue to run through MainApplication's existing host-owned route and transport policy.
 
-The package contract is versioned so packages using the old direct callback service table are rejected before any package entry point executes. Elta3 and Fennel1 are rebuilt against the isolated SDK together with the host; no compatibility shim executes old packages with reduced protection.
+The package contract is versioned so packages using the old direct callback service table are rejected before any package entry point executes. Elta3 and FTS3XX are rebuilt against the isolated SDK together with the host; no compatibility shim executes old packages with reduced protection.
 
 Alternatives considered:
 
@@ -151,7 +151,7 @@ The hardware watchdog remains a final system recovery layer, not the normal plug
 - [A blocked UART operation delays timeout cleanup] -> Propagate absolute deadlines, use cancellable/bounded transport operations, reset hardware during cleanup, and reboot if ownership cannot be proven safe.
 - [Userspace/syscall and extra stacks increase flash/RAM usage] -> Measure pristine build/map deltas against the fixed image contract before completing the change.
 - [One worker serializes plugins] -> Accept this because MainApplication already serializes plugin/resource ownership and the LCD supports one active session; preserve UI responsiveness through asynchronous supervision.
-- [Old packages stop loading] -> Version the isolation contract, report incompatibility clearly, and rebuild the independently packaged Elta3 and Fennel1 artifacts with the matching SDK.
+- [Old packages stop loading] -> Version the isolation contract, report incompatibility clearly, and rebuild the independently packaged Elta3 and FTS3XX artifacts with the matching SDK.
 - [MPU containment is mistaken for package authenticity] -> Keep signature, anti-rollback, and storage qualification gates explicitly separate and continue release-disabling arbitrary packages until all relevant gates pass.
 
 ## Migration Plan
@@ -159,7 +159,7 @@ The hardware watchdog remains a final system recovery layer, not the normal plug
 1. Build a target-only isolation spike that proves userspace entry, RX/RO/RW/XN mappings, guarded stack behavior, worker-only fault termination, conservative escalation, and MPU region budget on STM32L496.
 2. Add the versioned isolated-execution contract and syscall gateway while external execution remains release-disabled; add verifier tests for caller, generation, operation, range, and deadline checks.
 3. Refactor the host into supervisor, worker, mailbox, recovery ledger, and PluginManager abandon lifecycle, retaining a compile-time test path until package migration is complete.
-4. Rebuild Elta3 and Fennel1 against the new SDK and move all create/destroy/render/input/measure/calculate calls into the worker. Remove the production direct-call path rather than retaining a fallback.
+4. Rebuild Elta3 and FTS3XX against the new SDK and move all create/destroy/render/input/measure/calculate calls into the worker. Remove the production direct-call path rather than retaining a fallback.
 5. Integrate boot-scoped registry quarantine, diagnostics, LCD recovery, parent-menu navigation, and resource-reset escalation.
 6. Run native contract/lifecycle tests, malicious/faulting target packages, normal hardware protocol tests, all four pristine firmware builds, and image/layout verification. Keep arbitrary package execution release-disabled until every gate passes.
 
@@ -169,6 +169,6 @@ Rollback during development disables external package activation and restores th
 
 - Which exact Zephyr 4.4.1 API and fatal reason sequence provides supported notification when an unprivileged dynamic-code worker faults on ARM Cortex-M4, and what minimal hook is required? This must be answered by the target spike before production structure is fixed.
 - How many STM32L496 MPU regions remain available after Zephyr userspace, stack guards, and board mappings, and what arena sizes/alignment fit without weakening W^X?
-- What operation-specific deadlines preserve Elta3 at 1200 7O2 and Fennel1 at 9600 8N1 under worst-case valid instrument latency?
+- What operation-specific deadlines preserve Elta3 at 1200 7O2 and FTS3XX at 9600 8N1 under worst-case valid instrument latency?
 - Which current UART transport waits are cancellable, and which require peripheral reset during recovery?
 - Should the bounded last-failure diagnostic survive reboot, or should persistence be deferred to a separate diagnostics policy?

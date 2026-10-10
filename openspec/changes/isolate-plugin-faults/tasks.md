@@ -24,7 +24,7 @@
 - [ ] 4.1 Implement syscall verification for active caller identity, privilege state, invocation generation, operation permission, mailbox offsets, direction, lengths, structure versions, capabilities, and remaining deadline.
 - [ ] 4.2 Route valid Port requests through the existing host-owned assignment, claim, serial configuration, transport, and UART lifetime path without exposing transport or driver pointers to user mode.
 - [ ] 4.3 Route valid workspace, clock, logging, UI, and input operations through bounded host-owned copies and reject unavailable or unauthorized capabilities without mutating host state.
-- [ ] 4.4 Make blocking host operations respect the invocation's absolute deadline and add cancellation or peripheral-reset handling for UART operations used by Elta3 and Fennel1.
+- [ ] 4.4 Make blocking host operations respect the invocation's absolute deadline and add cancellation or peripheral-reset handling for UART operations used by Elta3 and FTS3XX.
 
 ## 5. Add Fault Classification and Recovery
 
@@ -43,7 +43,7 @@
 
 ## 7. Migrate Production Packages
 
-- [ ] 7.1 Rebuild the independent Elta3 and Fennel1 packages against the isolated SDK and route all port access through the mediated gateway while preserving current serial defaults and protocol behavior.
+- [ ] 7.1 Rebuild the independent Elta3 and FTS3XX packages against the isolated SDK and route all port access through the mediated gateway while preserving current serial defaults and protocol behavior.
 - [ ] 7.2 Move Calculation transformation and all Measurement create/destroy/render/input/measure calls off the MainApplication thread and remove the production direct function-pointer invocation fallback.
 - [ ] 7.3 Preserve current bounded display, logical keyboard, measurement record, explicit workspace mutation, assignment, and missing/incompatible package behavior for successful invocations.
 
@@ -53,7 +53,7 @@
 - [ ] 8.2 Add target fault packages and STM32L496 tests for unauthorized read/write, XN execution, invalid instruction, stack fault, infinite loop, malformed service requests, stale generation, and faults during each package lifecycle phase.
 - [ ] 8.3 Demonstrate on hardware that each recoverable plugin failure quarantines the package, restores UART/resource ownership, displays the diagnostic, returns to the correct menu, and leaves another valid plugin operational.
 - [ ] 8.4 Demonstrate on hardware that host, privileged service, kernel, ISR, nested, and ambiguous faults reboot instead of being mislabeled as recovered plugin failures.
-- [ ] 8.5 Run normal Elta3 and Fennel1 protocol/UI acceptance, Calculation/workspace tests, and the complete native test suite without weakening expected frames or bounded-result checks.
+- [ ] 8.5 Run normal Elta3 and FTS3XX protocol/UI acceptance, Calculation/workspace tests, and the complete native test suite without weakening expected frames or bounded-result checks.
 - [ ] 8.6 Pristine-build all four firmware targets, run `application/scripts/verify-images.sh`, inspect MainApplication map/RAM/stack growth, and confirm the fixed image contract still passes.
 - [ ] 8.7 Update the plugin contract/security documentation and `docs/migration-status.md` with measured isolation limits, tested fault classes, timeout policy, remaining authenticity/storage gates, and the new native/target test baseline.
 - [ ] 8.8 Keep arbitrary external executable packages release-disabled unless every MPU, fault, timeout, cleanup, normal-operation, build, image-layout, and hardware acceptance gate in this change passes.

@@ -60,7 +60,7 @@ After external plugin discovery, MainApplication SHALL resolve each persisted me
 
 ### Requirement: Expose only loaded external measurement plugins for port assignment
 
-The port-assignment UI SHALL not expose legacy Elta3 or Fennel1/FTS3XX device entries. It SHALL enumerate only ready loaded external measurement plugins whose required hardware capabilities match the selected port, alongside supported non-measurement system assignments.
+The port-assignment UI SHALL not expose legacy Elta3 or FTS3XX/FTS3XX device entries. It SHALL enumerate only ready loaded external measurement plugins whose required hardware capabilities match the selected port, alongside supported non-measurement system assignments.
 
 #### Scenario: External measurement plugin is compatible
 - **WHEN** a ready external measurement plugin requires hardware available on the selected port

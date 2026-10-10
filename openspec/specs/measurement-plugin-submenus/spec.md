@@ -1,4 +1,4 @@
-﻿# Measurement Plugin Submenus Specification
+# Measurement Plugin Submenus Specification
 
 ## Purpose
 Define plugin-owned measurement submenu behavior and session routing.
@@ -12,9 +12,9 @@ MainApplication SHALL render the active measurement plugin's bounded display mod
 - **WHEN** a ready assigned Elta3 device is selected in the Measurement menu
 - **THEN** MainApplication opens a generic Elta3 plugin session whose display exposes `Measure`, `Up`, `Down`, `Enter`, and the plugin-owned measurement workflow
 
-#### Scenario: Fennel1 is selected
-- **WHEN** a ready assigned Fennel1 device is selected in the Measurement menu
-- **THEN** MainApplication opens a generic Fennel1 plugin session whose display exposes measurement without unsupported directional actions and includes the plugin-owned result workflow
+#### Scenario: FTS3XX is selected
+- **WHEN** a ready assigned FTS3XX device is selected in the Measurement menu
+- **THEN** MainApplication opens a generic FTS3XX plugin session whose display exposes measurement without unsupported directional actions and includes the plugin-owned result workflow
 
 #### Scenario: Measurement result is pending
 - **WHEN** either plugin completes a measurement successfully
@@ -83,5 +83,3 @@ The plugin session architecture SHALL not change the existing measurement workfl
 #### Scenario: Built-in non-plugin device is selected
 - **WHEN** a ready legacy measurement device is selected
 - **THEN** MainApplication continues to use its existing host action workflow and does not create a plugin measurement session
-
-

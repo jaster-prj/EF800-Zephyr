@@ -17,7 +17,7 @@ LOG_MODULE_REGISTER(ef800_virtual_serial_peers, LOG_LEVEL_INF);
 #define PEER_SCRIPT_SIZE 128U
 #define PEER_PROFILE_NONE 0U
 #define PEER_PROFILE_ELTA3 1U
-#define PEER_PROFILE_FENNEL1 2U
+#define PEER_PROFILE_FTS3XX 2U
 
 struct virtual_peer {
 	const struct device *uart;
@@ -115,7 +115,7 @@ static void peer_work(struct k_work *work)
 	} else if (peer->profile == PEER_PROFILE_ELTA3 && peer->pending_command_length >= 1U &&
 		peer->pending_command[0] == 'Q') {
 		/* Elta3's Q command ends a readout and has no response. */
-	} else if (peer->profile == PEER_PROFILE_FENNEL1 &&
+	} else if (peer->profile == PEER_PROFILE_FTS3XX &&
 		peer->pending_command_length >= 1U && peer->pending_command[0] == 0x11U) {
 		char measurement[64];
 		size_t length = generate_fennel_measurement(measurement, sizeof(measurement));
@@ -173,7 +173,7 @@ int ef800_virtual_serial_peer_set(uint8_t port, const uint8_t *response,
 
 int ef800_virtual_serial_peer_set_profile(uint8_t port, uint8_t profile)
 {
-	if (port == 0U || port > PEER_COUNT || profile > PEER_PROFILE_FENNEL1) {
+	if (port == 0U || port > PEER_COUNT || profile > PEER_PROFILE_FTS3XX) {
 		return -EINVAL;
 	}
 	peers[port - 1U].profile = profile;

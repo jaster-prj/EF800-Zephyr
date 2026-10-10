@@ -69,7 +69,7 @@ The existing EF800 release framing remains `E0 F0 <code>`.
 Plugin integration checkpoint:
 
 - The measurement-plugin workflow now keeps code, point number, staff height,
-  Save, Discard, and Fixmessung inside the Elta3 and Fennel1 packages. The
+  Save, Discard, and Fixmessung inside the Elta3 and FTS3XX packages. The
   workspace service retains the last measurement point/code context and updates
   it after successful opaque-record appends; MainApplication only transfers
   context and performs the generic append/acknowledgement boundary.
@@ -77,7 +77,7 @@ Plugin integration checkpoint:
   advancement for both packages. The native shared suite passes 19/19
   configurations and 92/92 test cases after the workspace-context increment.
 
-- Elta3 and Fennel1 (the existing FTS3XX adapter, persisted ID 3) are registered
+- Elta3 and FTS3XX (the Fennel FTS3XX adapter, persisted ID 3) are registered
   through the EF800 static device-plugin
   registry using the stable persisted builder IDs `2` and `3`.
 - MainApplication resolves measurement-capable ports, serial defaults, and
@@ -161,7 +161,7 @@ Plugin integration checkpoint:
 - Port 1 and Port 2 user-facing titles are both `RS232 Port`; Port 2 retains
   UART1 and optional hardware flow-control connection labels.
 - External measurement plugins use full persisted plugin IDs. Legacy Elta3 and
-  Fennel1/FTS3XX assignment IDs 2 and 3 are migrated to NONE and are not
+  FTS3XX/FTS3XX assignment IDs 2 and 3 are migrated to NONE and are not
   assignable.
   fixed-point records, and Workspace append behavior.
 - Backend-neutral persistence API with safe names and no-storage behavior.

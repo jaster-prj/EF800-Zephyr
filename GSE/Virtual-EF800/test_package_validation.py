@@ -9,19 +9,19 @@ sys.path.insert(0, str(TOOLS))
 import verify_package  # noqa: E402
 
 
-NATIVE = ROOT / "application/plugins/measurement-plugin/build/native-sim"
+NATIVE = ROOT / "application/plugins/measurement-plugin/build/native-sim-deploy-renamed"
 ARM = ROOT / "application/plugins/measurement-plugin/build/arm2/elta3_plugin.pmp"
 
 
 class PackageValidationTests(unittest.TestCase):
     def test_native_packages_validate(self):
         for package in (NATIVE / "elta3_native_plugin.pmp",
-                        NATIVE / "fennel1_native_plugin.pmp"):
+                        NATIVE / "fts3xx_native_plugin.pmp"):
             if package.exists():
                 verify_package.verify(package, None)
 
     def test_malformed_header_is_rejected(self):
-        package = NATIVE / "fennel1_native_plugin.pmp"
+        package = NATIVE / "fts3xx_native_plugin.pmp"
         if not package.exists():
             self.skipTest("native package has not been built")
         data = bytearray(package.read_bytes())

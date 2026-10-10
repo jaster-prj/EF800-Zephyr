@@ -12,7 +12,7 @@ EF800 measurement plugins currently implement instrument protocols while MainApp
 
 Measurement packages will own their logical submenu declarations, logical input handling, measurement presentation state, and bounded display-model generation. MainApplication will expose only validated host services and logical key events, render the package's bounded declarative model, and retain all hardware, resource lifetime, raw protocol, and global-navigation ownership.
 
-The package contract will be explicitly versioned and structure-size validated before activation. Device-specific behavior will be implemented in independently packaged Elta3 and Fennel1 `.pmp` artifacts rather than compiled into MainApplication.
+The package contract will be explicitly versioned and structure-size validated before activation. Device-specific behavior will be implemented in independently packaged Elta3 and FTS3XX `.pmp` artifacts rather than compiled into MainApplication.
 
 ## Consequences
 

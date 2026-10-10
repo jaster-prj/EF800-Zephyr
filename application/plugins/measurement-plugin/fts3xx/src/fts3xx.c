@@ -210,7 +210,7 @@ static int32_t input(void *instance, uint32_t value)
 static int32_t render(void *instance, struct ef800_measurement_display *display)
 {
     if (instance != &ef800_runtime.public_instance || display == 0) return PM_EINVAL;
-    ef800_measurement_display_init(display, "Fennel1", action_mask());
+    ef800_measurement_display_init(display, "Fennel FTS3XX", action_mask());
     display->selected_action = selected_action;
     display->row_count = 1u;
     if (state == FENNEL_INSTRUMENT) {

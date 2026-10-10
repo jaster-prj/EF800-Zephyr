@@ -52,19 +52,19 @@
       <p>Serial instrument dummies are available only on Ports 1 and 2. Port 3 has no MAX3232 path; Ports 4 and 5 are non-serial.</p>
       <div class="device-port-row">
         <label>Port 1 dummy
-          <select id="device-profile-1"><option value="0">Raw/scripted</option><option value="1">Elta3</option><option value="2">Fennel1 / FTS310</option></select>
+          <select id="device-profile-1"><option value="0">Raw/scripted</option><option value="1">Elta3</option><option value="2">FTS3XX / FTS310</option></select>
         </label>
         <button data-dock-port="1">Dock Port 1</button>
       </div>
       <div class="device-port-row">
         <label>Port 2 dummy
-          <select id="device-profile-2"><option value="0">Raw/scripted</option><option value="1">Elta3</option><option value="2">Fennel1 / FTS310</option></select>
+          <select id="device-profile-2"><option value="0">Raw/scripted</option><option value="1">Elta3</option><option value="2">FTS3XX / FTS310</option></select>
         </label>
         <button data-dock-port="2">Dock Port 2</button>
       </div>
-      <div class="device-port-row unavailable-port">Port 3 — no MAX3232 serial path</div>
-      <div class="device-port-row unavailable-port">Port 4 — USB only</div>
-      <div class="device-port-row unavailable-port">Port 5 — SPI only</div>
+      <div class="device-port-row unavailable-port">Port 3 â€” no MAX3232 serial path</div>
+      <div class="device-port-row unavailable-port">Port 4 â€” USB only</div>
+      <div class="device-port-row unavailable-port">Port 5 â€” SPI only</div>
       <label>Delay ms <input id="device-delay" type="number" min="0" max="60000" value="0"></label>
       <label>Response hex <input id="device-response" type="text" maxlength="256" placeholder="52442B0012340D0A"></label>
       <label><input id="device-available" type="checkbox" checked> Available</label>
