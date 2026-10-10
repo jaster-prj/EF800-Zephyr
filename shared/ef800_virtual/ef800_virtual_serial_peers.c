@@ -9,9 +9,15 @@
 #include <zephyr/devicetree.h>
 #include <zephyr/drivers/serial/uart_emul.h>
 #include <zephyr/kernel.h>
+#include <zephyr/logging/log.h>
+
+LOG_MODULE_REGISTER(ef800_virtual_serial_peers, LOG_LEVEL_INF);
 
 #define PEER_COUNT 2U
 #define PEER_SCRIPT_SIZE 128U
+#define PEER_PROFILE_NONE 0U
+#define PEER_PROFILE_ELTA3 1U
+#define PEER_PROFILE_FENNEL1 2U
 
 struct virtual_peer {
 	const struct device *uart;
@@ -25,6 +31,7 @@ struct virtual_peer {
  size_t command_length;
 	uint8_t pending_command[16];
 	size_t pending_command_length;
+	uint8_t profile;
 	struct k_work_delayable work;
 };
 
@@ -41,25 +48,37 @@ static struct virtual_peer peers[PEER_COUNT] = {
 static void peer_work(struct k_work *work)
 {
 	struct virtual_peer *peer = CONTAINER_OF(work, struct virtual_peer, work.work);
+	LOG_INF("virtual serial peer %u received command length %u first=0x%02x",
+		(unsigned)(peer - peers + 1U), (unsigned)peer->pending_command_length,
+		peer->pending_command_length == 0U ? 0U : peer->pending_command[0]);
 
-	if (!peer->available || peer->error != 0 || peer->response_length == 0U) {
+	if (!peer->available || peer->error != 0 ||
+		(peer->profile == PEER_PROFILE_NONE && peer->response_length == 0U)) {
 		return;
 	}
-	if (peer == &peers[0] && peer->pending_command_length >= 3U &&
+	if (peer->profile == PEER_PROFILE_ELTA3 && peer->pending_command_length >= 3U &&
 		peer->pending_command[0] == 'S' && peer->pending_command[1] == '1' &&
 		peer->pending_command[2] == '4') {
 		static const uint8_t acknowledge[] = {'A', '\r', '\n'};
+		LOG_INF("virtual serial peer %u response ACK", (unsigned)(peer - peers + 1U));
 		(void)uart_emul_put_rx_data(peer->uart, acknowledge,
 			sizeof(acknowledge));
-	} else if (peer == &peers[0] && peer->pending_command_length >= 1U &&
+	} else if (peer->profile == PEER_PROFILE_ELTA3 && peer->pending_command_length >= 1U &&
 		peer->pending_command[0] == 'B') {
 		static const uint8_t elta3_measurement[] =
 			"#48 0 1.234; 100.0000; 50.5000\r\n";
+		LOG_INF("virtual serial peer %u response Elta3 measurement", (unsigned)(peer - peers + 1U));
 		(void)uart_emul_put_rx_data(peer->uart, elta3_measurement,
 			sizeof(elta3_measurement) - 1U);
-	} else if (peer == &peers[0] && peer->pending_command_length >= 1U &&
+	} else if (peer->profile == PEER_PROFILE_ELTA3 && peer->pending_command_length >= 1U &&
 		peer->pending_command[0] == 'Q') {
 		/* Elta3's Q command ends a readout and has no response. */
+	} else if (peer->profile == PEER_PROFILE_FENNEL1 &&
+		peer->pending_command_length >= 1U && peer->pending_command[0] == 0x11U) {
+		static const uint8_t fennel_measurement[] =
+			"1234 0452700 0900000\r\n";
+		(void)uart_emul_put_rx_data(peer->uart, fennel_measurement,
+			sizeof(fennel_measurement) - 1U);
 	} else {
 		(void)uart_emul_put_rx_data(peer->uart, peer->response,
 			peer->response_length);
@@ -108,6 +127,17 @@ int ef800_virtual_serial_peer_set(uint8_t port, const uint8_t *response,
 	peer->delay_ms = delay_ms;
 	peer->error = error;
 	peer->available = available;
+	return 0;
+}
+
+int ef800_virtual_serial_peer_set_profile(uint8_t port, uint8_t profile)
+{
+	if (port == 0U || port > PEER_COUNT || profile > PEER_PROFILE_FENNEL1) {
+		return -EINVAL;
+	}
+	peers[port - 1U].profile = profile;
+	peers[port - 1U].command_length = 0U;
+	peers[port - 1U].pending_command_length = 0U;
 	return 0;
 }
 

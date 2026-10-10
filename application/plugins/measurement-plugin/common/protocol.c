@@ -131,6 +131,12 @@ int32_t ef800_protocol_elta3_parse(char *line,
     char *tokens[5];
     uint32_t count = ef800_protocol_split(line, tokens, 5u);
     int32_t status;
+    for (uint32_t index = 1u; index < count; ++index) {
+        size_t length = ef800_protocol_length(tokens[index]);
+        if (length != 0u && tokens[index][length - 1u] == ';') {
+            tokens[index][length - 1u] = '\0';
+        }
+    }
     if (result == 0 || count == 0u || ef800_protocol_length(tokens[0]) < 3u ||
         tokens[0][1] < '0' || tokens[0][1] > '9' ||
         tokens[0][2] < '0' || tokens[0][2] > '9') return PM_EINVAL;

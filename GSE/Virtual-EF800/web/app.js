@@ -21,11 +21,10 @@
   const pluginPort = document.querySelector('#plugin-port');
   const pluginAssign = document.querySelector('#plugin-assign');
   const pluginExecute = document.querySelector('#plugin-execute');
-  const devicePort = document.querySelector('#device-port');
+  const deviceDockButtons = [...document.querySelectorAll('[data-dock-port]')];
   const deviceDelay = document.querySelector('#device-delay');
   const deviceResponse = document.querySelector('#device-response');
   const deviceAvailable = document.querySelector('#device-available');
-  const deviceDock = document.querySelector('#device-dock');
   const deviceStatus = document.querySelector('#device-status');
   let socket, controller = false, simulator = false, reconnectTimer;
   const held = new Set();
@@ -139,16 +138,18 @@
       pluginStatus.textContent = result.accepted ? 'Measurement completed; see LCD.' : `Measurement failed: ${result.error}`;
     } catch (error) { pluginStatus.textContent = `Execution failed: ${error}`; }
   }
-  async function dockDevice() {
-    deviceStatus.textContent = 'Applying virtual device profile...';
+  async function dockDevice(port) {
+    const deviceProfile = document.querySelector(`#device-profile-${port}`);
+    deviceStatus.textContent = `Applying virtual device profile to Port ${port}...`;
     try {
-      const response = await fetch(`/api/devices/${devicePort.value}`, {
+      const response = await fetch(`/api/devices/${port}`, {
         method: 'POST', headers: {'Content-Type': 'application/json'},
         body: JSON.stringify({available: deviceAvailable.checked,
-          delay_ms: Number(deviceDelay.value), response_hex: deviceResponse.value})
+          delay_ms: Number(deviceDelay.value), response_hex: deviceResponse.value,
+          profile: Number(deviceProfile.value)})
       });
       const result = await response.json();
-      deviceStatus.textContent = result.accepted ? `Port ${devicePort.value} docked.` : `Rejected: ${result.error || 'unknown error'}`;
+      deviceStatus.textContent = result.accepted ? `Port ${port} docked.` : `Rejected: ${result.error || 'unknown error'}`;
     } catch (error) { deviceStatus.textContent = `Dock failed: ${error}`; }
   }
   function connect() {
@@ -205,7 +206,9 @@
   simulatorRestart.onclick = restartSimulator;
   pluginAssign.onclick = assignPlugin;
   pluginExecute.onclick = executePlugin;
-  deviceDock.onclick = dockDevice;
+  deviceDockButtons.forEach(button => {
+    button.onclick = () => dockDevice(Number(button.dataset.dockPort));
+  });
   logsPause.onclick = () => {
     logsPaused = !logsPaused;
     logsPause.textContent = logsPaused ? 'Resume' : 'Pause';

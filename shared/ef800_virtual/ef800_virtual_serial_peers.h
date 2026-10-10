@@ -8,5 +8,6 @@
 
 int ef800_virtual_serial_peer_set(uint8_t port, const uint8_t *response,
 	size_t length, int32_t delay_ms, int32_t error, bool available);
+int ef800_virtual_serial_peer_set_profile(uint8_t port, uint8_t profile);
 
 #endif

@@ -1620,11 +1620,15 @@ static int workspace_view_move(int direction)
 	}
 	if (direction < 0) {
 		result = workspace_view_find_previous_start(workspace_view_start,
-							   &next_start);
+								   &next_start);
 		if (result != 0 || next_start == workspace_view_start) {
 			return -ENOENT;
 		}
-		next_end = workspace_view_start;
+		/* Shift the four-line window up by one line: retain the current
+		 * window's first lines and drop only its newest line. */
+		next_end = workspace_view_line_count > 1U ?
+			workspace_view_line_ends[workspace_view_line_count - 2U] :
+			workspace_view_start;
 	} else {
 		if (workspace_view_end >= workspace_view_file_size ||
 		    workspace_view_line_count < 2U) {
@@ -3495,6 +3499,8 @@ static void activate_menu_entry(void)
 				append_plugin_workspace_record();
 				display_active_menu();
 			} else {
+				LOG_WRN("Plugin menu action failed: result=%d consumed=%d",
+					result, consumed);
 				display_line(6U, "Plugin action failed");
 			}
 			return;
@@ -4243,6 +4249,16 @@ static void handle_keyboard_event(uint32_t event)
 			return_from_position_editor();
 		}
 		return;
+	}
+	if (active_menu == APPLICATION_MENU_WORKSPACE_VIEW) {
+		int direction = (event & KB_EVENT_ARROWUP) != 0U ? -1 :
+			(event & KB_EVENT_ARROWDOWN) != 0U ? 1 : 0;
+		if (direction != 0 && workspace_view_move(direction) == 0) {
+			display_workspace_view();
+		}
+		if (direction != 0) {
+			return;
+		}
 	}
 	if (active_menu == APPLICATION_MENU_MEASUREMENT_ACTIONS &&
 		measurement_plugin_session.state == EF800_MEASUREMENT_SESSION_ACTIVE) {

@@ -270,17 +270,21 @@ class Gateway:
             available = 1 if bool(body.get("available", True)) else 0
             delay = max(0, min(60000, int(body.get("delay_ms", 0))))
             error = int(body.get("error", 0))
+            profile = int(body.get("profile", 0))
+            if profile not in (0, 1, 2):
+                raise ProtocolError("invalid virtual instrument profile")
             for operation, payload in (
                     (1, bytes([available])),
                     (2, struct.pack("<I", delay)),
                     (3, struct.pack("<i", error)),
-                    (4, response)):
+                    (4, response),
+                    (5, bytes([profile]))):
                 if not await self.send_simulator(MSG_PROFILE_CONTROL,
                                                   bytes([port, operation]) + payload):
                     raise ConnectionError("simulator disconnected")
             state = {"port": port, "available": bool(available),
                      "delay_ms": delay, "error": error,
-                     "response_hex": response.hex()}
+                     "response_hex": response.hex(), "profile": profile}
             return web.json_response({"accepted": True, "state": state})
         except (ValueError, TypeError, ProtocolError) as error:
             return web.json_response({"accepted": False, "error": str(error)}, status=400)
@@ -393,13 +397,16 @@ class Gateway:
 def create_app(gateway):
     app = web.Application(client_max_size=MAX_BROWSER_MESSAGE)
     app["gateway"] = gateway
+
+    def static_file(name):
+        return web.FileResponse(
+            os.path.join(os.path.dirname(__file__), "web", name),
+            headers={"Cache-Control": "no-store, max-age=0"})
+
     app.add_routes([
-        web.get("/", lambda _request: web.FileResponse(
-            os.path.join(os.path.dirname(__file__), "web", "index.html"))),
-        web.get("/app.js", lambda _request: web.FileResponse(
-            os.path.join(os.path.dirname(__file__), "web", "app.js"))),
-        web.get("/style.css", lambda _request: web.FileResponse(
-            os.path.join(os.path.dirname(__file__), "web", "style.css"))),
+        web.get("/", lambda _request: static_file("index.html")),
+        web.get("/app.js", lambda _request: static_file("app.js")),
+        web.get("/style.css", lambda _request: static_file("style.css")),
         web.get("/health", lambda request: web.json_response({
             "web": "ready", "simulator": "connected" if request.app["gateway"].simulator_connected else "disconnected"})),
         web.post("/api/plugins", gateway.http_upload_plugin),

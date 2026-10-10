@@ -20,6 +20,7 @@
 #define PROFILE_OP_SET_DELAY 2U
 #define PROFILE_OP_SET_ERROR 3U
 #define PROFILE_OP_SET_RESPONSE 4U
+#define PROFILE_OP_SET_DUMMY 5U
 #define PROFILE_MAX_RESPONSE 128U
 
 struct profile_state {
@@ -72,6 +73,9 @@ int ef800_virtual_profile_apply(const uint8_t *payload, size_t length)
 	state = &serial_profiles[device - 1U];
 
 	switch (operation) {
+	case PROFILE_OP_SET_DUMMY:
+		if (length != 3U || payload[2] > 2U) return -EINVAL;
+		return ef800_virtual_serial_peer_set_profile(device, payload[2]);
 	case PROFILE_OP_SET_AVAILABILITY:
 		if (length != 3U || payload[2] > 1U) return -EINVAL;
 		state->available = payload[2] != 0U;
