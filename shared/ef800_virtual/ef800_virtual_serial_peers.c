@@ -45,6 +45,48 @@ static struct virtual_peer peers[PEER_COUNT] = {
 		.response_length = 22U, .available = true },
 };
 
+static uint32_t dummy_random(void)
+{
+	static uint32_t state = 0x6d2b79f5U;
+	state = state * 1664525U + 1013904223U;
+	return state;
+}
+
+static uint32_t dummy_random_range(uint32_t limit)
+{
+	return limit == 0U ? 0U : dummy_random() % limit;
+}
+
+static size_t generate_elta3_measurement(char *buffer, size_t capacity)
+{
+	uint32_t horizontal = dummy_random_range(3600001U);
+	uint32_t vertical = dummy_random_range(900001U);
+	uint32_t distance = dummy_random_range(100000U);
+	int written;
+
+	if ((dummy_random() & 1U) == 0U) {
+		written = snprintk(buffer, capacity, "#33 %u.%04u; %u.%04u;\r\n",
+			horizontal / 10000U, horizontal % 10000U,
+			vertical / 10000U, vertical % 10000U);
+	} else {
+		written = snprintk(buffer, capacity,
+			"#48 0 %u.%03u; %u.%04u; %u.%04u\r\n",
+			distance / 1000U, distance % 1000U,
+			horizontal / 10000U, horizontal % 10000U,
+			vertical / 10000U, vertical % 10000U);
+	}
+	return written > 0 && (size_t)written < capacity ? (size_t)written : 0U;
+}
+
+static size_t generate_fennel_measurement(char *buffer, size_t capacity)
+{
+	int written = snprintk(buffer, capacity, "%07u %03u%02u%02u %03u%02u%02u\r\n",
+		dummy_random_range(1000000U),
+		dummy_random_range(90U), dummy_random_range(60U), dummy_random_range(60U),
+		dummy_random_range(360U), dummy_random_range(60U), dummy_random_range(60U));
+	return written > 0 && (size_t)written < capacity ? (size_t)written : 0U;
+}
+
 static void peer_work(struct k_work *work)
 {
 	struct virtual_peer *peer = CONTAINER_OF(work, struct virtual_peer, work.work);
@@ -65,20 +107,19 @@ static void peer_work(struct k_work *work)
 			sizeof(acknowledge));
 	} else if (peer->profile == PEER_PROFILE_ELTA3 && peer->pending_command_length >= 1U &&
 		peer->pending_command[0] == 'B') {
-		static const uint8_t elta3_measurement[] =
-			"#48 0 1.234; 100.0000; 50.5000\r\n";
-		LOG_INF("virtual serial peer %u response Elta3 measurement", (unsigned)(peer - peers + 1U));
-		(void)uart_emul_put_rx_data(peer->uart, elta3_measurement,
-			sizeof(elta3_measurement) - 1U);
+		char measurement[96];
+		size_t length = generate_elta3_measurement(measurement, sizeof(measurement));
+		LOG_INF("virtual serial peer %u response randomized Elta3 measurement",
+			(unsigned)(peer - peers + 1U));
+		(void)uart_emul_put_rx_data(peer->uart, (const uint8_t *)measurement, length);
 	} else if (peer->profile == PEER_PROFILE_ELTA3 && peer->pending_command_length >= 1U &&
 		peer->pending_command[0] == 'Q') {
 		/* Elta3's Q command ends a readout and has no response. */
 	} else if (peer->profile == PEER_PROFILE_FENNEL1 &&
 		peer->pending_command_length >= 1U && peer->pending_command[0] == 0x11U) {
-		static const uint8_t fennel_measurement[] =
-			"1234 0452700 0900000\r\n";
-		(void)uart_emul_put_rx_data(peer->uart, fennel_measurement,
-			sizeof(fennel_measurement) - 1U);
+		char measurement[64];
+		size_t length = generate_fennel_measurement(measurement, sizeof(measurement));
+		(void)uart_emul_put_rx_data(peer->uart, (const uint8_t *)measurement, length);
 	} else {
 		(void)uart_emul_put_rx_data(peer->uart, peer->response,
 			peer->response_length);
