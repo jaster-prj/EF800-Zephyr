@@ -3,6 +3,77 @@
 #include <stddef.h>
 #include <stdint.h>
 
+#if defined(__arm__) || defined(__thumb__)
+static uint32_t unsigned_divide(uint32_t dividend, uint32_t divisor,
+    uint32_t *remainder)
+{
+    uint32_t quotient = 0u;
+    uint32_t bit;
+    uint32_t quotient_bit = 1u << 31;
+    uint64_t partial = 0u;
+
+    if (divisor == 0u) {
+        if (remainder != 0) *remainder = 0u;
+        return 0u;
+    }
+    for (bit = 32u; bit != 0u; --bit) {
+        partial = (partial << 1) | ((dividend >> (bit - 1u)) & 1u);
+        if (partial >= divisor) {
+            partial -= divisor;
+            quotient |= quotient_bit;
+        }
+        quotient_bit >>= 1;
+    }
+    if (remainder != 0) *remainder = (uint32_t)partial;
+    return quotient;
+}
+
+uint32_t __aeabi_uidiv(uint32_t dividend, uint32_t divisor)
+{
+    return unsigned_divide(dividend, divisor, 0);
+}
+
+uint32_t __aeabi_uidivmod(uint32_t dividend, uint32_t divisor)
+{
+    uint32_t remainder;
+    uint32_t quotient = unsigned_divide(dividend, divisor, &remainder);
+
+    __asm volatile("mov r1, %0" : : "r" (remainder));
+    return quotient;
+}
+
+int32_t __aeabi_idiv(int32_t dividend, int32_t divisor)
+{
+    unsigned int negative = ((dividend < 0) != (divisor < 0));
+    uint32_t magnitude_dividend = dividend < 0 ? (uint32_t)-dividend : (uint32_t)dividend;
+    uint32_t magnitude_divisor = divisor < 0 ? (uint32_t)-divisor : (uint32_t)divisor;
+    int32_t result = (int32_t)unsigned_divide(magnitude_dividend,
+        magnitude_divisor, 0);
+
+    return negative ? -result : result;
+}
+
+int32_t __aeabi_idivmod(int32_t dividend, int32_t divisor)
+{
+    uint32_t remainder;
+    unsigned int negative = ((dividend < 0) != (divisor < 0));
+    uint32_t magnitude_dividend = dividend < 0 ? (uint32_t)-dividend : (uint32_t)dividend;
+    uint32_t magnitude_divisor = divisor < 0 ? (uint32_t)-divisor : (uint32_t)divisor;
+    int32_t quotient = (int32_t)unsigned_divide(magnitude_dividend,
+        magnitude_divisor, &remainder);
+    int32_t signed_remainder = (int32_t)remainder;
+
+    __asm volatile("mov r1, %0" : : "r" (negative ? -signed_remainder : signed_remainder));
+    return negative ? -quotient : quotient;
+}
+
+int32_t __aeabi_idiv0(int32_t value)
+{
+    (void)value;
+    return 0;
+}
+#endif
+
 size_t strlen(const char *value)
 {
     size_t length = 0u;

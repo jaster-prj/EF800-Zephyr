@@ -1,0 +1,7 @@
+common:
+  tags: [shared, bootloader, update]
+  harness: ztest
+tests:
+  ef800.shared.boot_update:
+    platform_allow:
+      - native_sim

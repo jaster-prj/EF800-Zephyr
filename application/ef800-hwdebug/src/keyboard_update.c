@@ -31,7 +31,7 @@
 #define KB_ROM_ADDRESS 0x08000000U
 #define KB_ROM_DEVICE_ID 0x0435U
 #define KB_RX_MAGIC 0x424B4645U
-#define KB_RX_PATH "/EF800:/fwu/EF800_KEYBOARD.pkg"
+#define KB_RX_PATH "/DATA:/fwu/EF800_KEYBOARD.pkg"
 #define KB_PACKAGE_MAX_SIZE (EF800_KEYBOARD_PACKAGE_HEADER_SIZE + \
 	EF800_KEYBOARD_PACKAGE_LIMIT)
 
@@ -197,7 +197,7 @@ void hwdebug_keyboard_receive(void)
 		goto done;
 	}
 	fs_file_t_init(&file);
-	(void)fs_mkdir("/EF800:/fwu");
+	(void)fs_mkdir("/DATA:/fwu");
 	ret = fs_open(&file, KB_RX_PATH, FS_O_CREATE | FS_O_WRITE | FS_O_TRUNC);
 	if (ret != 0) {
 		hwdebug_console_printf("keyboard receive: open failed=%d\r\n", ret);

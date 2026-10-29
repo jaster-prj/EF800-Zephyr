@@ -4,6 +4,7 @@
 #include "ef800_ui.h"
 #include "keyboard_host.h"
 #include "ef800_plugin_session.h"
+#include "ef800_lcd_contrast.h"
 
 struct render_capture {
 	struct ef800_ui_state state;
@@ -40,6 +41,39 @@ ZTEST(shared_ui, test_main_menu_wraps_and_renders)
 	zassert_equal(capture.calls, 2U, NULL);
 }
 
+struct contrast_menu_context {
+	enum ef800_lcd_contrast_mode mode;
+};
+
+static size_t contrast_menu_count(void *context, enum ef800_ui_menu menu)
+{
+	const struct contrast_menu_context *contrast = context;
+
+	return menu == EF800_UI_MENU_SETTINGS ?
+		ef800_lcd_contrast_settings_count(contrast->mode, 3U) : 0U;
+}
+
+ZTEST(shared_ui, test_settings_navigation_exposes_contrast_only_when_active)
+{
+	struct ef800_ui_state state;
+	struct contrast_menu_context contrast = {
+		.mode = EF800_LCD_CONTRAST_STATIC,
+	};
+
+	ef800_ui_init(&state);
+	state.menu = EF800_UI_MENU_SETTINGS;
+	state.selection = 2U;
+	ef800_ui_move(&state, 1, contrast_menu_count, &contrast, NULL);
+	zassert_equal(state.selection, 0U, NULL);
+
+	contrast.mode = EF800_LCD_CONTRAST_PWM;
+	state.selection = 2U;
+	ef800_ui_move(&state, 1, contrast_menu_count, &contrast, NULL);
+	zassert_equal(state.selection, 3U, NULL);
+	ef800_ui_move(&state, -1, contrast_menu_count, &contrast, NULL);
+	zassert_equal(state.selection, 2U, NULL);
+}
+
 ZTEST(shared_ui, test_parent_navigation_preserves_expected_settings_entry)
 {
 	struct ef800_ui_state state;
@@ -71,6 +105,17 @@ ZTEST(shared_ui, test_workspace_management_returns_to_settings)
 	ef800_ui_enter(&state, EF800_UI_MENU_WORKSPACE_MANAGEMENT, NULL);
 	ef800_ui_back(&state, NULL);
 	zassert_equal(state.menu, EF800_UI_MENU_SETTINGS, NULL);
+}
+
+ZTEST(shared_ui, test_workspace_delete_confirmation_returns_to_management)
+{
+	struct ef800_ui_state state;
+
+	ef800_ui_init(&state);
+	ef800_ui_enter(&state, EF800_UI_MENU_WORKSPACE_DELETE_CONFIRMATION, NULL);
+	ef800_ui_back(&state, NULL);
+	zassert_equal(state.menu, EF800_UI_MENU_WORKSPACE_MANAGEMENT, NULL);
+	zassert_equal(state.selection, 4U, NULL);
 }
 
 ZTEST(shared_ui, test_plugin_and_editor_state_is_host_owned)

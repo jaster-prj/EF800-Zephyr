@@ -59,19 +59,23 @@ if(PM_ARM_TOOLCHAIN_PREFIX)
         add_custom_command(OUTPUT ${image}
             COMMAND ${ARM_CC} -mcpu=cortex-m0plus -mthumb -mfloat-abi=soft -mlong-calls
                 -std=c11 -Os -ffreestanding -fno-builtin -fno-common
-                -ffunction-sections -fdata-sections -Wall -Wextra -Werror
+                -ffunction-sections -fdata-sections -fno-jump-tables
+                -Wall -Wextra -Werror
                 -I${CMAKE_CURRENT_LIST_DIR}/include
                 -I${CMAKE_CURRENT_LIST_DIR}/compat
                  -I${CMAKE_CURRENT_LIST_DIR}/common
                 -DEF800_PLUGIN_ID=${plugin_id}u
                  ${CMAKE_CURRENT_LIST_DIR}/${source}
-                 ${CMAKE_CURRENT_LIST_DIR}/common/protocol.c
-                 ${CMAKE_CURRENT_LIST_DIR}/common/plugin_runtime.c
-                 ${CMAKE_CURRENT_LIST_DIR}/${package_dir}/descriptor.c
-                -r -nostdlib -nostartfiles -nodefaultlibs
-                -T${CMAKE_CURRENT_BINARY_DIR}/plugin_memory.ld
+                  ${CMAKE_CURRENT_LIST_DIR}/common/protocol.c
+                  ${CMAKE_CURRENT_LIST_DIR}/common/plugin_runtime.c
+                  ${CMAKE_CURRENT_LIST_DIR}/common/freestanding.c
+                  ${CMAKE_CURRENT_LIST_DIR}/${package_dir}/descriptor.c
+                 -r -nostdlib -nostartfiles -nodefaultlibs
+                 -T${CMAKE_CURRENT_BINARY_DIR}/plugin_memory.ld
                 -o ${image}
-                 DEPENDS ${source} ${COMMON_SOURCES} ${package_dir}/descriptor.c
+                DEPENDS ${source} ${COMMON_SOURCES}
+                ${CMAKE_CURRENT_LIST_DIR}/common/freestanding.c
+                ${package_dir}/descriptor.c
                 ${CMAKE_CURRENT_BINARY_DIR}/plugin_memory.ld)
         add_custom_command(OUTPUT ${package}
             COMMAND ${Python3_EXECUTABLE} ${CMAKE_CURRENT_LIST_DIR}/tools/package_plugin.py
@@ -111,7 +115,9 @@ if(PM_BUILD_NATIVE_SIM)
                 ${CMAKE_CURRENT_LIST_DIR}/${package_dir}/descriptor.c
                  -r -nostdlib -nostartfiles -nodefaultlibs
                  -Wl,-T,${NATIVE_LINKER_SCRIPT} -o ${image}
-            DEPENDS ${source} ${COMMON_SOURCES} ${package_dir}/descriptor.c)
+             DEPENDS ${source} ${COMMON_SOURCES}
+                 ${CMAKE_CURRENT_LIST_DIR}/common/freestanding.c
+                 ${package_dir}/descriptor.c)
         add_custom_command(OUTPUT ${package}
             COMMAND ${Python3_EXECUTABLE} ${CMAKE_CURRENT_LIST_DIR}/tools/package_plugin.py
                 --image ${image} --output ${package} --plugin-id ${plugin_id}

@@ -12,6 +12,7 @@ target_sources(app PRIVATE
 	${CMAKE_CURRENT_LIST_DIR}/../../../shared/keyboard_protocol/keyboard_translation.c
 	${CMAKE_CURRENT_LIST_DIR}/../../../shared/ef800_plugin/ef800_plugin_session.c
 	${CMAKE_CURRENT_LIST_DIR}/../../../shared/ef800_plugin/ef800_plugin_screen.c
+	${CMAKE_CURRENT_LIST_DIR}/../../../shared/ef800_lcd_contrast/ef800_lcd_contrast.c
 )
 
 target_include_directories(app PRIVATE
@@ -19,4 +20,5 @@ target_include_directories(app PRIVATE
 	${CMAKE_CURRENT_LIST_DIR}/../../../application/ef800-main/src
 	${CMAKE_CURRENT_LIST_DIR}/../../../shared/keyboard_protocol
 	${CMAKE_CURRENT_LIST_DIR}/../../../shared/ef800_plugin
+	${CMAKE_CURRENT_LIST_DIR}/../../../shared/ef800_lcd_contrast
 )

@@ -1,0 +1,61 @@
+/* SPDX-License-Identifier: Apache-2.0 */
+
+/ {
+	spi_test_disk: spi_test_disk {
+		compatible = "zephyr,flash-disk";
+		partition = <&spi_test_storage>;
+		disk-name = "SPI";
+		cache-size = <4096>;
+		sector-size = <512>;
+		status = "okay";
+	};
+
+	chosen {
+		zephyr,console = &usart3;
+		zephyr,shell-uart = &usart3;
+	};
+
+};
+
+&usart3 {
+	status = "okay";
+	current-speed = <115200>;
+
+};
+
+&spi1 {
+	pinctrl-0 = <&spi1_sck_pa5 &spi1_miso_pa6 &spi1_mosi_pa7>;
+	pinctrl-names = "default";
+	cs-gpios = <&gpiod 14 GPIO_ACTIVE_LOW>;
+	status = "okay";
+	test_spi_flash: flash@0 {
+		compatible = "jedec,spi-nor";
+		reg = <0>;
+		spi-max-frequency = <1000000>;
+		jedec-id = [ef 40 16];
+		size = <DT_SIZE_M(4)>;
+		wp-gpios = <&gpiof 12 GPIO_ACTIVE_LOW>;
+		reset-gpios = <&gpiod 15 GPIO_ACTIVE_LOW>;
+		status = "okay";
+
+		partitions {
+			compatible = "fixed-partitions";
+			#address-cells = <1>;
+			#size-cells = <1>;
+
+			spi_test_storage: partition@0 {
+				label = "usb-test-storage";
+				reg = <0 DT_SIZE_M(1)>;
+			};
+		};
+	};
+};
+
+&zephyr_udc0 {
+	status = "okay";
+
+	cdc_acm_uart0: cdc_acm_uart0 {
+		compatible = "zephyr,cdc-acm-uart";
+		label = "TEST USB CDC ACM UART";
+	};
+};

@@ -16,7 +16,8 @@ target_sources(app PRIVATE
     ${CMAKE_CURRENT_LIST_DIR}/../../shared/ef800_ports/ef800_ports.c
     ${CMAKE_CURRENT_LIST_DIR}/../../shared/ef800_ports/ef800_port_uart.c
     ${CMAKE_CURRENT_LIST_DIR}/../../shared/ef800_ports/ef800_debug.c
-    ${CMAKE_CURRENT_LIST_DIR}/../../shared/ef800_update/ef800_update.c)
+    ${CMAKE_CURRENT_LIST_DIR}/../../shared/ef800_update/ef800_update.c
+    ${CMAKE_CURRENT_LIST_DIR}/../../shared/ef800_ports/ef800_usb_personality.c)
 target_include_directories(app PRIVATE
     ${CMAKE_CURRENT_LIST_DIR}/../../shared/keyboard_protocol
     ${CMAKE_CURRENT_LIST_DIR}/../../application/ef800-main/src

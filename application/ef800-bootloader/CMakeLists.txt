@@ -16,6 +16,7 @@ target_sources(app PRIVATE
 	${CMAKE_CURRENT_LIST_DIR}/../../shared/ef800_ports/ef800_console.c
 	${CMAKE_CURRENT_LIST_DIR}/../../shared/ef800_ports/ef800_log_backend.c
 	${CMAKE_CURRENT_LIST_DIR}/../../shared/ef800_watchdog/ef800_watchdog.c
+	${CMAKE_CURRENT_LIST_DIR}/../../shared/ef800_storage/ef800_qspi_layout.c
 )
 
 
@@ -25,4 +26,5 @@ target_include_directories(app PRIVATE
 	${CMAKE_CURRENT_LIST_DIR}/../../shared/ef800_measurement
 	${CMAKE_CURRENT_LIST_DIR}/../../shared/ef800_boot
 	${CMAKE_CURRENT_LIST_DIR}/../../shared/ef800_watchdog
+	${CMAKE_CURRENT_LIST_DIR}/../../shared/ef800_storage
 )

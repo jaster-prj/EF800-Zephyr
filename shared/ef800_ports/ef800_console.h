@@ -21,6 +21,7 @@ uint8_t ef800_console_get_target(void);
 int ef800_console_write(const uint8_t *data, size_t length);
 int ef800_console_read(uint8_t *data);
 int ef800_console_usb_start(void);
+int ef800_console_usb_stop(void);
 void ef800_console_set_transport_ready(bool ready);
 
 /* Queue output until a usable DebugConsole transport is selected. */

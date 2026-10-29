@@ -45,6 +45,12 @@ struct ef800_persistence_backend {
 		    ef800_persistence_list_callback callback, void *callback_context);
 	int (*remove)(void *context, enum ef800_persistence_root root,
 		      const char *name);
+	/* Rename within one root. The destination MUST be absent. */
+	int (*rename)(void *context, enum ef800_persistence_root root,
+		      const char *source_name, const char *destination_name);
+	/* Flush one existing file's contents to its backing storage. */
+	int (*sync)(void *context, enum ef800_persistence_root root,
+		    const char *name);
 };
 
 struct ef800_persistence {
@@ -77,6 +83,11 @@ int ef800_persistence_list(struct ef800_persistence *storage,
 			   ef800_persistence_list_callback callback, void *context);
 int ef800_persistence_remove(struct ef800_persistence *storage,
 			     enum ef800_persistence_root root, const char *name);
+int ef800_persistence_rename(struct ef800_persistence *storage,
+			     enum ef800_persistence_root root,
+			     const char *source_name, const char *destination_name);
+int ef800_persistence_sync(struct ef800_persistence *storage,
+			   enum ef800_persistence_root root, const char *name);
 
 /* Adapter for the existing Zephyr FAT mount service. */
 const struct ef800_persistence_backend *ef800_persistence_zephyr_backend(void);

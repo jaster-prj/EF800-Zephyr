@@ -1,0 +1,33 @@
+/* SPDX-License-Identifier: Apache-2.0 */
+
+/ {
+	chosen {
+		zephyr,console = &usart3;
+		zephyr,shell-uart = &usart3;
+	};
+};
+
+/* USART3 is the ST-LINK/VCP console on the NUCLEO-F767ZI. */
+&usart3 {
+	status = "okay";
+};
+
+/* USART6 is the auxiliary UART routed to the Morpho/header pins. */
+&usart6 {
+	status = "okay";
+	current-speed = <115200>;
+};
+
+/* Arduino R3 SPI flash wiring: D10=CS, D11=MOSI, D12=MISO, D13=SCK. */
+&spi1 {
+	status = "okay";
+
+	spi_flash0: flash@0 {
+		compatible = "jedec,spi-nor";
+		reg = <0>;
+		spi-max-frequency = <8000000>;
+		wp-gpios = <&gpiof 12 GPIO_ACTIVE_LOW>; /* D8, WP# */
+		reset-gpios = <&gpiod 15 GPIO_ACTIVE_LOW>; /* D9, RESET# */
+		status = "okay";
+	};
+};

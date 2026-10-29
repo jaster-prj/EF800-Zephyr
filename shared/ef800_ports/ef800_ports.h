@@ -109,7 +109,11 @@ int ef800_port_assignment_move_debug(
 	struct ef800_port_assignment_service *service, uint8_t port_id,
 	uint32_t connection);
 int ef800_port_assignment_remove(struct ef800_port_assignment_service *service,
-					 uint8_t port_id);
+						 uint8_t port_id);
+/* Clear a stale Port 4 MSD assignment even when its removal cannot be persisted. */
+int ef800_port_assignment_enforce_msd_policy(
+	struct ef800_port_assignment_service *service, bool msd_supported,
+	bool *cleared, bool *persisted);
 bool ef800_port_assignment_is_assigned(
 	const struct ef800_port_assignment_service *service, uint8_t port_id);
 uint8_t ef800_port_assignment_get_builder(

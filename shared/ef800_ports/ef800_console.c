@@ -10,7 +10,6 @@
 #include <zephyr/drivers/uart.h>
 #include <zephyr/sys/printk-hooks.h>
 #include <zephyr/kernel.h>
-#include "ef800_metadata.h"
 #include "ef800_update.h"
 
 #define EF800_CONSOLE_DEFAULT_BAUDRATE 9600U
@@ -162,18 +161,6 @@ static int console_putchar(int character)
 	return character;
 }
 
-static int read_metadata(struct ef800_boot_metadata *metadata, bool *valid)
-{
-	if (metadata == NULL || valid == NULL) {
-		return -EINVAL;
-	}
-	*valid = false;
-	if (ef800_metadata_read_current(metadata, valid) != 0) {
-		return -EIO;
-	}
-	return 0;
-}
-
 int ef800_console_prepare(void)
 {
 	k_spinlock_key_t key;
@@ -239,37 +226,12 @@ int ef800_console_set_target_with_config(
 
 int ef800_console_init(bool usb_debug_available)
 {
-	struct ef800_boot_metadata metadata;
-	bool valid;
-	uint8_t port_id;
-	int ret;
+	ARG_UNUSED(usb_debug_available);
 
-	/* The caller may have already buffered output during early startup. Do not
-	 * clear that buffer while selecting the persisted initial target. */
+	/* Port assignments live in Configuration FAT. Select a stable early
+	 * fallback until MainApplication loads and applies those records. */
 	__printk_hook_install(console_putchar);
-	ret = read_metadata(&metadata, &valid);
-	if (!valid) {
-		ef800_boot_metadata_init(&metadata);
-	}
-	port_id = ef800_console_port_select(&metadata, usb_debug_available);
-	if (port_id == EF800_CONSOLE_NO_TARGET) {
-		return 0;
-	}
-	if (port_id == 4U) {
-	#if defined(CONFIG_USBD_CDC_ACM_CLASS)
-		ret = ef800_console_usb_start();
-		if (ret != 0) {
-			port_id = EF800_CONSOLE_NO_TARGET;
-		}
-	#else
-		port_id = EF800_CONSOLE_NO_TARGET;
-	#endif
-	}
-	if (port_id == EF800_CONSOLE_NO_TARGET) {
-		return 0;
-	}
-	ret = ef800_console_set_target(port_id);
-	return ret;
+	return ef800_console_set_target(EF800_CONSOLE_FALLBACK_PORT);
 }
 
 uint8_t ef800_console_get_target(void)

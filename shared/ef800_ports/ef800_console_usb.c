@@ -25,6 +25,7 @@ USBD_CONFIGURATION_DEFINE(ef800_debug_config, 0, 125,
 	&ef800_debug_config_desc);
 
 static bool debug_usb_started;
+static bool debug_usb_configured;
 static const char *const debug_only_blocklist[] = {
 	"msc_0",
 	NULL,
@@ -37,15 +38,18 @@ int ef800_console_usb_start(void)
 	if (debug_usb_started) {
 		return 0;
 	}
-	ret = usbd_add_descriptor(&ef800_debug_usbd, &ef800_debug_lang);
-	if (ret != 0) return ret;
-	ret = usbd_add_descriptor(&ef800_debug_usbd, &ef800_debug_manufacturer);
-	if (ret != 0) return ret;
-	ret = usbd_add_descriptor(&ef800_debug_usbd, &ef800_debug_product);
-	if (ret != 0) return ret;
-	ret = usbd_add_configuration(&ef800_debug_usbd, USBD_SPEED_FS,
-		&ef800_debug_config);
-	if (ret != 0) return ret;
+	if (!debug_usb_configured) {
+		ret = usbd_add_descriptor(&ef800_debug_usbd, &ef800_debug_lang);
+		if (ret != 0) return ret;
+		ret = usbd_add_descriptor(&ef800_debug_usbd, &ef800_debug_manufacturer);
+		if (ret != 0) return ret;
+		ret = usbd_add_descriptor(&ef800_debug_usbd, &ef800_debug_product);
+		if (ret != 0) return ret;
+		ret = usbd_add_configuration(&ef800_debug_usbd, USBD_SPEED_FS,
+			&ef800_debug_config);
+		if (ret != 0) return ret;
+		debug_usb_configured = true;
+	}
 	ret = usbd_register_all_classes(&ef800_debug_usbd, USBD_SPEED_FS, 1,
 		debug_only_blocklist);
 	if (ret != 0) return ret;
@@ -54,6 +58,26 @@ int ef800_console_usb_start(void)
 	ret = usbd_enable(&ef800_debug_usbd);
 	if (ret == 0) {
 		debug_usb_started = true;
+		ef800_console_set_transport_ready(true);
+	}
+	return ret;
+}
+
+int ef800_console_usb_stop(void)
+{
+	int ret;
+
+	if (!debug_usb_started) {
+		return 0;
+	}
+	ret = usbd_disable(&ef800_debug_usbd);
+	if (ret != 0 && ret != -EALREADY) {
+		return ret;
+	}
+	ret = usbd_shutdown(&ef800_debug_usbd);
+	if (ret == 0) {
+		debug_usb_started = false;
+		ef800_console_set_transport_ready(false);
 	}
 	return ret;
 }
@@ -61,6 +85,11 @@ int ef800_console_usb_start(void)
 #else
 
 int ef800_console_usb_start(void)
+{
+	return -ENOTSUP;
+}
+
+int ef800_console_usb_stop(void)
 {
 	return -ENOTSUP;
 }

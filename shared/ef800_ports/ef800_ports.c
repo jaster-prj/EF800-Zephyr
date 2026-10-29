@@ -61,6 +61,12 @@ static const struct ef800_port_device_descriptor devices[] = {
 		.capabilities = EF800_PORT_CAP_USB,
 	},
 	{
+		.builder_id = EF800_PORT_BUILDER_MTP,
+		.title = "USB MTP",
+		.shortcut = 'm',
+		.capabilities = EF800_PORT_CAP_USB,
+	},
+	{
 		.builder_id = EF800_PORT_BUILDER_BLUENRG,
 		.title = "BlueNRG",
 		.shortcut = 'b',
@@ -87,6 +93,7 @@ static const struct ef800_port_connection_descriptor port3_connections[] = {
 static const struct ef800_port_connection_descriptor port4_connections[] = {
 	{ EF800_PORT_CONNECTION_USB_CDC, "USB CDC" },
 	{ EF800_PORT_CONNECTION_USB_MSD, "USB MSD" },
+	{ EF800_PORT_CONNECTION_USB_MTP, "USB MTP" },
 };
 
 static const struct ef800_port_connection_descriptor port5_connections[] = {
@@ -165,6 +172,7 @@ bool ef800_port_device_supports_connection(uint8_t builder_id,
 		break;
 	case EF800_PORT_CONNECTION_USB_CDC:
 	case EF800_PORT_CONNECTION_USB_MSD:
+	case EF800_PORT_CONNECTION_USB_MTP:
 		capability = EF800_PORT_CAP_USB;
 		break;
 	case EF800_PORT_CONNECTION_I2C:
@@ -186,6 +194,10 @@ bool ef800_port_device_supports_connection(uint8_t builder_id,
 		connection != EF800_PORT_CONNECTION_USB_MSD) {
 		return false;
 	}
+	if (builder_id == EF800_PORT_BUILDER_MTP &&
+		connection != EF800_PORT_CONNECTION_USB_MTP) {
+		return false;
+	}
 	if (builder_id == EF800_PORT_BUILDER_BLUENRG &&
 		connection != EF800_PORT_CONNECTION_SPI) {
 		return false;
@@ -196,6 +208,7 @@ bool ef800_port_device_supports_connection(uint8_t builder_id,
 	}
 	if (builder_id != EF800_PORT_BUILDER_DEBUG &&
 		builder_id != EF800_PORT_BUILDER_MSD &&
+		builder_id != EF800_PORT_BUILDER_MTP &&
 		(connection == EF800_PORT_CONNECTION_USB_CDC ||
 		 connection == EF800_PORT_CONNECTION_USB_MSD)) {
 		return false;
@@ -511,6 +524,7 @@ int ef800_port_assignment_import_with_connection(
 		}
 	}
 	current->builder_id = builder_id;
+	current->plugin_id = builder_id;
 	current->connection = builder_id == EF800_PORT_BUILDER_NONE ?
 		EF800_PORT_CONNECTION_NONE : connection;
 	current->assigned = builder_id != EF800_PORT_BUILDER_NONE;
@@ -754,7 +768,7 @@ uint32_t ef800_port_assignment_default_connection(uint8_t port_id,
 }
 
 int ef800_port_assignment_remove(struct ef800_port_assignment_service *service,
-					 uint8_t port_id)
+						 uint8_t port_id)
 {
 	struct ef800_port_assignment_state *current;
 	char name[32];
@@ -782,6 +796,33 @@ int ef800_port_assignment_remove(struct ef800_port_assignment_service *service,
 		current->plugin_id = EF800_PORT_BUILDER_NONE;
 		current->connection = 0U;
 	}
+	return ret;
+}
+
+int ef800_port_assignment_enforce_msd_policy(
+	struct ef800_port_assignment_service *service, bool msd_supported,
+	bool *cleared, bool *persisted)
+{
+	int ret;
+
+	if (service == NULL || cleared == NULL || persisted == NULL) {
+		return -EINVAL;
+	}
+	*cleared = false;
+	*persisted = true;
+	if (msd_supported || ef800_port_assignment_get_builder(service, 4U) !=
+		EF800_PORT_BUILDER_MSD) {
+		return 0;
+	}
+	ret = ef800_port_assignment_remove(service, 4U);
+	if (ret == 0) {
+		*cleared = true;
+		return 0;
+	}
+	/* Keep this boot safe despite a readonly or failed Configuration volume. */
+	*cleared = ef800_port_assignment_import_with_connection(service, 4U,
+		EF800_PORT_BUILDER_NONE, EF800_PORT_CONNECTION_NONE) == 0;
+	*persisted = false;
 	return ret;
 }
 

@@ -1,0 +1,7 @@
+common:
+  tags: [shared, backup, mtp]
+  harness: ztest
+tests:
+  ef800.shared.backup_mtp:
+    platform_allow:
+      - native_sim

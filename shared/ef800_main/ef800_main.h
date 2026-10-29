@@ -12,7 +12,8 @@
 
 #define EF800_STORAGE_MOUNT_POINT "/EF800:"
 #define EF800_STORAGE_CONFIGURATION_DIR "/EF800:/.configuration/"
-#define EF800_STORAGE_DATA_DIR "/EF800:/data/"
+#define EF800_STORAGE_DATA_MOUNT_POINT "/DATA:"
+#define EF800_STORAGE_DATA_DIR "/DATA:/data/"
 #define EF800_STORAGE_MAX_PATH 128U
 
 enum ef800_storage_root {
@@ -24,8 +25,12 @@ enum ef800_storage_root {
 int ef800_main_foundation_init(void);
 
 bool ef800_storage_is_mounted(void);
+bool ef800_storage_root_is_mounted(enum ef800_storage_root root);
+bool ef800_storage_configuration_is_mounted(void);
+bool ef800_storage_data_is_mounted(void);
 const struct fs_mount_t *ef800_storage_mount_descriptor(void);
 int ef800_storage_mount(void);
+int ef800_storage_prepare_mtp_roots(void);
 int ef800_storage_unmount(void);
 bool ef800_main_usb_msd_requested(void);
 const char *ef800_storage_configuration_dir(void);

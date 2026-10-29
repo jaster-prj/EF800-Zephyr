@@ -75,7 +75,8 @@ int ef800_persistence_init(struct ef800_persistence *storage,
 	    backend->read_range == NULL ||
 	    backend->write == NULL || backend->append == NULL ||
 	    backend->stat == NULL || backend->list == NULL ||
-	    backend->remove == NULL) {
+	    backend->remove == NULL || backend->rename == NULL ||
+	    backend->sync == NULL) {
 		return -EINVAL;
 	}
 	storage->backend = backend;
@@ -170,4 +171,32 @@ int ef800_persistence_remove(struct ef800_persistence *storage,
 		return ret;
 	}
 	return storage->backend->remove(storage->backend->context, root, name);
+}
+
+int ef800_persistence_rename(struct ef800_persistence *storage,
+			     enum ef800_persistence_root root,
+			     const char *source_name, const char *destination_name)
+{
+	int ret = validate_operation(storage, root, source_name);
+
+	if (ret != 0) {
+		return ret;
+	}
+	ret = validate_operation(storage, root, destination_name);
+	if (ret != 0) {
+		return ret;
+	}
+	return storage->backend->rename(storage->backend->context, root,
+					source_name, destination_name);
+}
+
+int ef800_persistence_sync(struct ef800_persistence *storage,
+			   enum ef800_persistence_root root, const char *name)
+{
+	int ret = validate_operation(storage, root, name);
+
+	if (ret != 0) {
+		return ret;
+	}
+	return storage->backend->sync(storage->backend->context, root, name);
 }

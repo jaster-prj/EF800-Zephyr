@@ -2,18 +2,6 @@
 
 menu "EF800 backup recovery"
 
-config EF800_BACKUP_USB_MSC
-	bool "Expose the QSPI disk as USB MSC"
-	default y
-	select DISK_DRIVERS
-	select DISK_DRIVER_FLASH
-	select USB_DEVICE_STACK_NEXT
-	select USBD_MSC_CLASS
-	help
-	  Expose the EF800 QSPI flash disk as a USB mass-storage device. The
-	  recovery application intentionally does not mount FAT while MSC is
-	  active; the host owns the filesystem in this mode.
-
 config EF800_USB_VID
 	hex "Recovery USB vendor ID"
 	default 0x2fe3
@@ -24,7 +12,7 @@ config EF800_USB_PID
 	hex "Recovery USB product ID"
 	default 0xef80
 	help
-	  Product-specific PID for the EF800 recovery MSC device.
+	  Product-specific PID for the EF800 recovery MTP device.
 
 config EF800_USB_SELF_POWERED
 	bool "Mark the recovery USB device as self-powered"

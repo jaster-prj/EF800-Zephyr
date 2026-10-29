@@ -15,6 +15,7 @@
 #include "ef800_port_uart.h"
 #include "ef800_workspace.h"
 #include "ef800_update.h"
+#include "ef800_usb_personality.h"
 #include "ef800_measurement.h"
 #include "ef800_device_plugin.h"
 
@@ -324,6 +325,174 @@ static int ignore_persistence_entry(const struct ef800_persistence_entry *entry,
  return 0;
 }
 
+enum workspace_cut_point {
+	WORKSPACE_CUT_BEFORE_STAGE_COMPLETE = 0,
+	WORKSPACE_CUT_AFTER_STAGE_COMPLETE,
+	WORKSPACE_CUT_AFTER_PREPARED,
+	WORKSPACE_CUT_AFTER_BACKUP,
+	WORKSPACE_CUT_AFTER_INSTALL,
+	WORKSPACE_CUT_DURING_CLEANUP,
+};
+
+struct workspace_fault_backend {
+	struct ef800_persistence_fake fake;
+	struct ef800_persistence_backend inner;
+	struct ef800_persistence_backend exposed;
+	enum workspace_cut_point cut_point;
+	bool cut;
+	unsigned int journal_zero_writes;
+};
+
+static bool workspace_fault_should_cut(struct workspace_fault_backend *fault,
+				       enum workspace_cut_point point,
+				       const char *name, const char *other_name)
+{
+	bool trigger = false;
+
+	if (fault->cut) {
+		return true;
+	}
+	switch (point) {
+	case WORKSPACE_CUT_BEFORE_STAGE_COMPLETE:
+		trigger = fault->cut_point == point && name != NULL &&
+			strcmp(name, ".ef800-edit-fault-tmp") == 0;
+		break;
+	case WORKSPACE_CUT_AFTER_STAGE_COMPLETE:
+		trigger = fault->cut_point == point && name != NULL &&
+			strcmp(name, ".ef800-edit-fault-tmp") == 0;
+		break;
+	case WORKSPACE_CUT_AFTER_PREPARED:
+		trigger = fault->cut_point == point && name != NULL && other_name != NULL &&
+			strcmp(name, "fault.dat") == 0 &&
+			strcmp(other_name, ".ef800-edit-fault-bak") == 0;
+		break;
+	case WORKSPACE_CUT_AFTER_BACKUP:
+		trigger = fault->cut_point == point && name != NULL &&
+			strcmp(name, ".ef800-edit-fault-j1") == 0;
+		break;
+	case WORKSPACE_CUT_AFTER_INSTALL:
+		if (name != NULL && strcmp(name, ".ef800-edit-fault-j0") == 0) {
+			++fault->journal_zero_writes;
+			trigger = fault->cut_point == point &&
+				fault->journal_zero_writes == 2U;
+		}
+		break;
+	case WORKSPACE_CUT_DURING_CLEANUP:
+		trigger = fault->cut_point == point && name != NULL &&
+			strcmp(name, ".ef800-edit-fault-bak") == 0;
+		break;
+	}
+	if (trigger) {
+		fault->cut = true;
+	}
+	return trigger;
+}
+
+static int workspace_fault_read(void *context, enum ef800_persistence_root root,
+	const char *name, void *buffer, size_t capacity, size_t *length)
+{
+	struct workspace_fault_backend *fault = context;
+	if (fault->cut) return -EIO;
+	return fault->inner.read(fault->inner.context, root, name, buffer, capacity, length);
+}
+
+static int workspace_fault_read_range(void *context,
+	enum ef800_persistence_root root, const char *name, size_t offset,
+	void *buffer, size_t capacity, size_t *length)
+{
+	struct workspace_fault_backend *fault = context;
+	if (fault->cut) return -EIO;
+	return fault->inner.read_range(fault->inner.context, root, name, offset,
+		buffer, capacity, length);
+}
+
+static int workspace_fault_write(void *context, enum ef800_persistence_root root,
+	const char *name, const void *buffer, size_t length)
+{
+	struct workspace_fault_backend *fault = context;
+	if (fault->cut || workspace_fault_should_cut(fault,
+		WORKSPACE_CUT_AFTER_BACKUP, name, NULL) ||
+		workspace_fault_should_cut(fault, WORKSPACE_CUT_AFTER_INSTALL, name, NULL)) {
+		return -EIO;
+	}
+	return fault->inner.write(fault->inner.context, root, name, buffer, length);
+}
+
+static int workspace_fault_append(void *context, enum ef800_persistence_root root,
+	const char *name, const void *buffer, size_t length)
+{
+	struct workspace_fault_backend *fault = context;
+	if (fault->cut || workspace_fault_should_cut(fault,
+		WORKSPACE_CUT_BEFORE_STAGE_COMPLETE, name, NULL)) {
+		return -EIO;
+	}
+	return fault->inner.append(fault->inner.context, root, name, buffer, length);
+}
+
+static int workspace_fault_stat(void *context, enum ef800_persistence_root root,
+	const char *name, struct ef800_persistence_entry *entry)
+{
+	struct workspace_fault_backend *fault = context;
+	if (fault->cut) return -EIO;
+	return fault->inner.stat(fault->inner.context, root, name, entry);
+}
+
+static int workspace_fault_list(void *context, enum ef800_persistence_root root,
+	ef800_persistence_list_callback callback, void *callback_context)
+{
+	struct workspace_fault_backend *fault = context;
+	if (fault->cut) return -EIO;
+	return fault->inner.list(fault->inner.context, root, callback, callback_context);
+}
+
+static int workspace_fault_remove(void *context, enum ef800_persistence_root root,
+	const char *name)
+{
+	struct workspace_fault_backend *fault = context;
+	if (fault->cut || workspace_fault_should_cut(fault,
+		WORKSPACE_CUT_DURING_CLEANUP, name, NULL)) return -EIO;
+	return fault->inner.remove(fault->inner.context, root, name);
+}
+
+static int workspace_fault_rename(void *context, enum ef800_persistence_root root,
+	const char *source_name, const char *destination_name)
+{
+	struct workspace_fault_backend *fault = context;
+	if (fault->cut || workspace_fault_should_cut(fault,
+		WORKSPACE_CUT_AFTER_PREPARED, source_name, destination_name)) return -EIO;
+	return fault->inner.rename(fault->inner.context, root, source_name,
+		destination_name);
+}
+
+static int workspace_fault_sync(void *context, enum ef800_persistence_root root,
+	const char *name)
+{
+	struct workspace_fault_backend *fault = context;
+	if (fault->cut || workspace_fault_should_cut(fault,
+		WORKSPACE_CUT_AFTER_STAGE_COMPLETE, name, NULL)) return -EIO;
+	return fault->inner.sync(fault->inner.context, root, name);
+}
+
+static void workspace_fault_backend_init(struct workspace_fault_backend *fault,
+					 enum workspace_cut_point cut_point)
+{
+	memset(fault, 0, sizeof(*fault));
+	ef800_persistence_fake_init(&fault->fake);
+	fault->inner = fault->fake.backend;
+	fault->exposed = fault->inner;
+	fault->exposed.context = fault;
+	fault->exposed.read = workspace_fault_read;
+	fault->exposed.read_range = workspace_fault_read_range;
+	fault->exposed.write = workspace_fault_write;
+	fault->exposed.append = workspace_fault_append;
+	fault->exposed.stat = workspace_fault_stat;
+	fault->exposed.list = workspace_fault_list;
+	fault->exposed.remove = workspace_fault_remove;
+	fault->exposed.rename = workspace_fault_rename;
+	fault->exposed.sync = workspace_fault_sync;
+	fault->cut_point = cut_point;
+}
+
 ZTEST(keyboard_protocol, test_persistence_name_validation)
 {
 	zassert_true(ef800_persistence_valid_name("settings/time"), NULL);
@@ -336,6 +505,35 @@ ZTEST(keyboard_protocol, test_persistence_name_validation)
 	zassert_false(ef800_persistence_valid_name("safe//name"), NULL);
 	zassert_false(ef800_persistence_valid_name("not safe"), NULL);
 	zassert_false(ef800_persistence_valid_name("trailing/"), NULL);
+}
+
+ZTEST(keyboard_protocol, test_persistence_sync_and_rename)
+{
+	struct ef800_persistence_fake fake;
+	struct ef800_persistence storage;
+	struct ef800_persistence_entry entry;
+	char content[8] = {0};
+	size_t length;
+
+	ef800_persistence_fake_init(&fake);
+	zassert_ok(ef800_persistence_init(&storage, &fake.backend), NULL);
+	zassert_ok(ef800_persistence_write(&storage, EF800_PERSISTENCE_DATA,
+		".staged.tmp", "safe", 4U), NULL);
+	zassert_ok(ef800_persistence_sync(&storage, EF800_PERSISTENCE_DATA,
+		".staged.tmp"), NULL);
+	zassert_ok(ef800_persistence_rename(&storage, EF800_PERSISTENCE_DATA,
+		".staged.tmp", "complete.dat"), NULL);
+	zassert_equal(ef800_persistence_stat(&storage, EF800_PERSISTENCE_DATA,
+		".staged.tmp", &entry), -ENOENT, NULL);
+	zassert_ok(ef800_persistence_stat(&storage, EF800_PERSISTENCE_DATA,
+		"complete.dat", &entry), NULL);
+	zassert_equal(entry.size, 4U, NULL);
+	zassert_equal(ef800_persistence_rename(&storage, EF800_PERSISTENCE_DATA,
+		"complete.dat", "complete.dat"), -EEXIST, NULL);
+	zassert_ok(ef800_persistence_read(&storage, EF800_PERSISTENCE_DATA,
+		"complete.dat", content, sizeof(content), &length), NULL);
+	zassert_equal(length, 4U, NULL);
+	zassert_mem_equal(content, "safe", 4U, NULL);
 }
 
 ZTEST(keyboard_protocol, test_disabled_zephyr_persistence)
@@ -506,9 +704,412 @@ ZTEST(keyboard_protocol, test_workspace_range_read_supports_large_files)
 	zassert_true(ef800_workspace_line_is_position("-STP 1.000 CODE"), NULL);
 	zassert_false(ef800_workspace_line_is_position("1 1.000 2.000"), NULL);
 }
+
+ZTEST(keyboard_protocol, test_workspace_row_scanner_mixed_endings_and_empty_rows)
+{
+	struct ef800_persistence_fake fake;
+	struct ef800_persistence storage;
+	struct ef800_workspace workspace;
+	struct ef800_workspace_row row;
+	static const char content[] = "a\r\n\nbb\rc\nlast";
+
+	ef800_persistence_fake_init(&fake);
+	zassert_ok(ef800_persistence_init(&storage, &fake.backend), NULL);
+	zassert_ok(ef800_workspace_init(&workspace, &storage), NULL);
+	zassert_ok(ef800_workspace_create(&workspace, "rows"), NULL);
+	zassert_ok(ef800_workspace_append(&workspace, content, sizeof(content) - 1U), NULL);
+
+	zassert_ok(ef800_workspace_row_at(&workspace, 0U, &row), NULL);
+	zassert_equal(row.start, 0U, NULL);
+	zassert_equal(row.text_end, 1U, NULL);
+	zassert_equal(row.end, 3U, NULL);
+	zassert_equal(row.ending_length, 2U, NULL);
+
+	zassert_ok(ef800_workspace_row_at(&workspace, row.end, &row), NULL);
+	zassert_equal(row.start, 3U, NULL);
+	zassert_equal(row.text_end, 3U, NULL);
+	zassert_equal(row.end, 4U, NULL);
+	zassert_equal(row.ending_length, 1U, NULL);
+
+	zassert_ok(ef800_workspace_row_at(&workspace, row.end, &row), NULL);
+	zassert_equal(row.start, 4U, NULL);
+	zassert_equal(row.text_end, 6U, NULL);
+	zassert_equal(row.end, 7U, NULL);
+	zassert_equal(row.ending_length, 1U, NULL);
+
+	zassert_ok(ef800_workspace_row_at(&workspace, row.end, &row), NULL);
+	zassert_equal(row.start, 7U, NULL);
+	zassert_equal(row.text_end, 8U, NULL);
+	zassert_equal(row.end, 9U, NULL);
+	zassert_equal(row.ending_length, 1U, NULL);
+
+	zassert_ok(ef800_workspace_row_at(&workspace, row.end, &row), NULL);
+	zassert_equal(row.start, 9U, NULL);
+	zassert_equal(row.text_end, sizeof(content) - 1U, NULL);
+	zassert_equal(row.end, sizeof(content) - 1U, NULL);
+	zassert_equal(row.ending_length, 0U, NULL);
+	zassert_equal(ef800_workspace_row_at(&workspace, row.end, &row), -ENOENT, NULL);
+
+	zassert_ok(ef800_workspace_row_before(&workspace, 3U, &row), NULL);
+	zassert_equal(row.start, 0U, NULL);
+	zassert_equal(row.text_end, 1U, NULL);
+	zassert_equal(row.end, 3U, NULL);
+	zassert_equal(row.ending_length, 2U, NULL);
+	zassert_ok(ef800_workspace_row_before(&workspace, 7U, &row), NULL);
+	zassert_equal(row.start, 4U, NULL);
+	zassert_equal(row.text_end, 6U, NULL);
+	zassert_equal(row.end, 7U, NULL);
+}
+
+ZTEST(keyboard_protocol, test_workspace_row_scanner_long_rows_and_chunk_edge_crlf)
+{
+	struct ef800_persistence_fake fake;
+	struct ef800_persistence storage;
+	struct ef800_workspace workspace;
+	struct ef800_workspace_row row;
+	char content[432];
+
+	memset(content, 'x', 127U);
+	content[127] = '\r';
+	content[128] = '\n';
+	memset(&content[129], 'y', 300U);
+	content[429] = '\r';
+	content[430] = '\n';
+	content[431] = 'z';
+
+	ef800_persistence_fake_init(&fake);
+	zassert_ok(ef800_persistence_init(&storage, &fake.backend), NULL);
+	zassert_ok(ef800_workspace_init(&workspace, &storage), NULL);
+	zassert_ok(ef800_workspace_create(&workspace, "longrows"), NULL);
+	zassert_ok(ef800_workspace_append(&workspace, content, sizeof(content)), NULL);
+
+	zassert_ok(ef800_workspace_row_at(&workspace, 0U, &row), NULL);
+	zassert_equal(row.text_end, 127U, NULL);
+	zassert_equal(row.end, 129U, NULL);
+	zassert_equal(row.ending_length, 2U, NULL);
+
+	zassert_ok(ef800_workspace_row_at(&workspace, row.end, &row), NULL);
+	zassert_equal(row.start, 129U, NULL);
+	zassert_equal(row.text_end, 429U, NULL);
+	zassert_equal(row.end, 431U, NULL);
+	zassert_equal(row.ending_length, 2U, NULL);
+
+	zassert_ok(ef800_workspace_row_before(&workspace, 431U, &row), NULL);
+	zassert_equal(row.start, 129U, NULL);
+	zassert_equal(row.text_end, 429U, NULL);
+	zassert_equal(row.end, 431U, NULL);
+	zassert_equal(row.ending_length, 2U, NULL);
+
+	zassert_ok(ef800_workspace_row_at(&workspace, row.end, &row), NULL);
+	zassert_equal(row.start, 431U, NULL);
+	zassert_equal(row.text_end, sizeof(content), NULL);
+	zassert_equal(row.end, sizeof(content), NULL);
+	zassert_equal(row.ending_length, 0U, NULL);
+}
+
+ZTEST(keyboard_protocol, test_workspace_row_replace_preserves_other_bytes)
+{
+	struct ef800_persistence_fake fake;
+	struct ef800_persistence storage;
+	struct ef800_workspace workspace;
+	struct ef800_workspace_row row;
+	struct ef800_workspace_version version;
+	static const char original[] = "first\r\n-STP 1.000 P001\r\nplugin row";
+	static const char after_edit[] = "updated\r\n-STP 1.000 P001\r\nplugin row";
+	static const char after_delete[] = "updated\r\nplugin row";
+	char content[96] = {0};
+	size_t length;
+
+	ef800_persistence_fake_init(&fake);
+	zassert_ok(ef800_persistence_init(&storage, &fake.backend), NULL);
+	zassert_ok(ef800_workspace_init(&workspace, &storage), NULL);
+	zassert_ok(ef800_workspace_create(&workspace, "rowedit"), NULL);
+	zassert_ok(ef800_workspace_append(&workspace, original,
+		sizeof(original) - 1U), NULL);
+	zassert_ok(ef800_workspace_get_version(&workspace, &version), NULL);
+	zassert_ok(ef800_workspace_row_at(&workspace, 0U, &row), NULL);
+	zassert_ok(ef800_workspace_replace_row(&workspace, &version, &row,
+		"updated", 7U, false), NULL);
+	zassert_ok(ef800_persistence_read(&storage, EF800_PERSISTENCE_DATA,
+		"rowedit.dat", content, sizeof(content), &length), NULL);
+	zassert_equal(length, sizeof(after_edit) - 1U, NULL);
+	zassert_mem_equal(content, after_edit, length, NULL);
+
+	zassert_ok(ef800_workspace_get_version(&workspace, &version), NULL);
+	zassert_ok(ef800_workspace_row_at(&workspace, 9U, &row), NULL);
+	zassert_ok(ef800_workspace_replace_row(&workspace, &version, &row,
+		NULL, 0U, true), NULL);
+	zassert_ok(ef800_persistence_read(&storage, EF800_PERSISTENCE_DATA,
+		"rowedit.dat", content, sizeof(content), &length), NULL);
+	zassert_equal(length, sizeof(after_delete) - 1U, NULL);
+	zassert_mem_equal(content, after_delete, length, NULL);
+	zassert_equal(ef800_persistence_stat(&storage, EF800_PERSISTENCE_DATA,
+		".ef800-edit-rowedit-bak", &(struct ef800_persistence_entry){0}),
+		-ENOENT, NULL);
+}
+
+ZTEST(keyboard_protocol, test_workspace_row_replace_rejects_source_conflicts)
+{
+	struct ef800_persistence_fake fake;
+	struct ef800_persistence storage;
+	struct ef800_workspace workspace;
+	struct ef800_workspace_row row;
+	struct ef800_workspace_version version;
+	char content[16] = {0};
+	size_t length;
+
+	ef800_persistence_fake_init(&fake);
+	zassert_ok(ef800_persistence_init(&storage, &fake.backend), NULL);
+	zassert_ok(ef800_workspace_init(&workspace, &storage), NULL);
+	zassert_ok(ef800_workspace_create(&workspace, "conflict"), NULL);
+	zassert_ok(ef800_workspace_append(&workspace, "first\r\n", 7U), NULL);
+	zassert_ok(ef800_workspace_get_version(&workspace, &version), NULL);
+	zassert_ok(ef800_workspace_row_at(&workspace, 0U, &row), NULL);
+
+	zassert_ok(ef800_persistence_write(&storage, EF800_PERSISTENCE_DATA,
+		"conflict.dat", "host!\r\n", 7U), NULL);
+	zassert_equal(ef800_workspace_replace_row(&workspace, &version, &row,
+		"local", 5U, false), -EAGAIN, NULL);
+	zassert_ok(ef800_persistence_read(&storage, EF800_PERSISTENCE_DATA,
+		"conflict.dat", content, sizeof(content), &length), NULL);
+	zassert_equal(length, 7U, NULL);
+	zassert_mem_equal(content, "host!\r\n", length, NULL);
+
+	zassert_ok(ef800_workspace_get_version(&workspace, &version), NULL);
+	zassert_ok(ef800_workspace_row_at(&workspace, 0U, &row), NULL);
+	zassert_ok(ef800_persistence_write(&storage, EF800_PERSISTENCE_DATA,
+		"conflict.dat", "other\r\n", 7U), NULL);
+	zassert_equal(ef800_workspace_replace_row(&workspace, &version, &row,
+		NULL, 0U, true), -EAGAIN, NULL);
+	zassert_ok(ef800_persistence_read(&storage, EF800_PERSISTENCE_DATA,
+		"conflict.dat", content, sizeof(content), &length), NULL);
+	zassert_mem_equal(content, "other\r\n", length, NULL);
+}
+
+ZTEST(keyboard_protocol, test_workspace_row_replace_streams_large_file)
+{
+	struct ef800_persistence_fake fake;
+	struct ef800_persistence storage;
+	struct ef800_workspace workspace;
+	struct ef800_workspace_row row;
+	struct ef800_workspace_version version;
+	char source[6000];
+	char expected[6000];
+	char actual[6000];
+	size_t length;
+	size_t expected_length;
+
+	memset(source, 'x', sizeof(source));
+	for (size_t delimiter = 59U; delimiter + 1U < sizeof(source); delimiter += 61U) {
+		source[delimiter] = '\r';
+		source[delimiter + 1U] = '\n';
+	}
+	memcpy(expected, "short", 5U);
+	memcpy(&expected[5], &source[59], sizeof(source) - 59U);
+	expected_length = sizeof(source) - 54U;
+
+	ef800_persistence_fake_init(&fake);
+	zassert_ok(ef800_persistence_init(&storage, &fake.backend), NULL);
+	zassert_ok(ef800_workspace_init(&workspace, &storage), NULL);
+	zassert_ok(ef800_workspace_create(&workspace, "largeedit"), NULL);
+	zassert_ok(ef800_workspace_append(&workspace, source, sizeof(source)), NULL);
+	zassert_ok(ef800_workspace_get_version(&workspace, &version), NULL);
+	zassert_ok(ef800_workspace_row_at(&workspace, 0U, &row), NULL);
+	zassert_equal(row.text_end, 59U, NULL);
+	zassert_ok(ef800_workspace_replace_row(&workspace, &version, &row,
+		"short", 5U, false), NULL);
+	zassert_ok(ef800_persistence_read(&storage, EF800_PERSISTENCE_DATA,
+		"largeedit.dat", actual, sizeof(actual), &length), NULL);
+	zassert_equal(length, expected_length, NULL);
+	zassert_mem_equal(actual, expected, expected_length, NULL);
+}
+
+ZTEST(keyboard_protocol, test_workspace_row_change_refreshes_measurement_context)
+{
+	struct ef800_persistence_fake fake;
+	struct ef800_persistence storage;
+	struct ef800_workspace workspace;
+	struct ef800_workspace_row row;
+	struct ef800_workspace_version version;
+	static const char first[] = "1 0 0 0 0 FIRST\r";
+	static const char latest[] = "2 0 0 0 0 LAST\r";
+	size_t latest_start = sizeof(first) - 1U;
+
+	ef800_persistence_fake_init(&fake);
+	zassert_ok(ef800_persistence_init(&storage, &fake.backend), NULL);
+	zassert_ok(ef800_workspace_init(&workspace, &storage), NULL);
+	zassert_ok(ef800_workspace_create(&workspace, "context"), NULL);
+	zassert_ok(ef800_workspace_append(&workspace, first, sizeof(first) - 1U), NULL);
+	zassert_ok(ef800_workspace_append(&workspace, latest, sizeof(latest) - 1U), NULL);
+	zassert_ok(ef800_workspace_select(&workspace, "context"), NULL);
+	zassert_equal(ef800_workspace_current_point_number(&workspace), 2, NULL);
+	zassert_str_equal(ef800_workspace_current_code(&workspace), "LAST");
+
+	zassert_ok(ef800_workspace_get_version(&workspace, &version), NULL);
+	zassert_ok(ef800_workspace_row_at(&workspace, latest_start, &row), NULL);
+	zassert_ok(ef800_workspace_replace_row(&workspace, &version, &row,
+		"2 0 0 0 0 EDITED", 16U, false), NULL);
+	zassert_equal(ef800_workspace_current_point_number(&workspace), 2, NULL);
+	zassert_str_equal(ef800_workspace_current_code(&workspace), "EDITED");
+
+	zassert_ok(ef800_workspace_get_version(&workspace, &version), NULL);
+	zassert_ok(ef800_workspace_row_at(&workspace, latest_start, &row), NULL);
+	zassert_ok(ef800_workspace_replace_row(&workspace, &version, &row,
+		NULL, 0U, true), NULL);
+	zassert_equal(ef800_workspace_current_point_number(&workspace), 1, NULL);
+	zassert_str_equal(ef800_workspace_current_code(&workspace), "FIRST");
+}
+
+ZTEST(keyboard_protocol, test_workspace_edit_rejects_tampered_mtp_artifacts)
+{
+	struct ef800_persistence_fake fake;
+	struct ef800_persistence storage;
+	struct ef800_workspace workspace;
+	struct ef800_workspace_row row;
+	struct ef800_workspace_version version;
+	struct ef800_persistence_entry entry;
+	struct workspace_fault_backend fault;
+	struct ef800_persistence fault_storage;
+	struct ef800_workspace fault_workspace;
+	struct ef800_workspace recovered_fault;
+	struct ef800_persistence recovered_storage;
+	struct workspace_names names = {0};
+	char content[32] = {0};
+	size_t length;
+
+	/* A host mutation of the visible staged file is detected before promotion. */
+	ef800_persistence_fake_init(&fake);
+	zassert_ok(ef800_persistence_init(&storage, &fake.backend), NULL);
+	zassert_ok(ef800_workspace_init(&workspace, &storage), NULL);
+	zassert_ok(ef800_workspace_create(&workspace, "tamper"), NULL);
+	zassert_ok(ef800_workspace_append(&workspace, "original\r\n", 10U), NULL);
+	zassert_ok(ef800_workspace_get_version(&workspace, &version), NULL);
+	zassert_ok(ef800_workspace_row_at(&workspace, 0U, &row), NULL);
+	strcpy(fake.corrupt_on_sync_name, ".ef800-edit-tamper-tmp");
+	fake.corrupt_on_sync_enabled = true;
+	zassert_equal(ef800_workspace_replace_row(&workspace, &version, &row,
+		"changed", 7U, false), -EIO, NULL);
+	zassert_ok(ef800_persistence_read(&storage, EF800_PERSISTENCE_DATA,
+		"tamper.dat", content, sizeof(content), &length), NULL);
+	zassert_mem_equal(content, "original\r\n", length, NULL);
+
+	/* Transaction artifacts are visible files but never listed as workspaces. */
+	workspace_fault_backend_init(&fault, WORKSPACE_CUT_AFTER_BACKUP);
+	zassert_ok(ef800_persistence_init(&fault_storage, &fault.exposed), NULL);
+	zassert_ok(ef800_workspace_init(&fault_workspace, &fault_storage), NULL);
+	zassert_ok(ef800_workspace_create(&fault_workspace, "fault"), NULL);
+	zassert_ok(ef800_workspace_append(&fault_workspace, "first\r\n", 7U), NULL);
+	zassert_ok(ef800_workspace_get_version(&fault_workspace, &version), NULL);
+	zassert_ok(ef800_workspace_row_at(&fault_workspace, 0U, &row), NULL);
+	zassert_not_equal(ef800_workspace_replace_row(&fault_workspace, &version,
+		&row, "changed", 7U, false), 0, NULL);
+	fault.cut = false;
+	zassert_ok(ef800_workspace_list(&fault_workspace, collect_workspace_name,
+		&names), NULL);
+	zassert_equal(names.count, 0U, NULL);
+	zassert_ok(ef800_persistence_stat(&fault_storage, EF800_PERSISTENCE_DATA,
+		".ef800-edit-fault-bak", &entry), NULL);
+
+	/* Simulate an MTP write to the backup and fail closed instead of restoring
+	 * or deleting the host-modified bytes. */
+	zassert_ok(ef800_persistence_write(&fault_storage,
+		EF800_PERSISTENCE_DATA, ".ef800-edit-fault-bak", "host", 4U), NULL);
+	zassert_ok(ef800_persistence_init(&recovered_storage,
+		&fault.fake.backend), NULL);
+	zassert_ok(ef800_workspace_init(&recovered_fault, &recovered_storage), NULL);
+	zassert_equal(ef800_workspace_load_current(&recovered_fault), -EBADMSG, NULL);
+	zassert_ok(ef800_persistence_read(&recovered_storage, EF800_PERSISTENCE_DATA,
+		".ef800-edit-fault-bak", content, sizeof(content), &length), NULL);
+	zassert_equal(length, 4U, NULL);
+	zassert_mem_equal(content, "host", 4U, NULL);
+	zassert_equal(ef800_persistence_stat(&recovered_storage,
+		EF800_PERSISTENCE_DATA, "fault.dat", &entry), -ENOENT, NULL);
+
+}
+
+ZTEST(keyboard_protocol, test_workspace_transaction_recovers_after_interruption)
+{
+	static const char original[] = "first\r\nsecond\r\n";
+	static const char replacement[] = "changed\r\nsecond\r\n";
+	static const enum workspace_cut_point cut_points[] = {
+		WORKSPACE_CUT_BEFORE_STAGE_COMPLETE,
+		WORKSPACE_CUT_AFTER_STAGE_COMPLETE,
+		WORKSPACE_CUT_AFTER_PREPARED,
+		WORKSPACE_CUT_AFTER_BACKUP,
+		WORKSPACE_CUT_AFTER_INSTALL,
+		WORKSPACE_CUT_DURING_CLEANUP,
+	};
+
+	for (size_t scenario = 0U; scenario < ARRAY_SIZE(cut_points); ++scenario) {
+		struct workspace_fault_backend fault;
+		struct ef800_persistence storage;
+		struct ef800_persistence recovered_storage;
+		struct ef800_workspace workspace;
+		struct ef800_workspace recovered;
+		struct ef800_workspace_row row;
+		struct ef800_workspace_version version;
+		char content[64] = {0};
+		size_t length;
+		int result;
+
+		workspace_fault_backend_init(&fault, cut_points[scenario]);
+		zassert_ok(ef800_persistence_init(&storage, &fault.exposed), NULL);
+		zassert_ok(ef800_workspace_init(&workspace, &storage), NULL);
+		zassert_ok(ef800_workspace_create(&workspace, "fault"), NULL);
+		zassert_ok(ef800_workspace_append(&workspace, original,
+			sizeof(original) - 1U), NULL);
+		zassert_ok(ef800_workspace_get_version(&workspace, &version), NULL);
+		zassert_ok(ef800_workspace_row_at(&workspace, 0U, &row), NULL);
+
+		result = ef800_workspace_replace_row(&workspace, &version, &row,
+			"changed", 7U, false);
+		zassert_not_equal(result, 0, "cut point %u must interrupt the edit",
+			(unsigned int)cut_points[scenario]);
+
+		/* Simulate reset by dropping the faulting adapter and loading the same
+		 * persistent fake through a clean backend. */
+		fault.cut = false;
+		zassert_ok(ef800_persistence_init(&recovered_storage,
+			&fault.fake.backend), NULL);
+		zassert_ok(ef800_workspace_init(&recovered, &recovered_storage), NULL);
+		zassert_ok(ef800_workspace_load_current(&recovered), NULL);
+		zassert_ok(ef800_persistence_read(&recovered_storage,
+			EF800_PERSISTENCE_DATA, "fault.dat", content, sizeof(content),
+			&length), NULL);
+		if (cut_points[scenario] == WORKSPACE_CUT_DURING_CLEANUP) {
+			zassert_equal(length, sizeof(replacement) - 1U, NULL);
+			zassert_mem_equal(content, replacement, length, NULL);
+		} else {
+			zassert_equal(length, sizeof(original) - 1U, NULL);
+			zassert_mem_equal(content, original, length, NULL);
+		}
+		zassert_equal(ef800_persistence_stat(&recovered_storage,
+			EF800_PERSISTENCE_DATA, ".ef800-edit-fault-bak",
+			&(struct ef800_persistence_entry){0}), -ENOENT, NULL);
+	}
+}
 #endif
 
 #if defined(EF800_TEST_PORTS)
+ZTEST(keyboard_protocol, test_usb_personality_transitions)
+{
+	zassert_equal(ef800_usb_personality_transition(
+		EF800_USB_PERSONALITY_NONE, EF800_USB_PERSONALITY_NONE),
+		EF800_USB_TRANSITION_NONE, NULL);
+	zassert_equal(ef800_usb_personality_transition(
+		EF800_USB_PERSONALITY_DEBUG_CDC, EF800_USB_PERSONALITY_MTP),
+		EF800_USB_TRANSITION_HOT_SWITCH, NULL);
+	zassert_equal(ef800_usb_personality_transition(
+		EF800_USB_PERSONALITY_MTP, EF800_USB_PERSONALITY_DEBUG_CDC),
+		EF800_USB_TRANSITION_HOT_SWITCH, NULL);
+	zassert_equal(ef800_usb_personality_transition(
+		EF800_USB_PERSONALITY_MTP, EF800_USB_PERSONALITY_MSC),
+		EF800_USB_TRANSITION_RESTART, NULL);
+	zassert_equal(ef800_usb_personality_transition(
+		EF800_USB_PERSONALITY_MSC, EF800_USB_PERSONALITY_NONE),
+		EF800_USB_TRANSITION_RESTART, NULL);
+}
+
 ZTEST(keyboard_protocol, test_port_descriptors_and_compatibility)
 {
 	const struct ef800_port_descriptor *rs232 = ef800_port_get(1U);
@@ -520,13 +1121,16 @@ ZTEST(keyboard_protocol, test_port_descriptors_and_compatibility)
 		ef800_port_device_get(EF800_PORT_BUILDER_DEBUG);
 	const struct ef800_port_device_descriptor *msd =
 		ef800_port_device_get(EF800_PORT_BUILDER_MSD);
+	const struct ef800_port_device_descriptor *mtp =
+		ef800_port_device_get(EF800_PORT_BUILDER_MTP);
 
 	zassert_equal(ef800_port_count(), EF800_PORT_COUNT, NULL);
-	zassert_equal(ef800_port_device_count(), 3U, NULL);
+	zassert_equal(ef800_port_device_count(), 4U, NULL);
 	zassert_not_null(rs232, NULL);
 	zassert_not_null(serial, NULL);
 	zassert_not_null(multifunction, NULL);
 	zassert_not_null(usb, NULL);
+	zassert_not_null(mtp, NULL);
 	zassert_not_null(bluenrg_port, NULL);
 	zassert_false((rs232->capabilities & EF800_PORT_CAP_PARALLEL) != 0U, NULL);
 	zassert_true((multifunction->capabilities & EF800_PORT_CAP_PARALLEL) != 0U, NULL);
@@ -536,6 +1140,11 @@ ZTEST(keyboard_protocol, test_port_descriptors_and_compatibility)
 	zassert_false(ef800_port_device_is_compatible(serial, msd), NULL);
 	zassert_true(ef800_port_device_is_compatible(usb, debug), NULL);
 	zassert_true(ef800_port_device_is_compatible(usb, msd), NULL);
+	zassert_true(ef800_port_device_is_compatible(usb, mtp), NULL);
+	zassert_true(ef800_port_device_supports_connection(
+		EF800_PORT_BUILDER_MTP, EF800_PORT_CONNECTION_USB_MTP), NULL);
+	zassert_false(ef800_port_device_supports_connection(
+		EF800_PORT_BUILDER_MTP, EF800_PORT_CONNECTION_USB_MSD), NULL);
 	zassert_true(bluenrg_port->fixed, NULL);
 	zassert_true(ef800_port_device_supports_connection(
 		EF800_PORT_BUILDER_BLUENRG, EF800_PORT_CONNECTION_SPI), NULL);
@@ -596,6 +1205,15 @@ ZTEST(keyboard_protocol, test_port_assignment_record_validation)
 	state.assigned = false;
 	zassert_equal(ef800_port_assignment_encode(&state, record, sizeof(record),
 						&length), -EINVAL, NULL);
+	state.port_id = 4U;
+	state.builder_id = EF800_PORT_BUILDER_MTP;
+	state.connection = EF800_PORT_CONNECTION_USB_MTP;
+	state.assigned = true;
+	zassert_ok(ef800_port_assignment_encode(&state, record, sizeof(record),
+						&length), NULL);
+	zassert_ok(ef800_port_assignment_decode(record, length, &decoded), NULL);
+	zassert_equal(decoded.builder_id, EF800_PORT_BUILDER_MTP, NULL);
+	zassert_equal(decoded.connection, EF800_PORT_CONNECTION_USB_MTP, NULL);
 }
 
 ZTEST(keyboard_protocol, test_port_assignment_persistence)
@@ -641,6 +1259,72 @@ ZTEST(keyboard_protocol, test_port_assignment_persistence)
 	zassert_equal(ef800_port_assignment_get_builder(&restored, 5U),
 			      EF800_PORT_BUILDER_BLUENRG, NULL);
 	zassert_equal(ef800_port_assignment_remove(&restored, 5U), -EPERM, NULL);
+}
+
+static int fail_assignment_remove(void *context,
+				 enum ef800_persistence_root root, const char *name)
+{
+	ARG_UNUSED(context);
+	ARG_UNUSED(root);
+	ARG_UNUSED(name);
+	return -EIO;
+}
+
+ZTEST(keyboard_protocol, test_disabled_usb_msd_clears_stale_assignment)
+{
+	struct ef800_persistence_fake fake;
+	struct ef800_persistence storage;
+	struct ef800_persistence restored_storage;
+	struct ef800_port_assignment_service service;
+	struct ef800_port_assignment_service restored;
+	bool cleared;
+	bool persisted;
+
+	ef800_persistence_fake_init(&fake);
+	zassert_ok(ef800_persistence_init(&storage, &fake.backend), NULL);
+	zassert_ok(ef800_port_assignment_init(&service, &storage), NULL);
+	zassert_ok(ef800_port_assignment_set_with_connection(&service, 4U,
+		EF800_PORT_BUILDER_MSD, EF800_PORT_CONNECTION_USB_MSD), NULL);
+
+	zassert_ok(ef800_port_assignment_enforce_msd_policy(&service, false,
+		&cleared, &persisted), NULL);
+	zassert_true(cleared, NULL);
+	zassert_true(persisted, NULL);
+	zassert_false(ef800_port_assignment_is_assigned(&service, 4U), NULL);
+	zassert_equal(ef800_port_assignment_get_builder(&service, 4U),
+		EF800_PORT_BUILDER_NONE, NULL);
+
+	zassert_ok(ef800_persistence_init(&restored_storage, &fake.backend), NULL);
+	zassert_ok(ef800_port_assignment_init(&restored, &restored_storage), NULL);
+	zassert_ok(ef800_port_assignment_load(&restored, 4U), NULL);
+	zassert_equal(ef800_port_assignment_get_builder(&restored, 4U),
+		EF800_PORT_BUILDER_NONE, NULL);
+}
+
+ZTEST(keyboard_protocol, test_msd_cleanup_failure_keeps_runtime_disabled)
+{
+	struct ef800_persistence_fake fake;
+	struct ef800_persistence_backend failing_backend;
+	struct ef800_persistence storage;
+	struct ef800_port_assignment_service service;
+	bool cleared;
+	bool persisted;
+
+	ef800_persistence_fake_init(&fake);
+	failing_backend = fake.backend;
+	failing_backend.remove = fail_assignment_remove;
+	zassert_ok(ef800_persistence_init(&storage, &failing_backend), NULL);
+	zassert_ok(ef800_port_assignment_init(&service, &storage), NULL);
+	zassert_ok(ef800_port_assignment_set_with_connection(&service, 4U,
+		EF800_PORT_BUILDER_MSD, EF800_PORT_CONNECTION_USB_MSD), NULL);
+
+	zassert_equal(ef800_port_assignment_enforce_msd_policy(&service, false,
+		&cleared, &persisted), -EIO, NULL);
+	zassert_true(cleared, NULL);
+	zassert_false(persisted, NULL);
+	zassert_false(ef800_port_assignment_is_assigned(&service, 4U), NULL);
+	zassert_equal(ef800_port_assignment_get_builder(&service, 4U),
+		EF800_PORT_BUILDER_NONE, NULL);
 }
 
 ZTEST(keyboard_protocol, test_disabled_assignment_uses_runtime_model)
@@ -974,59 +1658,46 @@ ZTEST(keyboard_protocol, test_debug_assignment_move)
 #endif
 
 #if defined(EF800_TEST_METADATA)
-ZTEST(keyboard_protocol, test_boot_metadata_assignments_and_console_fallback)
+ZTEST(keyboard_protocol, test_boot_metadata_contains_only_recovery_state)
 {
 	struct ef800_boot_metadata metadata;
 	struct ef800_boot_metadata decoded;
 	uint8_t encoded[EF800_BOOT_METADATA_SIZE];
+	uint8_t legacy_v2[EF800_BOOT_METADATA_V2_SIZE] = {0};
+	struct ef800_boot_metadata migrated;
 
 	ef800_boot_metadata_init(&metadata);
 	zassert_equal(sizeof(metadata), EF800_BOOT_METADATA_SIZE, NULL);
 	zassert_true(ef800_boot_metadata_valid(&metadata), NULL);
-	zassert_equal(ef800_boot_metadata_plugin_id(&metadata, 5U),
-			      EF800_PORT_BUILDER_BLUENRG, NULL);
-	zassert_equal(ef800_boot_metadata_connection(&metadata, 5U),
-			      EF800_PORT_CONNECTION_SPI, NULL);
-	zassert_equal(ef800_console_port_select(&metadata, false),
-			      EF800_CONSOLE_FALLBACK_PORT, NULL);
-
-	zassert_ok(ef800_boot_metadata_set_assignment(&metadata, 1U,
-									 EF800_PORT_BUILDER_DEBUG,
-									 EF800_PORT_CONNECTION_SERIAL), NULL);
-	zassert_ok(ef800_boot_metadata_set_assignment(&metadata, 4U,
-									 EF800_PORT_BUILDER_MSD,
-									 EF800_PORT_CONNECTION_USB_MSD), NULL);
-	zassert_ok(ef800_boot_metadata_set_assignment(&metadata, 5U,
-									 EF800_PORT_BUILDER_BLUENRG,
-									 EF800_PORT_CONNECTION_SPI), NULL);
-	zassert_equal(ef800_console_port_select(&metadata, false),
-			      EF800_CONSOLE_FALLBACK_PORT, NULL);
-	zassert_ok(ef800_boot_metadata_set_console(&metadata, 1U), NULL);
-	zassert_equal(ef800_console_port_select(&metadata, false), 1U, NULL);
+	metadata.main_failures = 3U;
+	metadata.last_target = EF800_BOOT_TARGET_BACKUP;
+	metadata.sequence = 9U;
 	metadata.crc32 = ef800_boot_metadata_crc(&metadata);
 	zassert_true(ef800_boot_metadata_valid(&metadata), NULL);
 	zassert_ok(ef800_boot_metadata_encode(&metadata, encoded, sizeof(encoded)), NULL);
 	zassert_equal(encoded[0], 0x42U, NULL);
 	zassert_equal(encoded[1], 0x38U, NULL);
-	zassert_equal(encoded[4], EF800_BOOT_METADATA_VERSION, NULL);
+	zassert_equal(sys_get_le16(&encoded[4]), EF800_BOOT_METADATA_VERSION, NULL);
+	zassert_equal(sys_get_le16(&encoded[6]), EF800_BOOT_METADATA_SIZE, NULL);
 	zassert_ok(ef800_boot_metadata_decode(encoded, sizeof(encoded), &decoded), NULL);
 	zassert_mem_equal(&decoded, &metadata, sizeof(metadata), NULL);
-	zassert_ok(ef800_boot_metadata_set_console(&metadata, 2U), NULL);
-	metadata.crc32 = ef800_boot_metadata_crc(&metadata);
-	zassert_false(ef800_boot_metadata_valid(&metadata), NULL);
-	zassert_ok(ef800_boot_metadata_set_console(&metadata, 1U), NULL);
-	metadata.crc32 = ef800_boot_metadata_crc(&metadata);
-	zassert_true(ef800_boot_metadata_valid(&metadata), NULL);
-	metadata.ports[1].connection = EF800_PORT_CONNECTION_PARALLEL;
-	zassert_false(ef800_boot_metadata_valid(&metadata), NULL);
-	metadata.ports[1].connection = EF800_PORT_CONNECTION_NONE;
-	metadata.ports[1].plugin_id = 0x12345678U;
-	metadata.ports[1].connection = EF800_PORT_CONNECTION_SERIAL;
-	metadata.crc32 = ef800_boot_metadata_crc(&metadata);
-	zassert_true(ef800_boot_metadata_valid(&metadata), NULL);
-	metadata.ports[1].connection = 99U;
-	metadata.crc32 = ef800_boot_metadata_crc(&metadata);
-	zassert_false(ef800_boot_metadata_valid(&metadata), NULL);
+	encoded[8] ^= 0x01U;
+	zassert_ok(ef800_boot_metadata_decode(encoded, sizeof(encoded), &decoded), NULL);
+	zassert_false(ef800_boot_metadata_valid(&decoded), NULL);
+
+	sys_put_le32(EF800_BOOT_METADATA_MAGIC, &legacy_v2[0]);
+	sys_put_le16(EF800_BOOT_METADATA_V2_VERSION, &legacy_v2[4]);
+	sys_put_le16(EF800_BOOT_METADATA_V2_SIZE, &legacy_v2[6]);
+	sys_put_le32(7U, &legacy_v2[8]);
+	sys_put_le32(EF800_BOOT_TARGET_BACKUP, &legacy_v2[12]);
+	sys_put_le32(14U, &legacy_v2[16]);
+	sys_put_le32(ef800_crc32(legacy_v2, 72U), &legacy_v2[72]);
+	zassert_ok(ef800_boot_metadata_migrate_v2(legacy_v2, sizeof(legacy_v2),
+						   &migrated), NULL);
+	zassert_true(ef800_boot_metadata_valid(&migrated), NULL);
+	zassert_equal(migrated.main_failures, 7U, NULL);
+	zassert_equal(migrated.last_target, EF800_BOOT_TARGET_BACKUP, NULL);
+	zassert_equal(migrated.sequence, 14U, NULL);
 }
 
 #endif

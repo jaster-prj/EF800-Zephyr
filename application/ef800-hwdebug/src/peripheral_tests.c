@@ -31,8 +31,8 @@
 #define LCD_NODE DT_PATH(zephyr_user)
 #define TEST_UART_TIMEOUT_MS 1000U
 #define KEYBOARD_RESET_NODE DT_PATH(zephyr_user)
-#define STORAGE_DISK_NAME "EF800"
-#define STORAGE_MOUNT_POINT "/EF800:"
+#define STORAGE_DISK_NAME "DATA"
+#define STORAGE_MOUNT_POINT "/DATA:"
 #define STORAGE_DIR STORAGE_MOUNT_POINT "/storage_test"
 #define STORAGE_FAT_FILE STORAGE_DIR "/created_by_fat.txt"
 #define STORAGE_DUMMY_FILE STORAGE_DIR "/dummy.txt"
@@ -40,6 +40,7 @@
 #define STORAGE_FAT_CONTENT "created by internal FAT\r\n"
 #define STORAGE_DUMMY_CONTENT "EF800 storage test dummy\r\n"
 #define STORAGE_MSC_CONTENT "created by USB MSC\r\n"
+#define CDC_TEST_DURATION_MS 60000U
 
 #define STORAGE_USB_UDC_NODE DT_NODELABEL(usbotg_fs)
 #define STORAGE_FLASH_NODE DT_NODELABEL(qspi_nor)
@@ -88,6 +89,7 @@ USBD_CONFIGURATION_DEFINE(hwdebug_cdc_config, 0, 125,
 static struct usbd_context *cdc_usbd;
 static const struct device *const cdc_uart =
 	DEVICE_DT_GET(DT_NODELABEL(cdc_acm_uart0));
+static bool cdc_configured;
 
 static void cdc_usbd_message(struct usbd_context *ctx,
 	const struct usbd_msg *msg)
@@ -100,7 +102,9 @@ static void cdc_usbd_message(struct usbd_context *ctx,
 void hwdebug_usb_cdc_test(void)
 {
 	uint8_t byte;
-	int ret;
+	uint32_t received = 0U;
+	uint32_t echoed = 0U;
+	int ret = 0;
 
 	if (storage_msc_active) {
 		hwdebug_console_puts("USB CDC test requires MSC to be stopped\r\n");
@@ -110,20 +114,25 @@ void hwdebug_usb_cdc_test(void)
 		hwdebug_console_puts("USB CDC UART is not ready\r\n");
 		return;
 	}
-	hwdebug_console_puts("USB CDC: add language descriptor\r\n");
-	ret = usbd_add_descriptor(&hwdebug_cdc_usbd, &hwdebug_cdc_lang);
-	if (ret == 0) {
-		hwdebug_console_puts("USB CDC: add manufacturer descriptor\r\n");
-		ret = usbd_add_descriptor(&hwdebug_cdc_usbd, &hwdebug_cdc_manufacturer);
-	}
-	if (ret == 0) {
-		hwdebug_console_puts("USB CDC: add product descriptor\r\n");
-		ret = usbd_add_descriptor(&hwdebug_cdc_usbd, &hwdebug_cdc_product);
-	}
-	if (ret == 0) {
-		hwdebug_console_puts("USB CDC: add configuration\r\n");
-		ret = usbd_add_configuration(&hwdebug_cdc_usbd, USBD_SPEED_FS,
-			&hwdebug_cdc_config);
+	if (!cdc_configured) {
+		hwdebug_console_puts("USB CDC: add language descriptor\r\n");
+		ret = usbd_add_descriptor(&hwdebug_cdc_usbd, &hwdebug_cdc_lang);
+		if (ret == 0) {
+			hwdebug_console_puts("USB CDC: add manufacturer descriptor\r\n");
+			ret = usbd_add_descriptor(&hwdebug_cdc_usbd, &hwdebug_cdc_manufacturer);
+		}
+		if (ret == 0) {
+			hwdebug_console_puts("USB CDC: add product descriptor\r\n");
+			ret = usbd_add_descriptor(&hwdebug_cdc_usbd, &hwdebug_cdc_product);
+		}
+		if (ret == 0) {
+			hwdebug_console_puts("USB CDC: add configuration\r\n");
+			ret = usbd_add_configuration(&hwdebug_cdc_usbd, USBD_SPEED_FS,
+				&hwdebug_cdc_config);
+		}
+		if (ret == 0) {
+			cdc_configured = true;
+		}
 	}
 	if (ret == 0) {
 		hwdebug_console_puts("USB CDC: register classes\r\n");
@@ -151,17 +160,23 @@ void hwdebug_usb_cdc_test(void)
 		return;
 	}
 	hwdebug_console_puts("USB CDC enabled; open the new COM port and send bytes\r\n"
-		"Echo is active for 60 seconds\r\n");
-	for (int seconds = 0; seconds < 60; ++seconds) {
-		for (int count = 0; count < 100; ++count) {
-			while (uart_poll_in(cdc_uart, &byte) == 0) {
-				uart_poll_out(cdc_uart, byte);
-			}
-			k_msleep(10);
+		"Echo is active for 60 seconds; at least one byte is required\r\n");
+	for (uint32_t elapsed = 0U; elapsed < CDC_TEST_DURATION_MS; elapsed += 10U) {
+		while (uart_poll_in(cdc_uart, &byte) == 0) {
+			received++;
+			uart_poll_out(cdc_uart, byte);
+			echoed++;
 		}
+		hwdebug_flash_watchdog_feed();
+		k_msleep(10);
 	}
-	(void)usbd_disable(cdc_usbd);
-	hwdebug_console_puts("USB CDC test complete\r\n");
+	ret = usbd_disable(cdc_usbd);
+	if (ret == 0) {
+		ret = usbd_shutdown(cdc_usbd);
+	}
+	hwdebug_console_printf("USB CDC test %s: received=%u echoed=%u cleanup=%d\r\n",
+		(received > 0U && received == echoed && ret == 0) ? "PASS" : "FAIL",
+		(unsigned int)received, (unsigned int)echoed, ret);
 }
 
 static const struct gpio_dt_spec keyboard_reset =

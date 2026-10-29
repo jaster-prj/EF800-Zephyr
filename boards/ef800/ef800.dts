@@ -9,6 +9,18 @@
 	model = "Jaster EF800";
 	compatible = "jaster,ef800";
 
+	/*
+	 * PB8/TIM4_CH3 is wired to the contrast filter only on modified units.
+	 * The application applies this pinctrl state only for LCDCONTR1; JP15
+	 * remains open and the flying wire is attached on the MCU-side pad.
+	 */
+	lcd_contrast: lcd-contrast {
+		compatible = "jaster,ef800-lcd-contrast";
+		gpios = <&gpiob 8 GPIO_ACTIVE_HIGH>;
+		pinctrl-0 = <&tim4_ch3_pb8>;
+		pinctrl-names = "default";
+	};
+
 	chosen {
 		zephyr,console = &uart4;
 		zephyr,shell-uart = &uart4;
@@ -33,6 +45,15 @@
 	qspi_disk: qspi_disk {
 		compatible = "zephyr,flash-disk";
 		partition = <&qspi_storage_partition>;
+		disk-name = "DATA";
+		sector-size = <512>;
+		cache-size = <4096>;
+		status = "okay";
+	};
+
+	qspi_configuration_disk: qspi_configuration_disk {
+		compatible = "zephyr,flash-disk";
+		partition = <&qspi_configuration_partition>;
 		disk-name = "EF800";
 		sector-size = <512>;
 		cache-size = <4096>;
@@ -111,6 +132,12 @@
 };
 
 &pinctrl {
+	tim4_ch3_pb8: tim4_ch3_pb8 {
+		pinmux = <STM32_PINMUX('B', 8, AF2)>;
+		bias-disable;
+		drive-push-pull;
+	};
+
 	i2c1_sda_pg13: i2c1_sda_pg13 {
 		pinmux = <STM32_PINMUX('G', 13, AF4)>;
 		bias-pull-up;
@@ -193,9 +220,23 @@
 				#address-cells = <1>;
 				#size-cells = <1>;
 
-				qspi_storage_partition: partition@0 {
-					label = "qspi-storage";
-					reg = <0x00000000 DT_SIZE_M(4)>;
+				/* Keep the existing metadata_partition label for the shared
+				 * NVS adapter; it now points at external QSPI boot-state NVS. */
+				metadata_partition: qspi_bootstate_partition: partition@0 {
+					label = "qspi-boot-state";
+					reg = <0x00000000 0x00008000>;
+				};
+
+				qspi_configuration_partition: partition@8000 {
+					label = "qspi-configuration";
+					reg = <0x00008000 0x000F8000>;
+				};
+
+				/* Keep the existing disk label for consumers; it now denotes
+				 * only the independently owned shared-data volume. */
+				qspi_storage_partition: partition@100000 {
+					label = "qspi-shared-data";
+					reg = <0x00100000 0x00300000>;
 				};
 			};
 		};
@@ -214,12 +255,7 @@
 
 			backup_partition: partition@10000 {
 				label = "backup";
-				reg = <0x00010000 0x00018000>;
-			};
-
-			metadata_partition: partition@28000 {
-				label = "boot-metadata";
-				reg = <0x00028000 0x00008000>;
+				reg = <0x00010000 0x00020000>;
 			};
 
 			main_partition: partition@30000 {

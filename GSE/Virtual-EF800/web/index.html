@@ -7,141 +7,230 @@
   <link rel="stylesheet" href="/style.css">
 </head>
 <body>
-  <main>
-    <h1>Virtual EF800</h1>
-    <p id="status" class="status">Connecting...</p>
-    <section class="diagnostics" aria-label="native simulator diagnostics">
-      <h2>MainApplication logs <small>(native-sim behavioral evidence)</small></h2>
+  <main class="virtual-workbench">
+    <header class="app-header">
+      <div>
+        <p class="eyebrow">Interactive field notebook simulator</p>
+        <h1>Virtual EF800</h1>
+      </div>
+      <p id="status" class="status connection-status">Connecting...</p>
+    </header>
+
+    <div class="control-strip" aria-label="remote keypad control">
+      <span class="control-hint">Keypad input</span>
+      <button id="control">Acquire control</button>
+      <button id="release" disabled>Release control</button>
+    </div>
+
+    <div class="workbench-grid">
+      <section class="notebook" aria-label="EF800 field notebook">
+        <div class="notebook-brand"><span>EF800</span><span>FIELD NOTEBOOK</span></div>
+
+        <div class="lcd-bezel">
+          <div class="lcd-caption"><span>LCD DISPLAY</span><span>240 × 64</span></div>
+          <div class="lcd-surface" aria-label="EF800 LCD screen">
+            <canvas id="lcd" width="240" height="64" aria-label="EF800 display pixels"></canvas>
+          </div>
+        </div>
+
+        <section id="keypad" class="physical-key-layout" aria-label="EF800 keyboard">
+          <aside class="key-bank key-bank-left" aria-label="left-side keys">
+            <span class="bank-label">LEFT SIDE</span>
+            <button data-key="on" aria-pressed="false">ON</button>
+            <button data-key="off" aria-pressed="false">OFF</button>
+            <button data-key="escape" aria-pressed="false">ESC</button>
+            <button data-key="tab" aria-pressed="false">TAB</button>
+            <button data-key="shift" aria-pressed="false">SHIFT</button>
+            <button data-key="ctrl" aria-pressed="false">CTRL</button>
+            <button data-key="alt" aria-pressed="false">ALT</button>
+            <button data-key="caps" aria-pressed="false">CAPS</button>
+          </aside>
+
+          <div class="bottom-key-matrix" aria-label="bottom keyboard keys">
+            <span class="bank-label">BOTTOM KEYBOARD</span>
+            <div class="key-row key-row-number">
+              <button data-key="1" aria-pressed="false">1</button>
+              <button data-key="2" aria-pressed="false">2</button>
+              <button data-key="3" aria-pressed="false">3</button>
+              <button data-key="4" aria-pressed="false">4</button>
+              <button data-key="5" aria-pressed="false">5</button>
+              <button data-key="6" aria-pressed="false">6</button>
+              <button data-key="7" aria-pressed="false">7</button>
+              <button data-key="8" aria-pressed="false">8</button>
+              <button data-key="9" aria-pressed="false">9</button>
+              <button data-key="0" aria-pressed="false">0</button>
+              <button data-key="minus" aria-pressed="false">−</button>
+              <button data-key="plus" aria-pressed="false">+</button>
+              <button data-key="less" aria-pressed="false">&lt;</button>
+            </div>
+            <div class="key-row">
+              <button data-key="q" aria-pressed="false">Q</button>
+              <button data-key="w" aria-pressed="false">W</button>
+              <button data-key="e" aria-pressed="false">E</button>
+              <button data-key="r" aria-pressed="false">R</button>
+              <button data-key="t" aria-pressed="false">T</button>
+              <button data-key="y" aria-pressed="false">Y</button>
+              <button data-key="u" aria-pressed="false">U</button>
+              <button data-key="i" aria-pressed="false">I</button>
+              <button data-key="o" aria-pressed="false">O</button>
+              <button data-key="p" aria-pressed="false">P</button>
+            </div>
+            <div class="key-row key-row-home">
+              <button data-key="a" aria-pressed="false">A</button>
+              <button data-key="s" aria-pressed="false">S</button>
+              <button data-key="d" aria-pressed="false">D</button>
+              <button data-key="f" aria-pressed="false">F</button>
+              <button data-key="g" aria-pressed="false">G</button>
+              <button data-key="h" aria-pressed="false">H</button>
+              <button data-key="j" aria-pressed="false">J</button>
+              <button data-key="k" aria-pressed="false">K</button>
+              <button data-key="l" aria-pressed="false">L</button>
+            </div>
+            <div class="key-row">
+              <button data-key="z" aria-pressed="false">Z</button>
+              <button data-key="x" aria-pressed="false">X</button>
+              <button data-key="c" aria-pressed="false">C</button>
+              <button data-key="v" aria-pressed="false">V</button>
+              <button data-key="b" aria-pressed="false">B</button>
+              <button data-key="n" aria-pressed="false">N</button>
+              <button data-key="m" aria-pressed="false">M</button>
+              <button data-key="comma" aria-pressed="false">,</button>
+              <button data-key="period" aria-pressed="false">.</button>
+              <button data-key="caret" aria-pressed="false">^</button>
+            </div>
+            <div class="key-row key-row-space">
+              <button class="key-space" data-key="space" aria-pressed="false">SPACE</button>
+            </div>
+          </div>
+
+          <aside class="key-bank key-bank-right" aria-label="right-side keys">
+            <span class="bank-label">RIGHT SIDE</span>
+            <div class="arrow-pad">
+              <span></span><button data-key="up" aria-pressed="false">▲</button><span></span>
+              <button data-key="left" aria-pressed="false">◀</button>
+              <button data-key="down" aria-pressed="false">▼</button>
+              <button data-key="right" aria-pressed="false">▶</button>
+            </div>
+            <button data-key="enter" aria-pressed="false">ENTER</button>
+            <button data-key="backspace" aria-pressed="false">BACK</button>
+            <button data-key="delete" aria-pressed="false">DELETE</button>
+            <button data-key="insert" aria-pressed="false">INSERT</button>
+          </aside>
+        </section>
+
+        <section class="connector-edge" aria-label="bottom-side connectors">
+          <div class="connector-heading">
+            <span>BOTTOM EDGE / CONNECTORS</span>
+            <span class="edge-rule"></span>
+          </div>
+          <div class="connector-row">
+            <div class="connector-unit">
+              <div class="dsub dsub-female" aria-hidden="true"><i></i></div>
+              <span>PORT 1</span><small>D-SUB 25 · FEMALE</small>
+            </div>
+            <div class="connector-unit">
+              <div class="dsub dsub-female" aria-hidden="true"><i></i></div>
+              <span>PORT 2</span><small>D-SUB 25 · FEMALE</small>
+            </div>
+            <div class="connector-unit">
+              <div class="dsub dsub-male" aria-hidden="true"><i></i></div>
+              <span>PORT 3</span><small>D-SUB 25 · MALE</small>
+            </div>
+            <div class="connector-unit">
+              <div class="usb-c-port" aria-hidden="true"><i></i></div>
+              <span>USB-C</span><small>DEVICE / DEBUG</small>
+            </div>
+            <div class="connector-unit bluetooth-unit">
+              <div class="bluetooth-mark" aria-hidden="true">BT</div>
+              <span>BLUETOOTH</span><small>INTERNAL CONNECTOR</small>
+            </div>
+          </div>
+        </section>
+      </section>
+
+      <aside class="service-sidebar" aria-label="EF800 service panels">
+        <section class="mtp-files" aria-label="MainApplication MTP files">
+          <div class="panel-title-row">
+            <span class="panel-icon" aria-hidden="true">↔</span>
+            <div><p class="eyebrow">USB MTP · MAIN APPLICATION</p><h2>File access</h2></div>
+          </div>
+          <p class="panel-note">Data, Plugins, and FWU use the virtual USB host and MainApplication MTP class. Configuration and raw storage are not exposed.</p>
+          <div class="mtp-toolbar">
+            <label>Storage
+              <select id="mtp-storage">
+                <option>Data</option><option>Plugins</option><option>FWU</option>
+              </select>
+            </label>
+            <button id="mtp-refresh">Refresh</button>
+            <button id="mtp-up" disabled>Up</button>
+          </div>
+          <p id="mtp-path" class="mtp-path">/Data</p>
+          <ul id="mtp-list" aria-label="MTP directory contents"></ul>
+          <div id="mtp-dropzone" class="dropzone" tabindex="0">
+            <span class="drop-icon" aria-hidden="true">⇧</span>
+            <label for="mtp-file">Drop a file here or choose one<br><small>Maximum 32 KiB</small></label>
+            <input id="mtp-file" type="file">
+            <button id="mtp-upload">Upload here</button>
+          </div>
+          <div class="transfer-row">
+            <progress id="mtp-progress" max="100" value="0"></progress>
+            <button id="mtp-cancel" disabled>Cancel</button>
+          </div>
+          <p id="mtp-status" class="status" aria-live="polite">MTP file view is idle.</p>
+        </section>
+
+        <details class="service-card">
+          <summary>Virtual instrument setup</summary>
+          <div class="service-card-body devices" aria-label="virtual device docking">
+            <p>Serial instrument dummies are available only on Ports 1 and 2. Port 3 has no MAX3232 path; Ports 4 and 5 are non-serial.</p>
+            <div class="device-port-row">
+              <label>Port 1 dummy
+                <select id="device-profile-1"><option value="0">Raw/scripted</option><option value="1">Elta3</option><option value="2">FTS3XX / FTS310</option></select>
+              </label>
+              <button data-dock-port="1">Dock Port 1</button>
+            </div>
+            <div class="device-port-row">
+              <label>Port 2 dummy
+                <select id="device-profile-2"><option value="0">Raw/scripted</option><option value="1">Elta3</option><option value="2">FTS3XX / FTS310</option></select>
+              </label>
+              <button data-dock-port="2">Dock Port 2</button>
+            </div>
+            <div class="device-port-row unavailable-port">Port 3 · no MAX3232 serial path</div>
+            <div class="device-port-row unavailable-port">Port 4 · USB only</div>
+            <div class="device-port-row unavailable-port">Port 5 · SPI only</div>
+            <label>Delay ms <input id="device-delay" type="number" min="0" max="60000" value="0"></label>
+            <label>Response hex <input id="device-response" type="text" maxlength="256" placeholder="52442B0012340D0A"></label>
+            <label><input id="device-available" type="checkbox" checked> Available</label>
+            <button id="device-dock">Dock device</button>
+            <p id="device-status" class="status">No virtual device configured.</p>
+          </div>
+        </details>
+      </aside>
+    </div>
+
+    <details class="diagnostics">
+      <summary>MainApplication console &amp; logs <small>(native-sim behavioral diagnostics)</small></summary>
       <div class="controls">
         <button id="logs-pause">Pause</button>
         <button id="logs-clear">Clear</button>
         <label>Severity
           <select id="logs-severity">
-            <option value="ALL">All</option>
-            <option value="DEBUG">Debug+</option>
-            <option value="INFO">Info+</option>
-            <option value="WARNING">Warning+</option>
-            <option value="ERROR">Error+</option>
-            <option value="PANIC">Panic</option>
+            <option value="ALL">All</option><option value="DEBUG">Debug+</option>
+            <option value="INFO">Info+</option><option value="WARNING">Warning+</option>
+            <option value="ERROR">Error+</option><option value="PANIC">Panic</option>
           </select>
         </label>
         <label><input id="logs-autoscroll" type="checkbox" checked> Auto-scroll</label>
       </div>
+      <section class="composition-console" aria-label="Target composition controls">
+        <h2>COMPOSITION</h2>
+        <p>Choose an option and apply it to commit the profile. Changes activate after restarting the simulator.</p>
+        <div id="composition-groups"></div>
+        <p id="composition-status" class="status" aria-live="polite">Waiting for composition catalog.</p>
+      </section>
       <p id="logs-status" class="status">No diagnostic records yet.</p>
       <pre id="logs" aria-live="polite" aria-label="MainApplication log records"></pre>
-    </section>
-    <canvas id="lcd" width="240" height="64" aria-label="EF800 display"></canvas>
-    <pre id="text" aria-label="EF800 text"></pre>
-    <section class="controls">
-      <button id="control">Acquire control</button>
-      <button id="release" disabled>Release control</button>
-    </section>
-    <section class="plugins" aria-label="native simulator plugins">
-      <h2>Native-sim plugins</h2>
-      <input id="plugin-file" type="file" accept=".pmp,.PMP">
-      <button id="plugin-upload">Upload plugin</button>
-      <button id="simulator-restart">Restart simulator</button>
-      <p id="plugin-status" class="status">No package operation yet.</p>
-      <label>Plugin ID <input id="plugin-id" type="number" min="1" value="2"></label>
-      <label>Assigned port <select id="plugin-port"><option value="1">1</option><option value="2">2</option></select></label>
-      <button id="plugin-assign">Assign plugin</button>
-      <button id="plugin-execute">Run measurement</button>
-    </section>
-    <section class="devices" aria-label="virtual device docking">
-      <h2>Virtual device dock</h2>
-      <p>Serial instrument dummies are available only on Ports 1 and 2. Port 3 has no MAX3232 path; Ports 4 and 5 are non-serial.</p>
-      <div class="device-port-row">
-        <label>Port 1 dummy
-          <select id="device-profile-1"><option value="0">Raw/scripted</option><option value="1">Elta3</option><option value="2">FTS3XX / FTS310</option></select>
-        </label>
-        <button data-dock-port="1">Dock Port 1</button>
-      </div>
-      <div class="device-port-row">
-        <label>Port 2 dummy
-          <select id="device-profile-2"><option value="0">Raw/scripted</option><option value="1">Elta3</option><option value="2">FTS3XX / FTS310</option></select>
-        </label>
-        <button data-dock-port="2">Dock Port 2</button>
-      </div>
-      <div class="device-port-row unavailable-port">Port 3 â€” no MAX3232 serial path</div>
-      <div class="device-port-row unavailable-port">Port 4 â€” USB only</div>
-      <div class="device-port-row unavailable-port">Port 5 â€” SPI only</div>
-      <label>Delay ms <input id="device-delay" type="number" min="0" max="60000" value="0"></label>
-      <label>Response hex <input id="device-response" type="text" maxlength="256" placeholder="52442B0012340D0A"></label>
-      <label><input id="device-available" type="checkbox" checked> Available</label>
-      <button id="device-dock">Dock device</button>
-      <p id="device-status" class="status">No virtual device configured.</p>
-    </section>
-    <section id="keypad" class="keypad" aria-label="EF800 keyboard">
-      <div class="key-row">
-        <button data-key="escape" aria-pressed="false">ESC</button>
-        <button data-key="1" aria-pressed="false">1</button>
-        <button data-key="2" aria-pressed="false">2</button>
-        <button data-key="3" aria-pressed="false">3</button>
-        <button data-key="4" aria-pressed="false">4</button>
-        <button data-key="5" aria-pressed="false">5</button>
-        <button data-key="6" aria-pressed="false">6</button>
-        <button data-key="7" aria-pressed="false">7</button>
-        <button data-key="8" aria-pressed="false">8</button>
-        <button data-key="9" aria-pressed="false">9</button>
-        <button data-key="0" aria-pressed="false">0</button>
-        <button data-key="minus" aria-pressed="false">-</button>
-        <button data-key="plus" aria-pressed="false">+</button>
-      </div>
-      <div class="key-row">
-        <button data-key="tab" aria-pressed="false">TAB</button>
-        <button data-key="q" aria-pressed="false">Q</button>
-        <button data-key="w" aria-pressed="false">W</button>
-        <button data-key="e" aria-pressed="false">E</button>
-        <button data-key="r" aria-pressed="false">R</button>
-        <button data-key="t" aria-pressed="false">T</button>
-        <button data-key="y" aria-pressed="false">Y</button>
-        <button data-key="u" aria-pressed="false">U</button>
-        <button data-key="i" aria-pressed="false">I</button>
-        <button data-key="o" aria-pressed="false">O</button>
-        <button data-key="p" aria-pressed="false">P</button>
-        <button data-key="less" aria-pressed="false">&lt;</button>
-      </div>
-      <div class="key-row">
-        <button data-key="caps" aria-pressed="false">CAPS</button>
-        <button data-key="a" aria-pressed="false">A</button>
-        <button data-key="s" aria-pressed="false">S</button>
-        <button data-key="d" aria-pressed="false">D</button>
-        <button data-key="f" aria-pressed="false">F</button>
-        <button data-key="g" aria-pressed="false">G</button>
-        <button data-key="h" aria-pressed="false">H</button>
-        <button data-key="j" aria-pressed="false">J</button>
-        <button data-key="k" aria-pressed="false">K</button>
-        <button data-key="l" aria-pressed="false">L</button>
-        <button data-key="enter" aria-pressed="false">ENTER</button>
-      </div>
-      <div class="key-row">
-        <button data-key="shift" aria-pressed="false">SHIFT</button>
-        <button data-key="z" aria-pressed="false">Z</button>
-        <button data-key="x" aria-pressed="false">X</button>
-        <button data-key="c" aria-pressed="false">C</button>
-        <button data-key="v" aria-pressed="false">V</button>
-        <button data-key="b" aria-pressed="false">B</button>
-        <button data-key="n" aria-pressed="false">N</button>
-        <button data-key="m" aria-pressed="false">M</button>
-        <button data-key="comma" aria-pressed="false">,</button>
-        <button data-key="period" aria-pressed="false">.</button>
-        <button data-key="caret" aria-pressed="false">^</button>
-      </div>
-      <div class="key-row">
-        <button data-key="ctrl" aria-pressed="false">CTRL</button>
-        <button data-key="alt" aria-pressed="false">ALT</button>
-        <button class="key-space" data-key="space" aria-pressed="false">SPACE</button>
-        <button data-key="backspace" aria-pressed="false">BACKSPACE</button>
-        <button data-key="delete" aria-pressed="false">DELETE</button>
-        <button data-key="insert" aria-pressed="false">INSERT</button>
-        <button data-key="on" aria-pressed="false">ON</button>
-        <button data-key="off" aria-pressed="false">OFF</button>
-        <button data-key="up" aria-pressed="false">UP</button>
-        <button data-key="left" aria-pressed="false">LEFT</button>
-        <button data-key="down" aria-pressed="false">DOWN</button>
-        <button data-key="right" aria-pressed="false">RIGHT</button>
-      </div>
-    </section>
+    </details>
   </main>
   <script src="/app.js"></script>
 </body>

@@ -13,6 +13,9 @@ Native tests run on `native_sim` and do not require EF800 hardware:
 - `tests/shared/rtc`: RTC conversion, validation, and offset parsing.
 - `tests/shared/persistence`: persistence, workspace, position, and legacy
   migration behavior.
+- `tests/shared/composition`: bounded target-profile encoding, catalog/default
+  resolution, unknown-token preservation, staged updates, restart activation,
+  and two-slot recovery behavior.
 - `tests/shared/ports`: port descriptors, assignments, and UART ownership.
 - `tests/shared/measurement`: measurement protocols, validation, formatting,
   and workspace append behavior.
@@ -20,9 +23,15 @@ Native tests run on `native_sim` and do not require EF800 hardware:
 - `tests/shared/core`: focused shared-component tests covering boot target
   priority, FAT/MSC ownership transitions, metadata serialization and
   corruption rejection, and invalid arguments.
+- `tests/shared/virtual_usb`: MainApplication CDC byte exchange, real MTP list/
+  upload/download over Zephyr's virtual USB host/device pair, and `USBMSD0`
+  shared-data FAT ownership.
 
-The current native baseline is 31 test cases. The older 24- and 26-test
-figures belong to superseded bring-up notes.
+The current native baseline is **23 Twister configurations and 133 executed
+ztest cases**. The Python Virtual EF800 gateway/browser suite is separate from
+Twister and currently contains 23 passing unit/asset checks; its optional
+`test_mtp_e2e` test is run against a simulator endpoint when
+`EF800_SIMULATOR_HOST` is set.
 
 ## Virtual EF800
 
@@ -31,6 +40,12 @@ Zephyr `native_sim` without an STM32 controller or physical PCB. It provides a
 headless virtual status/display/keyboard foundation and a front-panel transport
 on TCP port `8800`. The browser gateway and host tools are under
 `GSE/Virtual-EF800`.
+
+Native-sim provides a device-next virtual UDC/UHC bus. The software host uses
+the production MainApplication CDC and MTP contexts. Browser file operations
+are gateway-mediated MTP transactions over this bus; the gateway does not
+access simulator files directly. Main MSC is excluded by native-sim's
+`USBMSD0` profile.
 
 Build the target inside the reusable container:
 
@@ -53,11 +68,22 @@ restart paths issue `release-all`. The headless `scenario_client.py` remains
 available for deterministic acceptance and can connect directly when the web
 service is not running.
 
+The production MainApplication workspace browser has an end-to-end native-sim
+test. It launches an isolated simulator with a temporary flash image, uploads
+mixed CR/LF/CRLF workspace rows through the virtual USB MTP peer, selects the
+workspace through the UI, and exercises row selection, bounded editing,
+cancel, and confirmed deletion through the production keyboard and LCD path:
+
+```powershell
+docker exec -w /workspace/application EF800_Devcontainer /opt/venv/bin/python tests/virtual_frontpanel/test_workspace_browser.py
+```
+
 Virtual results qualify covered application control flow, display/keypad
 behavior, plugin supervision, cleanup, quarantine, and data-integrity
 behavior. They do not qualify STM32 registers, ARM image loading, MPU/W^X,
 CPU fault classification, boot handoff, electrical timing, QSPI geometry,
-USB enumeration, or fitted peripheral wiring.
+physical USB enumeration/interop, or fitted peripheral wiring. Virtual CDC/MTP
+enumeration is software behavior evidence only.
 
 Bootloader recovery behavior is also covered by the firmware control-flow
 contract: the failure limit applies only while MainApplication is the selected
@@ -97,6 +123,11 @@ The following require a powered target and cannot be proven by `native_sim`:
 - Bootloader-to-Main handoff, IWDG feeding, and controlled Backup fallback
 - QSPI raw protocol qualification, existing FAT contents, and power-loss
   behavior
+- FAT directory-rename durability under power loss for journaled Workspace
+  replacement; native failure-injection tests do not qualify physical QSPI
+  behavior
+- The narrow time-of-check/time-of-use window between local MTP conflict
+  validation and file promotion; ZephyrMTP currently has no shared mutation gate
 
 Hardware validation must keep FAT and MSC mutually exclusive. The required
 sequence is `FAT unmount -> MSC enable` and `MSC disable -> FAT mount`.

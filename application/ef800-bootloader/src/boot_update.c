@@ -7,12 +7,16 @@
 
 #include <ff.h>
 #include <zephyr/fs/fs.h>
+#include <zephyr/logging/log.h>
 #include <zephyr/storage/flash_map.h>
 #include <zephyr/sys/util.h>
 
 #include "ef800_update.h"
+#include "ef800_qspi_layout.h"
 
-#define EF800_UPDATE_PATH "/EF800:/fwu/EF800_FW.bin"
+LOG_MODULE_REGISTER(ef800_boot_update, LOG_LEVEL_WRN);
+
+#define EF800_UPDATE_PATH "/DATA:/fwu/EF800_FW.bin"
 #define EF800_UPDATE_CHUNK 1024U
 #define EF800_VECTOR_BYTES (2U * sizeof(uint32_t))
 
@@ -33,6 +37,30 @@ static int file_read_exact(struct fs_file_t *file, void *buffer, size_t length)
 		offset += (size_t)count;
 	}
 	return 0;
+}
+
+static int verify_update_crc(struct fs_file_t *file, off_t source_offset,
+			     size_t image_size, uint32_t expected_crc)
+{
+	uint8_t buffer[EF800_UPDATE_CHUNK];
+	size_t remaining = image_size;
+	uint32_t crc = 0U;
+	int rc;
+
+	if (source_offset < 0 || fs_seek(file, source_offset, FS_SEEK_SET) < 0) {
+		return -EIO;
+	}
+	while (remaining != 0U) {
+		size_t count = MIN(remaining, sizeof(buffer));
+
+		rc = file_read_exact(file, buffer, count);
+		if (rc != 0) {
+			return rc;
+		}
+		crc = ef800_crc32_update(crc, buffer, count);
+		remaining -= count;
+	}
+	return crc == expected_crc ? 0 : -EBADMSG;
 }
 
 static bool partition_is_valid(const struct flash_area *area, uintptr_t address,
@@ -106,13 +134,14 @@ int ef800_boot_install_update(const struct flash_area *main_area,
 	static FATFS fat_fs;
 	struct fs_mount_t mount = {
 		.type = FS_FATFS,
-		.mnt_point = "/EF800:",
+		.mnt_point = "/DATA:",
 		.fs_data = &fat_fs,
 		.storage_dev = (void *)PARTITION_ID(qspi_storage_partition),
 		.flags = FS_MOUNT_FLAG_NO_FORMAT,
 	};
 	struct fs_file_t file;
 	struct fs_dirent entry;
+	const struct flash_area *data_area;
 	struct ef800_update_header header;
 	uint32_t magic;
 	uint32_t vector[2];
@@ -121,9 +150,22 @@ int ef800_boot_install_update(const struct flash_area *main_area,
 	bool mounted = false;
 	bool opened = false;
 	bool has_crc = false;
+	bool legacy_layout;
 	int rc;
 
 	fs_file_t_init(&file);
+	rc = flash_area_open(PARTITION_ID(qspi_storage_partition), &data_area);
+	if (rc != 0) {
+		return rc;
+	}
+	rc = ef800_qspi_layout_check_legacy(data_area->fa_dev, &legacy_layout);
+	if (rc != 0) {
+		return rc;
+	}
+	if (legacy_layout) {
+		LOG_WRN("legacy monolithic QSPI FAT detected; MainApplication update scan skipped");
+		return -ENOTSUP;
+	}
 	rc = fs_mount(&mount);
 	if (rc < 0) {
 		return rc;
@@ -168,6 +210,13 @@ int ef800_boot_install_update(const struct flash_area *main_area,
 					  sram_address, sram_size)) {
 		rc = -EINVAL;
 		goto out;
+	}
+	if (has_crc) {
+		rc = verify_update_crc(&file, source_offset, image_size,
+				       header.image_crc32);
+		if (rc < 0) {
+			goto out;
+		}
 	}
 	rc = copy_update_image(&file, main_area, source_offset, image_size, has_crc,
 				       has_crc ? header.image_crc32 : 0U);

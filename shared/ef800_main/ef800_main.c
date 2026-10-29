@@ -23,6 +23,7 @@
 #include "ef800_ports.h"
 #include "ef800_update.h"
 #include "ef800_watchdog.h"
+#include "ef800_qspi_layout.h"
 #ifdef CONFIG_BOARD_NATIVE_SIM
 #include "ef800_virtual_profile.h"
 #endif
@@ -48,7 +49,8 @@ uint32_t get_fattime(void)
 
 LOG_MODULE_REGISTER(ef800_main, LOG_LEVEL_INF);
 
-#define EF800_MAIN_DISK_NAME "EF800"
+#define EF800_MAIN_CONFIGURATION_DISK_NAME "EF800"
+#define EF800_MAIN_DATA_DISK_NAME "DATA"
 
 #if DT_HAS_ALIAS(status_led)
 static const struct gpio_dt_spec status_led =
@@ -67,11 +69,18 @@ static const struct device *const ds3231 =
 	DEVICE_DT_GET(EF800_MAIN_DS3231_NODE);
 #endif
 
-static FATFS storage_fat_fs;
-static struct fs_mount_t storage_mount = {
+static FATFS configuration_fat_fs;
+static FATFS data_fat_fs;
+static struct fs_mount_t configuration_mount = {
 	.type = FS_FATFS,
-	.mnt_point = "/EF800:",
-	.fs_data = &storage_fat_fs,
+	.mnt_point = EF800_STORAGE_MOUNT_POINT,
+	.fs_data = &configuration_fat_fs,
+	.flags = FS_MOUNT_FLAG_NO_FORMAT,
+};
+static struct fs_mount_t data_mount = {
+	.type = FS_FATFS,
+	.mnt_point = EF800_STORAGE_DATA_MOUNT_POINT,
+	.fs_data = &data_fat_fs,
 	.flags = FS_MOUNT_FLAG_NO_FORMAT,
 };
 
@@ -82,7 +91,8 @@ static struct k_thread watchdog_thread;
 static bool status_led_initialized;
 static bool mcp23017_detected;
 static bool ds3231_ready;
-static bool storage_mounted;
+static bool configuration_mounted;
+static bool data_mounted;
 
 static bool storage_directory_exists(const char *path)
 {
@@ -90,12 +100,75 @@ static bool storage_directory_exists(const char *path)
 
 	return fs_stat(path, &entry) == 0 && entry.type == FS_DIR_ENTRY_DIR;
 }
+
+static int storage_ensure_directory(const char *path)
+{
+	int ret;
+
+	if (storage_directory_exists(path)) {
+		return 0;
+	}
+	ret = fs_mkdir(path);
+	if (ret == -EEXIST && storage_directory_exists(path)) {
+		return 0;
+	}
+	return ret;
+}
+
+static int mount_storage_volume(struct fs_mount_t *mount, bool *mounted,
+				const char *volume_name)
+{
+	int ret;
+
+	if (*mounted) {
+		return 0;
+	}
+	ret = fs_mount(mount);
+#if defined(CONFIG_BOARD_NATIVE_SIM) && CONFIG_EF800_MAIN_STORAGE_FORMAT_ON_MOUNT_FAILURE
+	if (ret != 0) {
+		LOG_WRN("Disposable native-sim volume %s failed to mount; formatting: %d",
+			volume_name, ret);
+		ret = fs_mkfs(FS_FATFS, (uintptr_t)volume_name, NULL, 0);
+		if (ret == 0) {
+			ret = fs_mount(mount);
+		}
+	}
+#endif
+	if (ret == 0) {
+		*mounted = true;
+	}
+	return ret;
+}
+
+#if !defined(CONFIG_BOARD_NATIVE_SIM)
 static bool usb_vbus_initialized;
+#endif
+
+static void report_boot_state(void)
+{
+	struct ef800_boot_metadata metadata;
+	bool valid;
+	int ret = ef800_metadata_read_current(&metadata, &valid);
+
+	if (ret == EF800_METADATA_RESET) {
+		LOG_WRN("boot-state NVS was reset to defaults; watchdog history starts fresh");
+	} else if (ret == EF800_METADATA_MIGRATED) {
+		LOG_INF("legacy boot-state NVS migrated to watchdog-only record");
+	} else if (ret != 0 || !valid) {
+		LOG_WRN("boot-state NVS unavailable; MainApplication continues with defaults: %d",
+			ret);
+	} else {
+		LOG_INF("Bootloader state: main failures=%u target=%u",
+			(unsigned int)metadata.main_failures,
+			(unsigned int)metadata.last_target);
+	}
+}
 static struct ef800_time_settings time_settings;
 K_MUTEX_DEFINE(rtc_lock);
 
 #define EF800_MAIN_USER_NODE DT_PATH(zephyr_user)
-#if DT_NODE_HAS_PROP(EF800_MAIN_USER_NODE, usb_vbus_gpios)
+#if !defined(CONFIG_BOARD_NATIVE_SIM) && \
+	DT_NODE_HAS_PROP(EF800_MAIN_USER_NODE, usb_vbus_gpios)
 static const struct gpio_dt_spec usb_vbus =
 	GPIO_DT_SPEC_GET(EF800_MAIN_USER_NODE, usb_vbus_gpios);
 #endif
@@ -296,14 +369,38 @@ int ef800_storage_build_path(enum ef800_storage_root root, const char *name,
 
 bool ef800_storage_is_mounted(void)
 {
-	return storage_mounted;
+	/* Preserve the legacy meaning: application data/plugin storage is mounted. */
+	return data_mounted;
+}
+
+bool ef800_storage_root_is_mounted(enum ef800_storage_root root)
+{
+	switch (root) {
+	case EF800_STORAGE_CONFIGURATION:
+		return configuration_mounted;
+	case EF800_STORAGE_DATA:
+		return data_mounted;
+	default:
+		return false;
+	}
+}
+
+bool ef800_storage_configuration_is_mounted(void)
+{
+	return configuration_mounted;
+}
+
+bool ef800_storage_data_is_mounted(void)
+{
+	return data_mounted;
 }
 
 const struct fs_mount_t *ef800_storage_mount_descriptor(void)
 {
-	return &storage_mount;
+	return &data_mount;
 }
 
+#if !defined(CONFIG_BOARD_NATIVE_SIM)
 static bool usb_vbus_present(void)
 {
 #if DT_NODE_HAS_PROP(EF800_MAIN_USER_NODE, usb_vbus_gpios)
@@ -319,20 +416,33 @@ static bool usb_vbus_present(void)
 	return false;
 #endif
 }
+#endif
 
+#if !defined(CONFIG_BOARD_NATIVE_SIM)
 static bool usb_msd_assignment_active(void)
 {
-	struct ef800_boot_metadata metadata;
-	bool valid;
+	struct ef800_persistence persistence;
+	struct ef800_port_assignment_service assignments;
 	int ret;
 
-	ret = ef800_metadata_read_current(&metadata, &valid);
-	if (ret != 0 || !valid) {
+	if (!configuration_mounted) {
 		return false;
 	}
-	return ef800_port_assignment_builder(metadata.port_assignments, 4U) ==
+	ret = ef800_persistence_init(&persistence, ef800_persistence_zephyr_backend());
+	if (ret != 0) {
+		return false;
+	}
+	ret = ef800_port_assignment_init(&assignments, &persistence);
+	if (ret == 0) {
+		ret = ef800_port_assignment_load(&assignments, 4U);
+	}
+	if (ret != 0) {
+		return false;
+	}
+	return ef800_port_assignment_get_builder(&assignments, 4U) ==
 		EF800_PORT_BUILDER_MSD;
 }
+#endif
 
 const char *ef800_storage_configuration_dir(void)
 {
@@ -357,7 +467,7 @@ int ef800_storage_open(struct fs_file_t *file, enum ef800_storage_root root,
 	if (ret != 0) {
 		return ret;
 	}
-	if (!storage_mounted) {
+	if (!ef800_storage_root_is_mounted(root)) {
 		return -ENOTSUP;
 	}
 
@@ -499,10 +609,12 @@ static bool probe_ds3231(void)
 
 int ef800_storage_mount(void)
 {
+	const struct flash_area *configuration_area;
+	bool legacy_layout;
 	int result;
 	int directory_result;
 
-	if (storage_mounted) {
+	if (configuration_mounted && data_mounted) {
 		return 0;
 	}
 #ifdef CONFIG_BOARD_NATIVE_SIM
@@ -510,64 +622,117 @@ int ef800_storage_mount(void)
 		return -ENODEV;
 	}
 #endif
-	if (usb_msd_assignment_active() && usb_vbus_present()) {
-		LOG_INF("QSPI FAT mount skipped; USB MSD owns the disk");
-		return -EBUSY;
-	}
-
-	result = fs_mount(&storage_mount);
-	#if CONFIG_EF800_MAIN_STORAGE_FORMAT_ON_MOUNT_FAILURE
+	result = flash_area_open(PARTITION_ID(qspi_configuration_partition),
+				 &configuration_area);
 	if (result != 0) {
-		LOG_WRN("Storage mount failed; formatting configured virtual volume: %d", result);
-		result = fs_mkfs(FS_FATFS, (uintptr_t)EF800_MAIN_DISK_NAME ":", NULL, 0);
-		if (result == 0) {
-			result = fs_mount(&storage_mount);
-		}
-	}
-	#endif
-	if (result != 0) {
-		LOG_WRN("QSPI FAT mount failed: %d (no format attempted)", result);
 		return result;
 	}
+	result = ef800_qspi_layout_check_legacy(configuration_area->fa_dev,
+						&legacy_layout);
+	if (result != 0) {
+		return result;
+	}
+	if (legacy_layout) {
+		LOG_ERR("legacy monolithic QSPI FAT detected; both new FAT volumes remain untouched");
+		return -ENOTSUP;
+	}
+	if (!configuration_mounted) {
+		result = mount_storage_volume(&configuration_mount,
+			&configuration_mounted,
+			EF800_MAIN_CONFIGURATION_DISK_NAME ":");
+		if (result != 0) {
+			LOG_WRN("QSPI configuration FAT mount failed: %d (no format attempted)",
+				result);
+			return result;
+		}
+		LOG_INF("QSPI configuration FAT mounted at %s",
+			configuration_mount.mnt_point);
+		directory_result = storage_ensure_directory("/EF800:/.configuration");
+		if (directory_result != 0) {
+			LOG_WRN("Configuration directory unavailable: %d", directory_result);
+		}
+	}
+	if (!data_mounted) {
+		if (ef800_main_usb_msd_requested()) {
+			LOG_INF("QSPI shared-data FAT mount skipped; USB MSD owns the disk");
+			return -EBUSY;
+		}
+		result = mount_storage_volume(&data_mount, &data_mounted,
+			EF800_MAIN_DATA_DISK_NAME ":");
+		if (result != 0) {
+			LOG_WRN("QSPI shared-data FAT mount failed: %d (no format attempted)",
+				result);
+			return result;
+		}
+		LOG_INF("QSPI shared-data FAT mounted at %s", data_mount.mnt_point);
+		static const char *const data_roots[] = {
+			"/DATA:/data",
+			"/DATA:/plugins",
+			"/DATA:/fwu",
+		};
 
-	LOG_INF("QSPI FAT filesystem mounted at %s", storage_mount.mnt_point);
-	directory_result = storage_directory_exists("/EF800:/.configuration") ?
-		0 : fs_mkdir("/EF800:/.configuration");
-	if (directory_result == -EEXIST &&
-		storage_directory_exists("/EF800:/.configuration")) {
-		directory_result = 0;
+		for (size_t i = 0; i < ARRAY_SIZE(data_roots); ++i) {
+			directory_result = storage_ensure_directory(data_roots[i]);
+			if (directory_result != 0) {
+				LOG_WRN("Shared-data directory unavailable %s: %d",
+					data_roots[i], directory_result);
+			}
+		}
 	}
-	if (directory_result != 0) {
-		LOG_WRN("Configuration directory unavailable: %d", directory_result);
+	return 0;
+}
+
+int ef800_storage_prepare_mtp_roots(void)
+{
+	static const char *const roots[] = {
+		"/DATA:/data",
+		"/DATA:/plugins",
+		"/DATA:/fwu",
+	};
+
+	if (!configuration_mounted || !data_mounted) {
+		int mount_result = ef800_storage_mount();
+
+		if (mount_result != 0) {
+			LOG_ERR("Cannot prepare MTP roots: FAT mount failed: %d", mount_result);
+			return mount_result;
+		}
 	}
-	directory_result = storage_directory_exists("/EF800:/data") ?
-		0 : fs_mkdir("/EF800:/data");
-	if (directory_result == -EEXIST &&
-		storage_directory_exists("/EF800:/data")) {
-		directory_result = 0;
+	for (size_t i = 0; i < ARRAY_SIZE(roots); i++) {
+		struct fs_dirent entry;
+		int ret = fs_stat(roots[i], &entry);
+
+		if (ret == 0 && entry.type == FS_DIR_ENTRY_DIR) {
+			continue;
+		}
+		ret = fs_mkdir(roots[i]);
+		if (ret != 0 && ret != -EEXIST) {
+			LOG_ERR("MTP root unavailable %s: %d", roots[i], ret);
+			return ret;
+		}
 	}
-	if (directory_result != 0) {
-		LOG_WRN("Data directory unavailable: %d", directory_result);
-	}
-	storage_mounted = true;
 	return 0;
 }
 
 bool ef800_main_usb_msd_requested(void)
 {
+#if defined(CONFIG_BOARD_NATIVE_SIM)
+	return false;
+#else
 	return usb_vbus_present() && usb_msd_assignment_active();
+#endif
 }
 
 int ef800_storage_unmount(void)
 {
 	int ret;
 
-	if (!storage_mounted) {
+	if (!data_mounted) {
 		return 0;
 	}
-	ret = fs_unmount(&storage_mount);
+	ret = fs_unmount(&data_mount);
 	if (ret == 0) {
-		storage_mounted = false;
+		data_mounted = false;
 	}
 	return ret;
 }
@@ -688,8 +853,9 @@ int ef800_main_foundation_init(void)
 	watchdog_task_started = init_watchdog_task();
 	status_led_initialized = init_status_led();
 	mcp23017_detected = probe_mcp23017();
+	/* Boot state is independent of both FAT volumes and must recover first. */
+	report_boot_state();
 	storage_result = ef800_storage_mount();
-	storage_mounted = storage_result == 0;
 	if (storage_result != 0 && storage_result != -ENOTSUP &&
 		storage_result != -EBUSY) {
 		LOG_WRN("QSPI storage unavailable: %d", storage_result);
@@ -698,12 +864,13 @@ int ef800_main_foundation_init(void)
 	ds3231_ready = probe_ds3231();
 
 	LOG_INF("EF800 foundation initialized: watchdog_task=%s status_led=%s "
-		"mcp23017=%s ds3231=%s storage=%s",
+		"mcp23017=%s ds3231=%s configuration=%s shared_data=%s",
 		watchdog_task_started ? "started" : "not-started",
 		status_led_initialized ? "ready" : "not-ready",
 		mcp23017_detected ? "detected" : "not-detected",
 		ds3231_ready ? "available" : "not-available",
-		storage_mounted ? "mounted" : "disabled-or-unavailable");
+		configuration_mounted ? "mounted" : "unavailable",
+		data_mounted ? "mounted" : "unmounted-or-unavailable");
 	LOG_INF("Legacy Elta3/FTS3XX/port protocol and USB application code "
 		"remain explicitly unported");
 

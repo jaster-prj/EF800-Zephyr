@@ -18,6 +18,8 @@ struct ef800_persistence_fake_file {
 struct ef800_persistence_fake {
 	struct ef800_persistence_backend backend;
 	struct ef800_persistence_fake_file files[EF800_PERSISTENCE_FAKE_FILE_COUNT];
+	char corrupt_on_sync_name[EF800_PERSISTENCE_MAX_NAME + 1U];
+	bool corrupt_on_sync_enabled;
 };
 
 void ef800_persistence_fake_init(struct ef800_persistence_fake *fake);

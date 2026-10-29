@@ -18,4 +18,9 @@ int ef800_metadata_read_current(struct ef800_boot_metadata *metadata,
 					bool *valid);
 int ef800_metadata_write_current(struct ef800_boot_metadata *metadata);
 
+#ifdef EF800_TEST_METADATA
+/* Reset only the adapter's in-memory NVS cache between isolated test cases. */
+void ef800_metadata_test_forget_state(void);
+#endif
+
 #endif /* EF800_METADATA_H */

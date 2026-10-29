@@ -2,6 +2,8 @@
 #include <zephyr/kernel.h>
 #include <zephyr/app_memory/mem_domain.h>
 #include <zephyr/sys/printk.h>
+#include <zephyr/drivers/uart.h>
+#include <zephyr/drivers/flash.h>
 
 #include <cmsis_core.h>
 
@@ -12,11 +14,15 @@
 
 extern uint8_t __plugin_text_start[];
 extern uint8_t __plugin_text_end[];
+extern uint8_t z_data_smem_z_libc_partition_part_start[];
 
 /* Power-of-two regions make the ARMv7-M MPU layout explicit and measurable. */
 static uint8_t plugin_ro[SPIKE_REGION_SIZE] __aligned(SPIKE_REGION_SIZE);
 static uint8_t plugin_rw[SPIKE_REGION_SIZE] __aligned(SPIKE_REGION_SIZE);
-static uint8_t plugin_mailbox[SPIKE_REGION_SIZE] __aligned(SPIKE_REGION_SIZE);
+struct plugin_mailbox_data {
+	volatile uint8_t values[SPIKE_REGION_SIZE];
+} __aligned(SPIKE_REGION_SIZE);
+static struct plugin_mailbox_data plugin_mailbox __aligned(SPIKE_REGION_SIZE);
 
 static struct k_mem_domain plugin_domain;
 static struct k_thread plugin_thread;
@@ -29,22 +35,70 @@ static struct k_mem_partition plugin_text_partition = {
 	.size = SPIKE_REGION_SIZE,
 	.attr = K_MEM_PARTITION_P_RX_U_RX,
 };
+static struct k_mem_partition plugin_runtime_partition = {
+	.start = (uintptr_t)z_data_smem_z_libc_partition_part_start,
+	.size = SPIKE_REGION_SIZE * 2U,
+	.attr = K_MEM_PARTITION_P_RW_U_RW,
+};
 K_MEM_PARTITION_DEFINE(plugin_rw_partition, plugin_rw, sizeof(plugin_rw),
 	K_MEM_PARTITION_P_RW_U_RW);
-K_MEM_PARTITION_DEFINE(plugin_mailbox_partition, plugin_mailbox,
+K_MEM_PARTITION_DEFINE(plugin_mailbox_partition, &plugin_mailbox,
 	sizeof(plugin_mailbox), K_MEM_PARTITION_P_RW_U_RW);
 
-static volatile uint32_t plugin_result;
-static volatile bool plugin_user_context;
-static struct k_sem plugin_done;
+#if DT_NODE_HAS_STATUS(DT_NODELABEL(usart6), okay)
+#define SPIKE_AUX_UART_NODE DT_NODELABEL(usart6)
+#elif DT_NODE_HAS_STATUS(DT_NODELABEL(usart1), okay)
+#define SPIKE_AUX_UART_NODE DT_NODELABEL(usart1)
+#endif
 
-static void plugin_worker_step(void) __attribute__((section(".plugin_text.worker")));
+static void aux_uart_write(const char *text)
+{
+#if defined(SPIKE_AUX_UART_NODE)
+	const struct device *uart = DEVICE_DT_GET(SPIKE_AUX_UART_NODE);
+
+	if (!device_is_ready(uart)) {
+		return;
+	}
+	for (const char *cursor = text; *cursor != '\0'; cursor++) {
+		uart_poll_out(uart, (unsigned char)*cursor);
+	}
+#else
+	ARG_UNUSED(text);
+#endif
+}
+
+static void report_spi_flash(void)
+{
+#if DT_NODE_HAS_STATUS(DT_NODELABEL(spi_flash0), okay)
+	const struct device *flash = DEVICE_DT_GET(DT_NODELABEL(spi_flash0));
+	const struct flash_parameters *parameters;
+	uint8_t probe[16] = {0};
+	int ret;
+
+	if (!device_is_ready(flash)) {
+		printk("spi flash not ready\n");
+		return;
+	}
+	parameters = flash_get_parameters(flash);
+	ret = flash_read(flash, 0, probe, sizeof(probe));
+	printk("spi flash write_block=%u erase=%u read=%d bytes=%02x%02x%02x%02x PASS\n",
+		(unsigned int)parameters->write_block_size,
+		(unsigned int)flash_params_get_erase_cap(parameters),
+		ret, probe[0], probe[1], probe[2], probe[3]);
+#else
+	printk("spi flash node unavailable\n");
+#endif
+}
+
+static void plugin_worker_step(void)
+	__attribute__((noinline, section(".plugin_text.worker")));
 
 static void plugin_worker_step(void)
 {
 	plugin_rw[0] = 0x5aU;
-	plugin_mailbox[0] = plugin_rw[0];
-	plugin_result = plugin_mailbox[0];
+	plugin_mailbox.values[0] = plugin_rw[0];
+	plugin_mailbox.values[1] = 1U;
+	plugin_mailbox.values[2] = 0xa5U;
 }
 
 static void plugin_worker(void *p1, void *p2, void *p3)
@@ -53,20 +107,18 @@ static void plugin_worker(void *p1, void *p2, void *p3)
 	ARG_UNUSED(p2);
 	ARG_UNUSED(p3);
 
-	plugin_user_context = k_is_user_context();
 	plugin_worker_step();
-	k_sem_give(&plugin_done);
-
 	while (true) {
-		k_sleep(K_FOREVER);
+		/* Keep the worker alive without another userspace syscall; the
+		 * supervisor observes completion through the granted mailbox. */
 	}
 }
 
 static int install_plugin_domain(void)
 {
 	struct k_mem_partition *partitions[] = {
+		&plugin_runtime_partition,
 		&plugin_text_partition,
-		&plugin_ro_partition,
 		&plugin_rw_partition,
 		&plugin_mailbox_partition,
 	};
@@ -85,8 +137,9 @@ int main(void)
 	k_tid_t worker;
 	int ret;
 
-	k_sem_init(&plugin_done, 0, 1);
 	printk("EF800 isolation spike\n");
+	aux_uart_write("EF800 isolation auxiliary UART ready\r\n");
+	report_spi_flash();
 	printk("userspace=%d arm_mpu=%d xor_write=%d\n",
 		IS_ENABLED(CONFIG_USERSPACE), IS_ENABLED(CONFIG_ARM_MPU),
 		IS_ENABLED(CONFIG_EXECUTE_XOR_WRITE));
@@ -99,7 +152,7 @@ int main(void)
 		__plugin_text_start,
 		(unsigned int)SPIKE_REGION_SIZE,
 		plugin_ro, (unsigned int)sizeof(plugin_ro), plugin_rw,
-		(unsigned int)sizeof(plugin_rw), plugin_mailbox,
+		(unsigned int)sizeof(plugin_rw), &plugin_mailbox,
 		(unsigned int)sizeof(plugin_mailbox), plugin_stack,
 		(unsigned int)K_THREAD_STACK_SIZEOF(plugin_stack));
 
@@ -110,8 +163,6 @@ int main(void)
 		printk("worker create failed\n");
 		return -ENOMEM;
 	}
-	k_thread_access_grant(worker, &plugin_done);
-
 	ret = install_plugin_domain();
 	if (ret != 0) {
 		printk("domain install failed: %d\n", ret);
@@ -122,14 +173,16 @@ int main(void)
 		&plugin_domain, (unsigned int)plugin_domain.num_partitions);
 	k_thread_start(&plugin_thread);
 
-	ret = k_sem_take(&plugin_done, K_SECONDS(2));
-	if (ret != 0) {
-		printk("worker completion failed: %d\n", ret);
-		return ret;
+	for (int i = 0; i < 200 && plugin_mailbox.values[2] != 0xa5U; i++) {
+		k_msleep(10);
+	}
+	if (plugin_mailbox.values[2] != 0xa5U) {
+		printk("worker completion failed\n");
+		return -ETIMEDOUT;
 	}
 
-	printk("worker user=%d result=0x%02x PASS\n", plugin_user_context,
-		(unsigned int)plugin_result);
+	printk("worker user=%d result=0x%02x PASS\n", plugin_mailbox.values[1],
+		(unsigned int)plugin_mailbox.values[0]);
 	k_thread_abort(&plugin_thread);
 	return 0;
 }

@@ -7,6 +7,13 @@
 
 #include "ef800_virtual_profile.h"
 
+int ef800_virtual_serial_peer_set_profile(uint8_t port, uint8_t profile)
+{
+	ARG_UNUSED(port);
+	ARG_UNUSED(profile);
+	return 0;
+}
+
 static uint8_t last_peer[128];
 static size_t last_peer_length;
 static int32_t last_delay;

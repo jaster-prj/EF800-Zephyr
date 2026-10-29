@@ -46,6 +46,6 @@ verify_size() {
 }
 
 verify_image bootloader "${bootloader_dir}" 08000000 65536
-verify_image backup "${backup_dir}" 08010000 98304
+verify_image backup "${backup_dir}" 08010000 131072
 verify_image main "${main_dir}" 08030000 851968
 verify_size keyboard "${keyboard_dir}" 262144

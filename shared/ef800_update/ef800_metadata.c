@@ -7,23 +7,47 @@
 
 #include <zephyr/drivers/flash.h>
 #include <zephyr/kvss/nvs.h>
+#include <zephyr/logging/log.h>
 #include <zephyr/storage/flash_map.h>
 #include <zephyr/sys/util.h>
+
+#include "ef800_qspi_layout.h"
+
+LOG_MODULE_REGISTER(ef800_metadata, LOG_LEVEL_WRN);
 
 static struct nvs_fs metadata_nvs;
 static const struct flash_area *metadata_area;
 static bool metadata_nvs_ready;
 
+static int metadata_reset_record(const struct flash_area *area,
+				struct ef800_boot_metadata *metadata, bool *valid);
+
 static int metadata_nvs_mount(const struct flash_area *area)
 {
 	struct flash_pages_info page_info;
+	bool legacy_layout;
 	int ret;
 
 	if (area == NULL || !flash_area_device_is_ready(area)) {
 		return -ENODEV;
 	}
 	if (metadata_nvs_ready) {
-		return metadata_area == area ? 0 : -EINVAL;
+		if (metadata_area != area) {
+			return -EINVAL;
+		}
+		if (metadata_nvs.ready) {
+			return 0;
+		}
+		/* NVS may have been cleared by recovery or test setup. */
+		metadata_nvs_ready = false;
+	}
+	ret = ef800_qspi_layout_check_legacy(area->fa_dev, &legacy_layout);
+	if (ret != 0) {
+		return ret;
+	}
+	if (legacy_layout) {
+		LOG_WRN("legacy monolithic QSPI FAT detected; boot-state NVS left untouched");
+		return -ENOTSUP;
 	}
 
 	ret = flash_get_page_info_by_offs(area->fa_dev, area->fa_off, &page_info);
@@ -51,11 +75,12 @@ int ef800_metadata_read(const struct flash_area *area,
 				struct ef800_boot_metadata *metadata, bool *valid)
 {
 	int ret;
-	uint8_t buffer[EF800_BOOT_METADATA_SIZE];
+	uint8_t buffer[EF800_BOOT_METADATA_V2_SIZE];
 
 	if (area == NULL || metadata == NULL || valid == NULL) {
 		return -EINVAL;
 	}
+	ef800_boot_metadata_init(metadata);
 	*valid = false;
 	ret = metadata_nvs_mount(area);
 	if (ret != 0) {
@@ -63,19 +88,64 @@ int ef800_metadata_read(const struct flash_area *area,
 	}
 	ret = nvs_read(&metadata_nvs, EF800_METADATA_NVS_ID, buffer,
 			       sizeof(buffer));
-	if (ret == sizeof(buffer)) {
-		ret = ef800_boot_metadata_decode(buffer, sizeof(buffer), metadata);
+	if (ret == EF800_BOOT_METADATA_SIZE) {
+		ret = ef800_boot_metadata_decode(buffer, EF800_BOOT_METADATA_SIZE,
+						  metadata);
 		*valid = ret == 0 && ef800_boot_metadata_valid(metadata);
-	} else if (ret == 40) {
-		ret = ef800_boot_metadata_migrate_v1(buffer, 40U, metadata);
-		*valid = ret == 0 && ef800_boot_metadata_valid(metadata);
-		if (ret == 0) {
-                        ret = EF800_METADATA_MIGRATED;
+		if (*valid) {
+			return 0;
 		}
-	} else if (ret >= 0) {
-		ret = -ENOENT;
+		/* A malformed record is replaced in-place; do not clear NVS or FAT. */
+		return metadata_reset_record(area, metadata, valid);
+	} else if (ret == EF800_BOOT_METADATA_V2_SIZE || ret == 40) {
+		ret = ret == EF800_BOOT_METADATA_V2_SIZE ?
+			ef800_boot_metadata_migrate_v2(buffer, (size_t)ret, metadata) :
+			ef800_boot_metadata_migrate_v1(buffer, 40U, metadata);
+		*valid = ret == 0 && ef800_boot_metadata_valid(metadata);
+		if (*valid) {
+			ret = ef800_metadata_write(area, metadata);
+			if (ret != 0) {
+				*valid = false;
+				return ret;
+			}
+			return EF800_METADATA_MIGRATED;
+		}
+		return metadata_reset_record(area, metadata, valid);
+	}
+	if (ret == -ENOENT || ret >= 0) {
+		return metadata_reset_record(area, metadata, valid);
 	}
 	return ret;
+}
+
+static int metadata_reset_record(const struct flash_area *area,
+				struct ef800_boot_metadata *metadata, bool *valid)
+{
+	uint8_t buffer[EF800_BOOT_METADATA_SIZE];
+	uint8_t verify_buffer[EF800_BOOT_METADATA_SIZE];
+	int ret;
+
+	ef800_boot_metadata_init(metadata);
+	ret = ef800_boot_metadata_encode(metadata, buffer, sizeof(buffer));
+	if (ret == 0) {
+		ret = nvs_write(&metadata_nvs, EF800_METADATA_NVS_ID, buffer,
+				 sizeof(buffer));
+		if (ret >= 0) {
+			ret = nvs_read(&metadata_nvs, EF800_METADATA_NVS_ID,
+					verify_buffer, sizeof(verify_buffer));
+			if (ret == sizeof(verify_buffer) &&
+				memcmp(verify_buffer, buffer, sizeof(buffer)) == 0) {
+				ret = 0;
+			} else {
+				ret = -EIO;
+			}
+		}
+	}
+	*valid = ret == 0;
+	if (ret == 0) {
+		LOG_WRN("invalid or missing boot-state record reset to defaults");
+	}
+	return ret == 0 ? EF800_METADATA_RESET : ret;
 }
 
 int ef800_metadata_write(const struct flash_area *area,
@@ -119,6 +189,8 @@ int ef800_metadata_read_current(struct ef800_boot_metadata *metadata,
 	if (metadata == NULL || valid == NULL) {
 		return -EINVAL;
 	}
+	ef800_boot_metadata_init(metadata);
+	*valid = false;
 	ret = flash_area_open(PARTITION_ID(metadata_partition), &area);
 	if (ret != 0) {
 		return ret;
@@ -140,3 +212,12 @@ int ef800_metadata_write_current(struct ef800_boot_metadata *metadata)
 	}
 	return ef800_metadata_write(area, metadata);
 }
+
+#ifdef EF800_TEST_METADATA
+void ef800_metadata_test_forget_state(void)
+{
+	memset(&metadata_nvs, 0, sizeof(metadata_nvs));
+	metadata_area = NULL;
+	metadata_nvs_ready = false;
+}
+#endif

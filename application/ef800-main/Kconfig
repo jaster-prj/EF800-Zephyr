@@ -2,6 +2,18 @@
 
 menu "EF800 MainApplication foundation"
 
+config EF800_MAIN_PROBE_FUEL_GAUGE_AT_STARTUP
+	bool "Probe MAX17043 during startup"
+	default y
+	help
+		Probe the fuel gauge synchronously during MainApplication startup.
+		Disable this when a missing or held I2C device must not delay keyboard
+		and user-interface startup.
+
+config EF800_MAIN_STORAGE_FORMAT_ON_MOUNT_FAILURE
+	bool "Format the QSPI storage after a mount failure"
+	default n
+
 config EF800_MAIN_KEYBOARD_STARTUP_TIMEOUT_MS
 	int "Keyboard startup timeout (ms)"
 	default 3000

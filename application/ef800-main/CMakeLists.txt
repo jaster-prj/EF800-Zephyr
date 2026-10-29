@@ -2,7 +2,8 @@
 cmake_minimum_required(VERSION 3.20.0)
 
 set(BOARD_ROOT ${CMAKE_CURRENT_LIST_DIR}/../..)
-set(PLUGIN_MANAGER_DIR "${CMAKE_CURRENT_LIST_DIR}/../../../PluginManager" CACHE PATH
+set(DTS_ROOT ${CMAKE_CURRENT_LIST_DIR}/../..)
+set(PLUGIN_MANAGER_DIR "${CMAKE_CURRENT_LIST_DIR}/../../../modules/lib/PluginManager" CACHE PATH
 	"PluginManager source directory")
 if(NOT EXISTS "${PLUGIN_MANAGER_DIR}/zephyr/module.yml")
 	message(FATAL_ERROR "PLUGIN_MANAGER_DIR is not a PluginManager source tree")
@@ -39,9 +40,11 @@ if(BOARD STREQUAL "native_sim")
 	add_dependencies(app ef800_main_cgrom)
 	target_include_directories(app PRIVATE ${CMAKE_CURRENT_BINARY_DIR}/generated)
 
-	target_sources(app PRIVATE
+		target_sources(app PRIVATE
 		${CMAKE_CURRENT_LIST_DIR}/../../shared/ef800_ports/ef800_console_usb.c
 		${CMAKE_CURRENT_LIST_DIR}/../../shared/ef800_ports/ef800_main_usb_msc_native.c
+		${CMAKE_CURRENT_LIST_DIR}/../../shared/ef800_ports/ef800_main_usb_mtp.c
+		${CMAKE_CURRENT_LIST_DIR}/../../shared/ef800_virtual_usb/ef800_virtual_usb_peer.c
 		${CMAKE_CURRENT_LIST_DIR}/../../shared/ef800_watchdog/ef800_watchdog_native.c
 		${CMAKE_CURRENT_LIST_DIR}/../../shared/ef800_virtual_keyboard/ef800_virtual_keyboard_controller.c
 		${CMAKE_CURRENT_LIST_DIR}/../../shared/ef800_virtual/ef800_virtual_mcp23017.c
@@ -70,11 +73,15 @@ if(BOARD STREQUAL "native_sim")
 		${CMAKE_CURRENT_LIST_DIR}/../../shared/ef800_virtual_protocol
 		${CMAKE_CURRENT_LIST_DIR}/../../application/ef800-keyboard/src
 		${CMAKE_CURRENT_LIST_DIR}/../../application/tlx-711a/src
+		${CMAKE_CURRENT_LIST_DIR}/../../shared/ef800_virtual_usb
+		${ZEPHYR_BASE}/subsys/usb/host
 	)
 else()
 	target_sources(app PRIVATE
+		${CMAKE_CURRENT_LIST_DIR}/../../shared/ef800_lcd_contrast/ef800_lcd_contrast_stm32.c
 		${CMAKE_CURRENT_LIST_DIR}/../../shared/ef800_ports/ef800_console_usb.c
 		${CMAKE_CURRENT_LIST_DIR}/../../shared/ef800_ports/ef800_main_usb_msc.c
+		${CMAKE_CURRENT_LIST_DIR}/../../shared/ef800_ports/ef800_main_usb_mtp.c
 		${CMAKE_CURRENT_LIST_DIR}/../../shared/ef800_watchdog/ef800_watchdog.c
 	)
 endif()

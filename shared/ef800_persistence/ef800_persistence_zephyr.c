@@ -39,7 +39,7 @@ static int zephyr_read(void *context, enum ef800_persistence_root root,
 	int ret;
 
 	ARG_UNUSED(context);
-	if (!ef800_storage_is_mounted()) {
+	if (!ef800_storage_root_is_mounted((enum ef800_storage_root)root)) {
 		return -ENOTSUP;
 	}
 	ret = build_path(root, name, path, sizeof(path));
@@ -91,7 +91,7 @@ static int zephyr_read_range(void *context, enum ef800_persistence_root root,
 	int ret;
 
 	ARG_UNUSED(context);
-	if (!ef800_storage_is_mounted()) {
+	if (!ef800_storage_root_is_mounted((enum ef800_storage_root)root)) {
 		return -ENOTSUP;
 	}
 	ret = build_path(root, name, path, sizeof(path));
@@ -157,7 +157,7 @@ static int zephyr_write(void *context, enum ef800_persistence_root root,
 	int ret;
 
 	ARG_UNUSED(context);
-	if (!ef800_storage_is_mounted()) {
+	if (!ef800_storage_root_is_mounted((enum ef800_storage_root)root)) {
 		return -ENOTSUP;
 	}
 	ret = ef800_storage_open(&file, (enum ef800_storage_root)root, name,
@@ -179,7 +179,7 @@ static int zephyr_append(void *context, enum ef800_persistence_root root,
 	int ret;
 
 	ARG_UNUSED(context);
-	if (!ef800_storage_is_mounted()) {
+	if (!ef800_storage_root_is_mounted((enum ef800_storage_root)root)) {
 		return -ENOTSUP;
 	}
 	ret = ef800_storage_open(&file, (enum ef800_storage_root)root, name,
@@ -202,7 +202,7 @@ static int zephyr_stat(void *context, enum ef800_persistence_root root,
 	int ret;
 
 	ARG_UNUSED(context);
-	if (!ef800_storage_is_mounted()) {
+	if (!ef800_storage_root_is_mounted((enum ef800_storage_root)root)) {
 		return -ENOTSUP;
 	}
 	ret = build_path(root, name, path, sizeof(path));
@@ -231,7 +231,7 @@ static int zephyr_list(void *context, enum ef800_persistence_root root,
 	int ret;
 
 	ARG_UNUSED(context);
-	if (!ef800_storage_is_mounted()) {
+	if (!ef800_storage_root_is_mounted((enum ef800_storage_root)root)) {
 		return -ENOTSUP;
 	}
 	fs_dir_t_init(&directory);
@@ -269,7 +269,7 @@ static int zephyr_remove(void *context, enum ef800_persistence_root root,
 	int ret;
 
 	ARG_UNUSED(context);
-	if (!ef800_storage_is_mounted()) {
+	if (!ef800_storage_root_is_mounted((enum ef800_storage_root)root)) {
 		return -ENOTSUP;
 	}
 	ret = build_path(root, name, path, sizeof(path));
@@ -277,6 +277,64 @@ static int zephyr_remove(void *context, enum ef800_persistence_root root,
 		return ret;
 	}
 	return fs_unlink(path);
+}
+
+static int zephyr_rename(void *context, enum ef800_persistence_root root,
+			 const char *source_name, const char *destination_name)
+{
+	char source_path[EF800_PERSISTENCE_MAX_PATH];
+	char destination_path[EF800_PERSISTENCE_MAX_PATH];
+	struct fs_dirent entry;
+	int ret;
+
+	ARG_UNUSED(context);
+	if (!ef800_storage_root_is_mounted((enum ef800_storage_root)root)) {
+		return -ENOTSUP;
+	}
+	ret = build_path(root, source_name, source_path, sizeof(source_path));
+	if (ret != 0) {
+		return ret;
+	}
+	ret = build_path(root, destination_name, destination_path,
+			 sizeof(destination_path));
+	if (ret != 0) {
+		return ret;
+	}
+	ret = fs_stat(destination_path, &entry);
+	if (ret == 0) {
+		/* Zephyr's FAT fs_rename unlinks an existing destination first. */
+		return -EEXIST;
+	}
+	if (ret != -ENOENT) {
+		return ret;
+	}
+	return fs_rename(source_path, destination_path);
+}
+
+static int zephyr_sync(void *context, enum ef800_persistence_root root,
+		       const char *name)
+{
+	struct fs_file_t file;
+	char path[EF800_PERSISTENCE_MAX_PATH];
+	int ret;
+	int close_ret;
+
+	ARG_UNUSED(context);
+	if (!ef800_storage_root_is_mounted((enum ef800_storage_root)root)) {
+		return -ENOTSUP;
+	}
+	ret = build_path(root, name, path, sizeof(path));
+	if (ret != 0) {
+		return ret;
+	}
+	fs_file_t_init(&file);
+	ret = fs_open(&file, path, FS_O_READ | FS_O_WRITE);
+	if (ret != 0) {
+		return ret;
+	}
+	ret = fs_sync(&file);
+	close_ret = fs_close(&file);
+	return ret != 0 ? ret : close_ret;
 }
 
 static const struct ef800_persistence_backend zephyr_backend = {
@@ -287,6 +345,8 @@ static const struct ef800_persistence_backend zephyr_backend = {
 	.stat = zephyr_stat,
 	.list = zephyr_list,
 	.remove = zephyr_remove,
+	.rename = zephyr_rename,
+	.sync = zephyr_sync,
 };
 
 const struct ef800_persistence_backend *ef800_persistence_zephyr_backend(void)
@@ -351,6 +411,21 @@ static int unavailable_remove(void *context, enum ef800_persistence_root root,
 	return -ENOTSUP;
 }
 
+static int unavailable_rename(void *context, enum ef800_persistence_root root,
+			      const char *source_name, const char *destination_name)
+{
+	ARG_UNUSED(context); ARG_UNUSED(root); ARG_UNUSED(source_name);
+	ARG_UNUSED(destination_name);
+	return -ENOTSUP;
+}
+
+static int unavailable_sync(void *context, enum ef800_persistence_root root,
+			    const char *name)
+{
+	ARG_UNUSED(context); ARG_UNUSED(root); ARG_UNUSED(name);
+	return -ENOTSUP;
+}
+
 const struct ef800_persistence_backend *ef800_persistence_zephyr_backend(void)
 {
 	static const struct ef800_persistence_backend backend = {
@@ -361,6 +436,8 @@ const struct ef800_persistence_backend *ef800_persistence_zephyr_backend(void)
 		.stat = unavailable_stat,
 		.list = unavailable_list,
 		.remove = unavailable_remove,
+		.rename = unavailable_rename,
+		.sync = unavailable_sync,
 	};
 	return &backend;
 }

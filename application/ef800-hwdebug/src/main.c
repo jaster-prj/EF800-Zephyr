@@ -43,7 +43,7 @@ static void print_help(void)
 		"  keyboard version\r\n"
 		"  keyboard version-raw\r\n"
 		"  keyboard id-raw\r\n"
-		"  keyboard update /EF800:/fwu/EF800_KEYBOARD.pkg\r\n"
+		"  keyboard update /DATA:/fwu/EF800_KEYBOARD.pkg\r\n"
 		"  keyboard receive\r\n"
 		"  keyboard bootloader probe\r\n"
 		"  display test|interactive|status|wr-test [count]\r\n"

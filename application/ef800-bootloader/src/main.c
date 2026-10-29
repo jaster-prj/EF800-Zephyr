@@ -31,23 +31,48 @@ LOG_MODULE_REGISTER(ef800_bootloader, LOG_LEVEL_INF);
 
 #define MAIN_PARTITION_ID PARTITION_ID(main_partition)
 #define BACKUP_PARTITION_ID PARTITION_ID(backup_partition)
+#define QSPI_BOOTSTATE_PARTITION_ID PARTITION_ID(qspi_bootstate_partition)
+#define QSPI_CONFIGURATION_PARTITION_ID PARTITION_ID(qspi_configuration_partition)
+#define QSPI_DATA_PARTITION_ID PARTITION_ID(qspi_storage_partition)
 #define EF800_VECTOR_BYTES (2U * sizeof(uint32_t))
+#define QSPI_ERASE_BLOCK_SIZE 0x00001000U
 
 BUILD_ASSERT(PARTITION_EXISTS(main_partition), "main partition is required");
 BUILD_ASSERT(PARTITION_EXISTS(backup_partition), "backup partition is required");
-BUILD_ASSERT(PARTITION_EXISTS(metadata_partition), "metadata partition is required");
+BUILD_ASSERT(PARTITION_EXISTS(metadata_partition), "external boot metadata NVS is required");
+BUILD_ASSERT(PARTITION_EXISTS(qspi_bootstate_partition), "QSPI boot-state partition is required");
+BUILD_ASSERT(PARTITION_EXISTS(qspi_configuration_partition), "QSPI configuration partition is required");
+BUILD_ASSERT(PARTITION_EXISTS(qspi_storage_partition), "QSPI shared-data partition is required");
 BUILD_ASSERT(PARTITION_OFFSET(boot_partition) == 0x00000000U,
 	     "bootloader partition offset must remain 0x00000000");
 BUILD_ASSERT(PARTITION_SIZE(boot_partition) == 0x00010000U,
 	     "bootloader partition size must remain 64 KiB");
 BUILD_ASSERT(PARTITION_OFFSET(backup_partition) == 0x00010000U,
 	     "backup partition offset must remain 0x00010000");
-BUILD_ASSERT(PARTITION_SIZE(backup_partition) == 0x00018000U,
-	     "backup partition size must remain 96 KiB");
-BUILD_ASSERT(PARTITION_OFFSET(metadata_partition) == 0x00028000U,
-	     "metadata partition offset must remain 0x00028000");
-BUILD_ASSERT(PARTITION_SIZE(metadata_partition) == 0x00008000U,
-	     "metadata partition size must remain 32 KiB");
+BUILD_ASSERT(PARTITION_SIZE(backup_partition) == 0x00020000U,
+	     "backup partition size must remain 128 KiB");
+BUILD_ASSERT(PARTITION_OFFSET(main_partition) ==
+	     PARTITION_OFFSET(backup_partition) + PARTITION_SIZE(backup_partition),
+	     "MainApplication must follow the expanded BackupApplication region");
+BUILD_ASSERT(PARTITION_OFFSET(qspi_bootstate_partition) == 0x00000000U &&
+	     PARTITION_SIZE(qspi_bootstate_partition) == 0x00008000U,
+	     "QSPI boot-state partition must be the first 32 KiB");
+BUILD_ASSERT(PARTITION_OFFSET(metadata_partition) == 0x00000000U &&
+	     PARTITION_SIZE(metadata_partition) == 0x00008000U,
+	     "metadata NVS must alias the QSPI boot-state partition");
+BUILD_ASSERT(PARTITION_OFFSET(qspi_configuration_partition) == 0x00008000U &&
+	     PARTITION_SIZE(qspi_configuration_partition) == 0x000F8000U,
+	     "QSPI configuration partition must be 992 KiB after boot-state NVS");
+BUILD_ASSERT(PARTITION_OFFSET(qspi_storage_partition) == 0x00100000U &&
+	     PARTITION_SIZE(qspi_storage_partition) == 0x00300000U,
+	     "QSPI shared-data partition must be the final 3 MiB");
+BUILD_ASSERT((PARTITION_OFFSET(qspi_bootstate_partition) % QSPI_ERASE_BLOCK_SIZE) == 0U &&
+	     (PARTITION_SIZE(qspi_bootstate_partition) % QSPI_ERASE_BLOCK_SIZE) == 0U &&
+	     (PARTITION_OFFSET(qspi_configuration_partition) % QSPI_ERASE_BLOCK_SIZE) == 0U &&
+	     (PARTITION_SIZE(qspi_configuration_partition) % QSPI_ERASE_BLOCK_SIZE) == 0U &&
+	     (PARTITION_OFFSET(qspi_storage_partition) % QSPI_ERASE_BLOCK_SIZE) == 0U &&
+	     (PARTITION_SIZE(qspi_storage_partition) % QSPI_ERASE_BLOCK_SIZE) == 0U,
+	     "all QSPI partitions must align to the 4 KiB erase granularity");
 BUILD_ASSERT(PARTITION_OFFSET(main_partition) == 0x00030000U,
 	     "main partition offset must remain 0x00030000");
 BUILD_ASSERT(PARTITION_SIZE(main_partition) == 0x000D0000U,
@@ -142,13 +167,8 @@ static FUNC_NORETURN void jumpApplication(const struct flash_area *area, uintptr
 
 int main(void)
 {
-	int console_result = ef800_console_init(true);
-	printk("ef800 bootloader: main (console=%u, init=%d)\r\n",
-		ef800_console_get_target(), console_result);
-	/* Start/feed the option-byte IWDG before slow flash and metadata work. */
-	if (ef800_watchdog_start(10000U) != 0) {
-		LOG_WRN("IWDG could not be initialized at boot");
-	}
+	int watchdog_result;
+	int console_result;
 	const struct flash_area *main_area;
 	const struct flash_area *backup_area;
 	struct ef800_boot_metadata metadata __aligned(8);
@@ -160,6 +180,15 @@ int main(void)
 	bool use_backup = false;
 	bool update_installed = false;
 	int rc;
+
+	/* Start/feed the option-byte IWDG before slow flash and metadata work. */
+	watchdog_result = ef800_watchdog_start(10000U);
+	console_result = ef800_console_init(true);
+	printk("ef800 bootloader: main (console=%u, init=%d)\r\n",
+		ef800_console_get_target(), console_result);
+	if (watchdog_result != 0) {
+		LOG_WRN("IWDG could not be initialized at boot");
+	}
 
 	rc = flash_area_open(MAIN_PARTITION_ID, &main_area);
 	if (rc < 0 || !flash_area_device_is_ready(main_area)) {
@@ -174,7 +203,8 @@ int main(void)
 
 	rc = ef800_metadata_read_current(&metadata, &metadata_valid);
 	if (rc < 0 || !metadata_valid) {
-		LOG_WRN("boot metadata unavailable or invalid: %d", rc);
+		LOG_WRN("boot-state NVS unavailable; using volatile defaults "
+			"(failure counter unavailable): %d", rc);
 		ef800_boot_metadata_init(&metadata);
 		metadata_valid = false;
 		metadata_dirty = true;

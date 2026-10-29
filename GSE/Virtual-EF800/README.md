@@ -28,11 +28,46 @@ the keypad. Only one browser can control the virtual EF800 at a time; other
 browsers remain viewers. Releasing control, closing the browser, or losing the
 simulator connection releases all held keys.
 
-The front panel also provides native-sim plugin upload and a separate simulator
-restart action. Uploading a `.PMP` package validates and installs it into the
-simulator's virtual FAT; it is not activated until restart. Port 1 and Port 2
-can be configured with bounded virtual serial response profiles for plugin
-demonstrations.
+The LCD transport carries the frame sequence and packed 240 x 64 one-bit pixel
+buffer only. Display characters are visible because the production T6963 path
+draws them into those pixels; no parallel semantic text rows are sent or drawn
+over the emulated LCD.
+
+Native-sim measurement packages are managed through the MTP `Plugins` storage
+in the file view below. Plugin discovery is startup-only; after uploading a
+package, request a simulator restart separately if it should be discovered.
+Port 1 and Port 2 still support bounded virtual serial response profiles for
+plugin demonstrations.
+
+## MainApplication MTP file view
+
+The browser's **MainApplication MTP files** panel exposes only the `Data`,
+`Plugins`, and `FWU` storages. It omits Configuration, boot-state NVS, and raw
+flash. On a clean simulator profile, acquire keypad control and select
+**Settings / Port assignment / USB Port / USB MTP** on Port 4 before browsing.
+
+Listing, upload, and download requests go from the browser to the localhost
+gateway, through bounded simulator-control messages, and then through the
+in-process Zephyr USB host, native-sim virtual UHC/bus/UDC, and production
+MainApplication device-next MTP class. No gateway route reads or writes the
+simulator filesystem directly for these file operations. Browser transfers are
+limited to 32 KiB per file; paths are relative to the selected storage, and
+transfer progress, cancellation, completion, and failure are reported. Download
+success requires a complete byte count and checksum.
+
+The local gateway routes are `GET /api/mtp/list?storage=Data&path=...`,
+`GET /api/mtp/download?storage=Data&path=...`, and `POST /api/mtp/upload` with
+multipart `storage`, `path` (destination directory), and `file` fields. The
+browser uses only these gateway routes and `/ws`; the simulator endpoint remains
+private to the Compose network.
+
+For scripted plugin activation, the separate `POST /api/simulator/restart`
+gateway route remains available; it is intentionally not part of the notebook's
+MTP file panel.
+
+The native-sim software USB path is behavioral evidence only. Physical QSPI
+qualification, the complete BackupApplication MTP workload/stack measurement,
+and target flashing are not included in this verification increment.
 
 ```powershell
 docker compose -f docker-compose.virtual-ef800.yml ps
@@ -51,6 +86,13 @@ pause, clear, and auto-scroll; it marks sequence gaps and simulator diagnostic
 epochs. The native history is limited to 64 records and approximately 8 KiB of
 text, with 120-byte records. This is behavioral native-sim evidence only and is not
 physical console or hardware qualification evidence.
+
+The same panel includes catalog-backed **COMPOSITION** selectors. Acquire browser
+control to choose and commit a supported option; the panel shows the currently
+active selection separately from the committed selection and reports when a
+simulator restart is required. Controls use bounded structured protocol
+messages rather than forwarding arbitrary shell text. Unknown or unsupported
+catalog entries are not offered for selection.
 
 ## Headless client
 

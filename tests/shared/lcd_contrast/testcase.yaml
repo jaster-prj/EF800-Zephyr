@@ -1,0 +1,7 @@
+common:
+  tags: [shared, lcd-contrast]
+  harness: ztest
+tests:
+  ef800.shared.lcd_contrast:
+    platform_allow:
+      - native_sim

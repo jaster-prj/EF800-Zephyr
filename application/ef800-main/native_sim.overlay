@@ -87,23 +87,39 @@
 
 	qspi_disk: qspi_disk {
 		compatible = "zephyr,flash-disk";
-		partition = <&storage_partition>;
+		partition = <&qspi_storage_partition>;
+		disk-name = "DATA";
+		sector-size = <512>;
+		cache-size = <4096>;
+		status = "okay";
+	};
+
+	qspi_configuration_disk: qspi_configuration_disk {
+		compatible = "zephyr,flash-disk";
+		partition = <&qspi_configuration_partition>;
 		disk-name = "EF800";
 		sector-size = <512>;
 		cache-size = <4096>;
 		status = "okay";
 	};
 
-	usbotg_fs: usbotg_fs {
-		compatible = "zephyr,native-posix-udc";
+	uhc_vrt0: uhc_vrt0 {
+		compatible = "zephyr,uhc-virtual";
 		status = "okay";
 
-		cdc_acm_uart0: cdc_acm_uart0 {
-			compatible = "zephyr,cdc-acm-uart";
-			label = "EF800 Virtual USB CDC ACM";
-			rx-fifo-size = <256>;
-			tx-fifo-size = <256>;
-			status = "disabled";
+		usbotg_fs: usbotg_fs {
+			compatible = "zephyr,udc-virtual";
+			num-bidir-endpoints = <8>;
+			maximum-speed = "full-speed";
+			status = "okay";
+
+			cdc_acm_uart0: cdc_acm_uart0 {
+				compatible = "zephyr,cdc-acm-uart";
+				label = "EF800 Virtual USB CDC ACM";
+				rx-fifo-size = <256>;
+				tx-fifo-size = <256>;
+				status = "okay";
+			};
 		};
 	};
 
@@ -168,15 +184,24 @@
 	};
 };
 
+/* Model the 4 MiB QSPI as scaled volumes in the native-sim flash image. */
+/delete-node/ &storage_partition;
+
 &flash0 {
 	partitions {
-		metadata_partition: partition@28000 {
-			label = "boot-metadata";
-			reg = <0x00028000 0x00008000>;
+		metadata_partition: qspi_bootstate_partition: partition@fc000 {
+			label = "qspi-boot-state";
+			reg = <0x000fc000 0x00008000>;
+		};
+
+		qspi_configuration_partition: partition@104000 {
+			label = "qspi-configuration";
+			reg = <0x00104000 0x00018000>;
+		};
+
+		qspi_storage_partition: partition@11c000 {
+			label = "qspi-shared-data";
+			reg = <0x0011c000 0x00060000>;
 		};
 	};
-};
-
-&storage_partition {
-	reg = <0x000fc000 0x00080000>;
 };

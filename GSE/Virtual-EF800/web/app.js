@@ -3,36 +3,59 @@
   const canvas = document.querySelector('#lcd');
   const context = canvas.getContext('2d');
   const status = document.querySelector('#status');
-  const text = document.querySelector('#text');
   const logs = document.querySelector('#logs');
   const logsStatus = document.querySelector('#logs-status');
   const logsPause = document.querySelector('#logs-pause');
   const logsClear = document.querySelector('#logs-clear');
   const logsSeverity = document.querySelector('#logs-severity');
   const logsAutoscroll = document.querySelector('#logs-autoscroll');
+  const compositionGroups = document.querySelector('#composition-groups');
+  const compositionStatus = document.querySelector('#composition-status');
   const acquire = document.querySelector('#control');
   const release = document.querySelector('#release');
   const buttons = [...document.querySelectorAll('[data-key]')];
-  const pluginFile = document.querySelector('#plugin-file');
-  const pluginUpload = document.querySelector('#plugin-upload');
-  const simulatorRestart = document.querySelector('#simulator-restart');
-  const pluginStatus = document.querySelector('#plugin-status');
-  const pluginId = document.querySelector('#plugin-id');
-  const pluginPort = document.querySelector('#plugin-port');
-  const pluginAssign = document.querySelector('#plugin-assign');
-  const pluginExecute = document.querySelector('#plugin-execute');
+  const mtpStorage = document.querySelector('#mtp-storage');
+  const mtpRefresh = document.querySelector('#mtp-refresh');
+  const mtpUp = document.querySelector('#mtp-up');
+  const mtpPathLabel = document.querySelector('#mtp-path');
+  const mtpList = document.querySelector('#mtp-list');
+  const mtpDropzone = document.querySelector('#mtp-dropzone');
+  const mtpFile = document.querySelector('#mtp-file');
+  const mtpUpload = document.querySelector('#mtp-upload');
+  const mtpProgress = document.querySelector('#mtp-progress');
+  const mtpCancel = document.querySelector('#mtp-cancel');
+  const mtpStatus = document.querySelector('#mtp-status');
   const deviceDockButtons = [...document.querySelectorAll('[data-dock-port]')];
   const deviceDelay = document.querySelector('#device-delay');
   const deviceResponse = document.querySelector('#device-response');
   const deviceAvailable = document.querySelector('#device-available');
   const deviceStatus = document.querySelector('#device-status');
   let socket, controller = false, simulator = false, reconnectTimer;
+  let mtpCurrentPath = '', mtpBusy = false, mtpAbortController = null;
+  let mtpActiveRequestId = null;
+  let compositionState = null, compositionBusy = false;
+  let compositionApplyButtons = [];
+  let lcdContrastEnabled = false, lcdContrastDuty = 78, lastLcdPixels = null;
   const held = new Set();
   const MAX_LOG_RECORDS = 64;
   const logRecords = [];
   let logsPaused = false, lastLogSequence = null;
 
   function setStatus(message) { status.textContent = message; }
+  function lcdInkLevel() {
+    if (!lcdContrastEnabled) return 17;
+    if (lcdContrastDuty <= 78)
+      return Math.round(255 - (238 * lcdContrastDuty / 78));
+    return Math.round(17 * (100 - lcdContrastDuty) / 22);
+  }
+  function applyLcdContrast(enabled, duty) {
+    if (typeof enabled !== 'boolean' || !Number.isInteger(duty) || duty < 0 || duty > 100)
+      return;
+    lcdContrastEnabled = enabled;
+    lcdContrastDuty = duty;
+    const level = lcdInkLevel();
+    if (lastLcdPixels !== null) renderPixels(lastLcdPixels);
+  }
   function send(message) {
     if (socket && socket.readyState === WebSocket.OPEN)
       { socket.send(JSON.stringify({version: 1, ...message})); return true; }
@@ -40,36 +63,200 @@
   }
   function renderPixels(hex) {
     if (!hex || hex.length !== FRAME_SIZE * 2) return;
+    lastLcdPixels = hex;
     const pixels = new Uint8Array(FRAME_SIZE);
     for (let i = 0; i < FRAME_SIZE; i++) pixels[i] = parseInt(hex.slice(i * 2, i * 2 + 2), 16);
     const image = context.createImageData(WIDTH, HEIGHT);
+    const ink = lcdInkLevel();
     for (let y = 0; y < HEIGHT; y++) for (let x = 0; x < WIDTH; x++) {
       const on = pixels[y * 30 + Math.floor(x / 8)] & (1 << (x % 8));
       const index = (y * WIDTH + x) * 4;
-      image.data[index] = image.data[index + 1] = image.data[index + 2] = on ? 17 : 255;
+      image.data[index] = image.data[index + 1] = image.data[index + 2] = on ? ink : 255;
       image.data[index + 3] = 255;
     }
     context.putImageData(image, 0, 0);
-  }
-  function renderText(rows) {
-    context.save();
-    context.fillStyle = '#111111';
-    context.font = '8px monospace';
-    context.textBaseline = 'top';
-    (rows || []).slice(0, 8).forEach((row, index) => {
-      const value = String(row || '').replace(/\0/g, '');
-      context.fillText(value.slice(0, 40), 0, index * 8);
-    });
-    context.restore();
   }
   function updateControls() {
     acquire.disabled = controller;
     release.disabled = !controller;
     buttons.forEach(button => button.disabled = !controller);
-    pluginUpload.disabled = !simulator;
-    simulatorRestart.disabled = !simulator;
-    pluginAssign.disabled = !simulator;
-    pluginExecute.disabled = !simulator;
+    mtpStorage.disabled = !simulator || mtpBusy;
+    mtpRefresh.disabled = !simulator || mtpBusy;
+    mtpUp.disabled = !simulator || mtpBusy || !mtpCurrentPath;
+    mtpFile.disabled = !simulator || mtpBusy;
+    mtpUpload.disabled = !simulator || mtpBusy || !mtpFile.files.length;
+    mtpCancel.disabled = !mtpBusy || !mtpAbortController;
+    compositionApplyButtons.forEach(({button, select, selected}) => {
+      button.disabled = !controller || !simulator || compositionBusy ||
+        !compositionState || !compositionState.available ||
+        compositionState.restartRequired || select.value === selected;
+      select.disabled = !controller || !simulator || compositionBusy ||
+        !compositionState || !compositionState.available ||
+        compositionState.restartRequired;
+    });
+  }
+  function renderComposition(state) {
+    compositionState = state;
+    compositionGroups.replaceChildren();
+    compositionApplyButtons = [];
+    if (!state || !state.available) {
+      compositionStatus.textContent = 'Composition catalog unavailable.';
+      updateControls();
+      return;
+    }
+    for (const group of state.groups) {
+      const row = document.createElement('div');
+      row.className = 'composition-group';
+      const label = document.createElement('label');
+      label.textContent = group.id;
+      const select = document.createElement('select');
+      select.setAttribute('aria-label', `${group.id} composition selection`);
+      for (const choice of group.options) {
+        const option = document.createElement('option');
+        option.value = choice.token;
+        option.textContent = `${choice.token}${choice.default ? ' (default)' : ''}`;
+        select.append(option);
+      }
+      select.value = group.selected;
+      const active = document.createElement('span');
+      active.className = 'composition-active';
+      active.textContent = `Active now: ${group.active}`;
+      const apply = document.createElement('button');
+      apply.type = 'button';
+      apply.textContent = 'Apply';
+      select.addEventListener('change', updateControls);
+      apply.addEventListener('click', () => {
+        if (!controller || compositionBusy || select.value === group.selected) return;
+        compositionBusy = true;
+        compositionStatus.textContent = `Committing ${group.id}=${select.value}...`;
+        updateControls();
+        if (!send({command: 'composition-set', group: group.id, token: select.value})) {
+          compositionBusy = false;
+          compositionStatus.textContent = 'Command could not be sent.';
+          updateControls();
+        }
+      });
+      row.append(label, select, active, apply);
+      compositionGroups.append(row);
+      compositionApplyButtons.push({button: apply, select, selected: group.selected});
+    }
+    compositionStatus.textContent = state.restartRequired ?
+      'Composition committed. Restart the simulator to activate the selected items.' :
+      'Changes are committed through the profile service; they take effect after restart.';
+    updateControls();
+  }
+  function setMtpStatus(message) { mtpStatus.textContent = message; }
+  function setMtpBusy(busy) {
+    mtpBusy = busy;
+    if (!busy) mtpAbortController = null;
+    updateControls();
+  }
+  function updateMtpProgress(transferred, total) {
+    mtpProgress.max = Math.max(1, total || 1);
+    mtpProgress.value = Math.min(transferred || 0, mtpProgress.max);
+    mtpProgress.setAttribute('aria-label', `${transferred || 0} of ${total || 0} bytes transferred`);
+  }
+  function mtpUrl(path) {
+    const query = new URLSearchParams({storage: mtpStorage.value, path});
+    return `/api/mtp/list?${query}`;
+  }
+  async function refreshMtpDirectory() {
+    if (!simulator || mtpBusy) return;
+    setMtpBusy(true);
+    setMtpStatus('Loading MTP directory through virtual USB...');
+    mtpList.replaceChildren();
+    try {
+      const response = await fetch(mtpUrl(mtpCurrentPath));
+      const result = await response.json();
+      if (!response.ok) throw new Error(result.error || `HTTP ${response.status}`);
+      renderMtpEntries(result.entries || []);
+      mtpPathLabel.textContent = `/${result.storage}${result.path ? `/${result.path}` : ''}`;
+      setMtpStatus(`${result.entries.length} item(s) in ${result.storage}.`);
+    } catch (error) {
+      setMtpStatus(`MTP listing failed: ${error.message || error}`);
+    } finally { setMtpBusy(false); }
+  }
+  function renderMtpEntries(entries) {
+    mtpList.replaceChildren();
+    for (const entry of entries) {
+      const item = document.createElement('li');
+      const name = document.createElement('button');
+      name.className = 'mtp-entry';
+      name.type = 'button';
+      name.textContent = entry.directory ? `📁 ${entry.name}` : entry.name;
+      if (entry.directory) {
+        name.onclick = () => {
+          mtpCurrentPath = mtpCurrentPath ? `${mtpCurrentPath}/${entry.name}` : entry.name;
+          updateControls(); refreshMtpDirectory();
+        };
+      } else {
+        name.disabled = !simulator || mtpBusy;
+        name.onclick = () => downloadMtpFile(entry.name);
+        const size = document.createElement('span');
+        size.className = 'mtp-size';
+        size.textContent = `${entry.size} bytes`;
+        item.append(name, size);
+        mtpList.append(item);
+        continue;
+      }
+      item.append(name);
+      mtpList.append(item);
+    }
+  }
+  async function downloadMtpFile(name) {
+    if (mtpBusy) return;
+    const path = mtpCurrentPath ? `${mtpCurrentPath}/${name}` : name;
+    const query = new URLSearchParams({storage: mtpStorage.value, path});
+    mtpAbortController = new AbortController();
+    setMtpBusy(true);
+    updateMtpProgress(0, 1);
+    setMtpStatus(`Downloading ${name} through MTP...`);
+    try {
+      const response = await fetch(`/api/mtp/download?${query}`, {signal: mtpAbortController.signal});
+      if (!response.ok) {
+        const result = await response.json();
+        throw new Error(result.error || `HTTP ${response.status}`);
+      }
+      const blob = await response.blob();
+      const link = document.createElement('a');
+      link.href = URL.createObjectURL(blob);
+      link.download = name;
+      link.click();
+      setTimeout(() => URL.revokeObjectURL(link.href), 1000);
+      updateMtpProgress(blob.size, blob.size);
+      setMtpStatus(`Downloaded ${name} (${blob.size} bytes).`);
+    } catch (error) {
+      setMtpStatus(error.name === 'AbortError' ? 'Download cancelled.' : `Download failed: ${error.message || error}`);
+    } finally { setMtpBusy(false); }
+  }
+  async function uploadMtpFile(file) {
+    if (!file || mtpBusy) return;
+    if (file.size === 0 || file.size > 32 * 1024) {
+      setMtpStatus('Upload rejected: files must be between 1 byte and 32 KiB.');
+      return;
+    }
+    const form = new FormData();
+    form.append('storage', mtpStorage.value);
+    form.append('path', mtpCurrentPath);
+    form.append('file', file, file.name);
+    mtpAbortController = new AbortController();
+    setMtpBusy(true);
+    updateMtpProgress(0, file.size);
+    setMtpStatus(`Uploading ${file.name} through MTP...`);
+    try {
+      const response = await fetch('/api/mtp/upload', {
+        method: 'POST', body: form, signal: mtpAbortController.signal
+      });
+      const result = await response.json();
+      if (!response.ok || !result.accepted) throw new Error(result.error || `HTTP ${response.status}`);
+      updateMtpProgress(file.size, file.size);
+      setMtpStatus(`Uploaded ${file.name} (${file.size} bytes).`);
+      mtpFile.value = '';
+      setMtpBusy(false);
+      await refreshMtpDirectory();
+    } catch (error) {
+      setMtpStatus(error.name === 'AbortError' ? 'Upload cancelled.' : `Upload failed: ${error.message || error}`);
+    } finally { setMtpBusy(false); updateControls(); }
   }
   function setKeyHeld(key, isHeld) {
     const button = buttons.find(candidate => candidate.dataset.key === key);
@@ -81,10 +268,30 @@
   function renderLogs() {
     if (logsPaused) return;
     const minimum = logsSeverity.value === 'ALL' ? 0 : severityRank(logsSeverity.value);
-    logs.textContent = logRecords.filter(record => record.gap || severityRank(record.severity) >= minimum)
-      .map(record => record.gap ? `--- ${record.text} ---` :
-        `[${record.severity}]${record.replay ? ' [history]' : ''} #${record.sequence} ${record.text}`)
-      .join('\n');
+    logs.replaceChildren();
+    const visible = logRecords.filter(record => record.gap ||
+      severityRank(record.severity) >= minimum);
+    visible.forEach((record, index) => {
+      if (record.gap) {
+        logs.append(document.createTextNode(`--- ${record.text} ---`));
+      } else {
+        logs.append(document.createTextNode(
+          `[${record.severity}]${record.replay ? ' [history]' : ''} #${record.sequence} `));
+        const segments = Array.isArray(record.segments) ? record.segments :
+          [{text: record.text || ''}];
+        segments.forEach(segment => {
+          const span = document.createElement('span');
+          if (/^#[0-9a-f]{6}$/i.test(segment.foreground || ''))
+            span.style.color = segment.foreground;
+          if (/^#[0-9a-f]{6}$/i.test(segment.background || ''))
+            span.style.backgroundColor = segment.background;
+          if (segment.bold) span.style.fontWeight = 'bold';
+          span.textContent = segment.text || '';
+          logs.append(span);
+        });
+      }
+      if (index + 1 < visible.length) logs.append(document.createTextNode('\n'));
+    });
     logsStatus.textContent = `${logRecords.length} recent record(s)${logsPaused ? ' (paused)' : ''}`;
     if (logsAutoscroll.checked) logs.scrollTop = logs.scrollHeight;
   }
@@ -96,47 +303,10 @@
     if (lastLogSequence !== null && record.sequence > lastLogSequence + 1) {
       logRecords.push({gap: true, text: `diagnostic gap: records ${lastLogSequence + 1}-${record.sequence - 1} unavailable`});
     }
-    if (record.flags & 4) logRecords.push({gap: true, text: 'diagnostic records were dropped or evicted'});
     logRecords.push(record);
     lastLogSequence = record.sequence;
     while (logRecords.length > MAX_LOG_RECORDS) logRecords.shift();
     renderLogs();
-  }
-  async function uploadPlugin() {
-    if (!pluginFile.files.length) { pluginStatus.textContent = 'Select a .PMP package first.'; return; }
-    const form = new FormData(); form.append('file', pluginFile.files[0]);
-    pluginStatus.textContent = 'Uploading and validating...';
-    try {
-      const response = await fetch('/api/plugins', {method: 'POST', body: form});
-      const result = await response.json();
-      pluginStatus.textContent = result.accepted ? 'Installed. Restart required.' : `Rejected: ${result.error || result.code || 'unknown error'}`;
-    } catch (error) { pluginStatus.textContent = `Upload failed: ${error}`; }
-  }
-  async function restartSimulator() {
-    pluginStatus.textContent = 'Restarting simulator...';
-    try {
-      const response = await fetch('/api/simulator/restart', {method: 'POST'});
-      const result = await response.json();
-      pluginStatus.textContent = result.accepted ? 'Restart requested; waiting for rediscovery.' : 'Restart rejected.';
-    } catch (error) { pluginStatus.textContent = `Restart failed: ${error}`; }
-  }
-  async function assignPlugin() {
-    pluginStatus.textContent = 'Assigning plugin through MainApplication...';
-    try {
-      const response = await fetch(`/api/plugins/${Number(pluginId.value)}/assign`, {
-        method: 'POST', headers: {'Content-Type': 'application/json'},
-        body: JSON.stringify({port: Number(pluginPort.value), connection: 1})});
-      const result = await response.json();
-      pluginStatus.textContent = result.accepted ? `Plugin assigned to port ${pluginPort.value}.` : `Assignment rejected: ${result.error}`;
-    } catch (error) { pluginStatus.textContent = `Assignment failed: ${error}`; }
-  }
-  async function executePlugin() {
-    pluginStatus.textContent = 'Running measurement plugin...';
-    try {
-      const response = await fetch(`/api/plugins/execute/${Number(pluginPort.value)}`, {method: 'POST'});
-      const result = await response.json();
-      pluginStatus.textContent = result.accepted ? 'Measurement completed; see LCD.' : `Measurement failed: ${result.error}`;
-    } catch (error) { pluginStatus.textContent = `Execution failed: ${error}`; }
   }
   async function dockDevice(port) {
     const deviceProfile = document.querySelector(`#device-profile-${port}`);
@@ -158,31 +328,46 @@
     socket.onmessage = event => {
       let message; try { message = JSON.parse(event.data); } catch (_) { return; }
       if (message.type === 'status') {
+        const wasSimulator = simulator;
         simulator = !!message.simulatorConnected;
         if (!message.controller || !message.simulatorConnected) clearHeld();
         controller = !!message.controller && controller;
          setStatus(`${simulator ? 'Simulator connected' : 'Simulator disconnected'} - ${controller ? 'controller' : 'viewer'}${message.stale ? ' (display stale)' : ''}${message.capabilities ? ` - ${message.capabilities}` : ''}`);
         updateControls();
-       } else if (message.type === 'lcd') {
-        renderPixels(message.pixels);
-         text.textContent = (message.text || []).join('\n');
-      } else if (message.type === 'log') {
+        if (simulator && !wasSimulator) refreshMtpDirectory();
+        } else if (message.type === 'lcd') {
+          renderPixels(message.pixels);
+        } else if (message.type === 'lcd-contrast') {
+          applyLcdContrast(message.enabled, message.duty);
+        } else if (message.type === 'composition') {
+          renderComposition(message);
+        } else if (message.type === 'log') {
         appendLog(message);
       } else if (message.type === 'log-epoch') {
         logRecords.length = 0;
         lastLogSequence = null;
         logsStatus.textContent = `Diagnostic epoch ${message.epoch}; waiting for records.`;
-      } else if (message.type === 'plugin') {
-        const result = message.result || {};
-        pluginStatus.textContent = message.state === 'installed' ?
-          'Installed. Restart required.' :
-          (message.state === 'uploading' ? 'Uploading and validating...' : `Plugin rejected: ${result.error || 'unknown error'}`);
-      } else if (message.type === 'plugin-status') {
-        pluginStatus.textContent = message.accepted ?
-          `Simulator registry: ${message.count} package(s).` :
-          `Plugin registry error: ${message.error}`;
+      } else if (message.type === 'mtp-progress') {
+        if (mtpBusy && Number.isFinite(message.transferred) && Number.isFinite(message.total))
+          updateMtpProgress(message.transferred, message.total);
+      } else if (message.type === 'mtp-transfer') {
+        if (message.state === 'started') mtpActiveRequestId = message.requestId;
+        if (message.state === 'failed') setMtpStatus(`MTP ${message.operation} failed: ${message.error || 'unknown error'}`);
+        else if (message.state === 'cancelled') setMtpStatus(`MTP ${message.operation} cancelled.`);
+        if (['complete', 'failed', 'cancelled'].includes(message.state) &&
+            message.requestId === mtpActiveRequestId) mtpActiveRequestId = null;
       } else if (message.type === 'ack' && message.command === 'acquire') {
         controller = !!message.accepted; updateControls();
+      } else if (message.type === 'ack' && message.command === 'composition-set') {
+        compositionBusy = false;
+        compositionStatus.textContent = message.accepted ?
+          'Composition committed. Restart the simulator to activate the selected items.' :
+          `Composition change rejected: ${message.error || 'unknown error'}`;
+        updateControls();
+      } else if (message.type === 'error' && compositionBusy) {
+        compositionBusy = false;
+        compositionStatus.textContent = `Command rejected: ${message.error || 'unknown error'}`;
+        updateControls();
       } else if (message.type === 'ack' &&
                  (message.command === 'key-down' || message.command === 'key-up')) {
         const key = message.key;
@@ -196,16 +381,36 @@
       }
     };
     socket.onclose = () => {
-      controller = false; simulator = false; clearHeld(); updateControls();
+      controller = false; simulator = false; compositionBusy = false; clearHeld(); updateControls();
       setStatus('Disconnected; retrying...'); clearTimeout(reconnectTimer); reconnectTimer = setTimeout(connect, 1000);
     };
   }
   acquire.onclick = () => send({command: 'acquire'});
   release.onclick = () => { send({command: 'release'}); controller = false; held.clear(); updateControls(); };
-  pluginUpload.onclick = uploadPlugin;
-  simulatorRestart.onclick = restartSimulator;
-  pluginAssign.onclick = assignPlugin;
-  pluginExecute.onclick = executePlugin;
+  mtpRefresh.onclick = refreshMtpDirectory;
+  mtpStorage.onchange = () => {
+    mtpCurrentPath = '';
+    mtpPathLabel.textContent = `/${mtpStorage.value}`;
+    updateControls(); refreshMtpDirectory();
+  };
+  mtpUp.onclick = () => {
+    mtpCurrentPath = mtpCurrentPath.split('/').slice(0, -1).join('/');
+    updateControls(); refreshMtpDirectory();
+  };
+  mtpUpload.onclick = () => uploadMtpFile(mtpFile.files[0]);
+  mtpFile.onchange = updateControls;
+  mtpCancel.onclick = () => {
+    if (mtpActiveRequestId !== null) send({command: 'mtp-cancel', requestId: mtpActiveRequestId});
+    if (mtpAbortController) mtpAbortController.abort();
+  };
+  mtpDropzone.addEventListener('dragover', event => {
+    event.preventDefault(); mtpDropzone.classList.add('drag-over');
+  });
+  mtpDropzone.addEventListener('dragleave', () => mtpDropzone.classList.remove('drag-over'));
+  mtpDropzone.addEventListener('drop', event => {
+    event.preventDefault(); mtpDropzone.classList.remove('drag-over');
+    uploadMtpFile(event.dataTransfer.files[0]);
+  });
   deviceDockButtons.forEach(button => {
     button.onclick = () => dockDevice(Number(button.dataset.dockPort));
   });

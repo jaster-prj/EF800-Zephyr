@@ -9,18 +9,22 @@ never format a failed filesystem mount.
 
 ## Compatibility Contract
 
-The legacy logical layout is retained:
+The legacy logical settings and Workspace behavior are retained, but their new
+storage ownership is split:
 
 ```text
-configuration: .workspace, time settings, port assignments, device settings
-data:          <workspace-name>.dat
+Configuration FAT: .configuration, time settings, port assignments,
+                   serial settings, target composition, and workspace selection
+Shared Data FAT:    <workspace-name>.dat, data, plugins, and fwu
 ```
 
-On Zephyr these roots are mounted below `/EF800:`:
+On Zephyr the filesystem roots are:
 
 ```text
 /EF800:/.configuration/
-/EF800:/data/
+/DATA:/data/
+/DATA:/plugins/
+/DATA:/fwu/
 ```
 
 Workspace files use the `.dat` suffix. The `.workspace` file contains the
@@ -49,17 +53,36 @@ implementation plan item:
   behavior.
 - MainApplication Workspace and Position UI, including storage-unavailable
   handling and fixed-point millimetre records.
+- Bounded row scanning and selection for `Show Measurements`, raw-text editing
+  capped at 255 bytes, confirmed deletion of any row, and CR/LF/CRLF ending
+  preservation.
+- Same-volume staged Workspace replacement with alternating checksummed
+  recovery-journal slots, backup/rollback, bounded streaming, startup recovery,
+  and MTP source-version conflict checks.
 - Versioned/checksummed timezone, port-assignment, boot-metadata, and serial
   configuration records.
-- Boot metadata is stored as NVS value ID 1 in the fixed internal-flash
-  `metadata_partition`, with NVS data CRC enabled in both images.
+- Boot metadata is stored as NVS value ID 1 in the 32 KiB external-QSPI
+  boot-state partition, with NVS data CRC enabled in Bootloader and
+  MainApplication. Internal flash contains only the 64 KiB Bootloader,
+  128 KiB BackupApplication, and 832 KiB MainApplication regions.
+- Port assignments and composition profiles stay in Configuration FAT; they
+  are not mirrored into boot-state NVS.
 - Connection-aware routing, UART ownership validation, console fallback, and
   MainApplication measurement integration.
 - Explicit legacy Mbed readers, preflight validation, read-back verification,
   duplicate DebugDevice rejection, and preservation of malformed source data.
 
-The compatibility contract remains normative. Physical QSPI/FAT behavior and a
-production Mbed file dump are still open validation tasks.
+The compatibility contract remains normative. Physical QSPI partition geometry,
+existing-media migration, power-loss behavior, and a production Mbed file dump
+remain open validation tasks. A failed mount never authorizes formatting or
+in-place repartitioning.
+
+Workspace edits use optimistic MTP conflict detection: the source is checked
+immediately before promotion, but the pinned MTP implementation has no shared
+mutation gate, leaving a narrow race after that check. Zephyr FAT `fs_sync`
+flushes file contents but provides no directory-sync operation, so native
+transaction recovery tests do not qualify rename metadata durability during a
+physical power loss. Keep that behavior release-gated until target qualification.
 
 ## Active plan: controlled hardware and persistence validation
 
@@ -78,8 +101,11 @@ production Mbed file dump are still open validation tasks.
 - After the debug gate passes, flash the normal bootloader at `0x08000000`,
   BackupApplication at `0x08010000`, and MainApplication at `0x08030000`; flash
   the keyboard controller separately.
-- Keep the USB host disconnected because BackupApplication currently exposes
-  the unverified QSPI disk through MSC.
+- Do not use MSC/raw-sector access for recovery volumes. MainApplication and
+  BackupApplication expose approved filesystem roots through separate MTP
+  personalities; the shared-data FAT still has one filesystem owner at a time.
+  Physical QSPI qualification remains required before using this path on a
+  production target.
 
 The first connected STM32L496 engineering target was handled separately from
 the normal first-flash procedure: its legacy captures were checked, its option
@@ -102,33 +128,35 @@ the current state in `docs/migration-status.md`.
   resources from the schematic before adding or enabling their DeviceTree
   descriptions.
 
-### Internal boot metadata storage
+### External-QSPI boot metadata storage
 
-The fixed `metadata_partition` at `0x08028000`, size `0x8000`, is an NVS
-partition. The complete encoded boot metadata record remains one value under
-ID 1; its version, size, sequence, and payload CRC remain part of the record.
-NVS supplies record allocation, sector rotation, and recovery of interrupted
-garbage collection. The old raw 40-byte record at partition offset zero is not
-an NVS record, so a format transition creates default metadata unless a
-separate migration preserves it. Both images use the shared NVS reader and no
-code reads `0x08028000` directly.
+The fixed QSPI partition at offset `0x000000`, size `0x008000`, is the NVS
+boot-state store. The complete encoded record remains one value under ID 1; its
+version, size, sequence, and payload CRC remain part of the record. NVS supplies
+record allocation, sector rotation, and recovery of interrupted garbage
+collection. Missing or invalid boot-state records reset only this NVS region;
+FAT volumes are never formatted as a side effect. Bootloader and MainApplication
+use the shared NVS reader, and no code reads the former internal metadata
+address directly.
 
-The metadata partition is reserved for small bounded records. Workspace and
-measurement data remain on QSPI/FAT when that hardware path is explicitly
-enabled.
+The boot-state partition is reserved for small bounded records. Configuration
+records remain on Configuration FAT; Workspace and user data remain on Shared
+Data FAT.
 
 ### Phase 3: QSPI/FAT and USB ownership
 
-The QSPI/FAT and MSC paths are compiled into Bootloader and MainApplication.
-Before enabling them on a target, verify:
+The QSPI NVS and both FAT volumes are compiled into Bootloader,
+BackupApplication, and MainApplication. Backup recovery uses file-level MTP, not
+raw MSC, for mounted filesystems. Before using these paths on a target, verify:
 
 - Confirm the identified `IS25LP032D-JTLE-TR` against JEDEC ID or SFDP.
 - Confirm capacity, erase geometry, program size, and maximum frequency.
 - Confirm that the existing FAT volume is readable.
-- Verify `.configuration` and `data` directory behavior.
+- Verify Configuration FAT at `0x008000` and Shared Data FAT at `0x100000`,
+  including `.configuration`, `data`, `plugins`, and `fwu` directory behavior.
 - Verify that mount failure does not format the volume.
-- Verify that MainApplication FAT access and backup USB MSC access are mutually
-  exclusive.
+- Verify that Configuration/Data FAT access is through the owning application
+  and approved MTP roots; never expose NVS or raw flash sectors.
 - Exercise power loss around writes, appends, metadata updates, and deletes.
 
 ### Phase 4: Production data migration
@@ -160,4 +188,8 @@ Every phase must pass:
 
 Persistence tests must cover missing files, malformed `.workspace`, CR/LF
 compatibility, invalid names, path traversal, duplicate creation, append
-behavior, deletion, list filtering, and storage-unavailable behavior.
+behavior, deletion, list filtering, and storage-unavailable behavior. Workspace
+row tests also cover mixed CR/LF/CRLF endings, empty and unterminated rows,
+255-byte edit limits, streaming large-file replacements, interrupted journal
+phases, MTP-visible artifact tampering, optimistic conflicts, and measurement
+context refresh.

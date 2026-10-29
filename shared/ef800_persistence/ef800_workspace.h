@@ -11,6 +11,19 @@
 #define EF800_WORKSPACE_EXTENSION ".dat"
 #define EF800_WORKSPACE_NAME_MAX 48U
 #define EF800_WORKSPACE_SNAPSHOT_MAX 4096U
+#define EF800_WORKSPACE_ROW_ENDING_MAX 2U
+
+struct ef800_workspace_row {
+	size_t start;
+	size_t text_end;
+	size_t end;
+	uint8_t ending_length;
+};
+
+struct ef800_workspace_version {
+	size_t size;
+	uint64_t fingerprint;
+};
 
 typedef int (*ef800_workspace_list_callback)(const char *name, void *context);
 
@@ -37,6 +50,20 @@ int ef800_workspace_read_range(const struct ef800_workspace *workspace,
 				      size_t start, size_t end, void *destination,
 				      size_t capacity, size_t *length);
 int ef800_workspace_size(const struct ef800_workspace *workspace, size_t *size);
+/* Read one logical row at an exact row-start offset. CR, LF, and CRLF end rows. */
+int ef800_workspace_row_at(const struct ef800_workspace *workspace, size_t start,
+			   struct ef800_workspace_row *row);
+/* Read the logical row immediately before an exact row-start offset. */
+int ef800_workspace_row_before(const struct ef800_workspace *workspace,
+			       size_t row_start,
+			       struct ef800_workspace_row *row);
+int ef800_workspace_get_version(const struct ef800_workspace *workspace,
+				struct ef800_workspace_version *version);
+int ef800_workspace_replace_row(struct ef800_workspace *workspace,
+				const struct ef800_workspace_version *expected_version,
+				const struct ef800_workspace_row *row,
+				const void *replacement, size_t replacement_length,
+				bool delete_row);
 bool ef800_workspace_line_is_position(const char *line);
 int ef800_workspace_list(struct ef800_workspace *workspace,
 			const ef800_workspace_list_callback callback, void *context);

@@ -99,10 +99,6 @@
 	};
 };
 
-&qspi_storage_partition {
-	reg = <0x00000000 DT_SIZE_M(4)>;
-};
-
 /* The debug image owns the parallel T6963 during display bring-up. */
 / {
 	zephyr,user {

@@ -10,7 +10,7 @@
 #include <zephyr/usb/class/usbd_msc.h>
 #include <zephyr/usb/usbd.h>
 
-#define EF800_MAIN_DISK_NAME "EF800"
+#define EF800_MAIN_DISK_NAME "DATA"
 #define EF800_MAIN_USB_UDC_NODE DT_NODELABEL(usbotg_fs)
 
 BUILD_ASSERT(DT_NODE_HAS_STATUS(EF800_MAIN_USB_UDC_NODE, okay),

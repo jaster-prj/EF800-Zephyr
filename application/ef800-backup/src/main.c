@@ -1,17 +1,69 @@
 /* SPDX-License-Identifier: Apache-2.0 */
 
 #include <stdbool.h>
+#include <errno.h>
 
+#include <ff.h>
 #include <zephyr/device.h>
 #include <zephyr/devicetree.h>
+#include <zephyr/fs/fs.h>
 #include <zephyr/kernel.h>
-#include <zephyr/storage/disk_access.h>
+#include <zephyr/logging/log.h>
+#include <zephyr/storage/flash_map.h>
 
 #include "ef800_watchdog.h"
 #include "ef800_console.h"
+#include "ef800_qspi_layout.h"
+#include "ef800_backup_usb_mtp.h"
+#include "ef800_backup_composition.h"
+#include "ef800_lcd_contrast.h"
+#include "ef800_lcd_contrast_storage.h"
+#include "ef800_lcd_contrast_stm32.h"
+
+LOG_MODULE_REGISTER(ef800_backup, LOG_LEVEL_INF);
+
+#define EF800_BACKUP_CONFIGURATION_MOUNT "/EF800:"
+#define EF800_BACKUP_DATA_MOUNT "/DATA:"
 
 static K_THREAD_STACK_DEFINE(watchdog_stack, 512);
 static struct k_thread watchdog_thread;
+static FATFS configuration_fat_fs;
+static FATFS data_fat_fs;
+static struct fs_mount_t configuration_mount = {
+	.type = FS_FATFS,
+	.mnt_point = EF800_BACKUP_CONFIGURATION_MOUNT,
+	.fs_data = &configuration_fat_fs,
+	.storage_dev = (void *)PARTITION_ID(qspi_configuration_partition),
+	.flags = FS_MOUNT_FLAG_NO_FORMAT,
+};
+static struct fs_mount_t data_mount = {
+	.type = FS_FATFS,
+	.mnt_point = EF800_BACKUP_DATA_MOUNT,
+	.fs_data = &data_fat_fs,
+	.storage_dev = (void *)PARTITION_ID(qspi_storage_partition),
+	.flags = FS_MOUNT_FLAG_NO_FORMAT,
+};
+static struct ef800_lcd_contrast lcd_contrast;
+
+static int backup_contrast_set_pwm(void *context, uint8_t duty_percent)
+{
+	ARG_UNUSED(context);
+	return ef800_lcd_contrast_stm32_set(duty_percent);
+}
+
+static void backup_contrast_diagnostic(void *context, const char *message,
+				       int error)
+{
+	ARG_UNUSED(context);
+	LOG_WRN("%s: %d", message, error);
+}
+
+static const struct ef800_lcd_contrast_ops backup_contrast_ops = {
+	.load_duty = ef800_lcd_contrast_storage_load_duty,
+	.save_duty = ef800_lcd_contrast_storage_save_duty,
+	.set_pwm = backup_contrast_set_pwm,
+	.diagnostic = backup_contrast_diagnostic,
+};
 
 static void backup_watchdog_task(void *arg1, void *arg2, void *arg3)
 {
@@ -35,95 +87,117 @@ static void backup_watchdog_start(void)
 				      backup_watchdog_task, NULL, NULL, NULL,
 				      K_PRIO_PREEMPT(2), 0, K_NO_WAIT);
 }
-#if CONFIG_EF800_BACKUP_USB_MSC
-#include <zephyr/usb/class/usbd_msc.h>
-#include <zephyr/usb/usbd.h>
-#endif
-
-#if CONFIG_EF800_BACKUP_USB_MSC
-#define EF800_DISK_NAME "EF800"
-
 #define EF800_USB_UDC_NODE DT_NODELABEL(usbotg_fs)
 
 BUILD_ASSERT(DT_NODE_HAS_STATUS(EF800_USB_UDC_NODE, okay),
 		     "EF800 recovery requires an enabled USB device controller");
 
-USBD_DEVICE_DEFINE(ef800_usbd,
-		   DEVICE_DT_GET(EF800_USB_UDC_NODE),
-		   CONFIG_EF800_USB_VID, CONFIG_EF800_USB_PID);
-
-USBD_DESC_LANG_DEFINE(ef800_lang);
-USBD_DESC_MANUFACTURER_DEFINE(ef800_manufacturer, "EF800");
-USBD_DESC_PRODUCT_DEFINE(ef800_product, "EF800 Recovery");
-USBD_DESC_CONFIG_DEFINE(ef800_config_desc, "Recovery MSC");
-
-static const uint8_t ef800_config_attributes =
-	(IS_ENABLED(CONFIG_EF800_USB_SELF_POWERED) ? USB_SCD_SELF_POWERED : 0U);
-
-USBD_CONFIGURATION_DEFINE(ef800_config,
-			  ef800_config_attributes,
-			  125,
-			  &ef800_config_desc);
-
-USBD_DEFINE_MSC_LUN(qspi, EF800_DISK_NAME, "EF800", "Recovery Disk", "1.00");
-
-static int ef800_usb_start(void)
+static int ensure_directory(const char *path)
 {
-	int rc;
+	struct fs_dirent entry;
+	int ret = fs_stat(path, &entry);
 
-	rc = usbd_add_descriptor(&ef800_usbd, &ef800_lang);
-	if (rc < 0) {
-		return rc;
+	if (ret == 0) {
+		return entry.type == FS_DIR_ENTRY_DIR ? 0 : -ENOTDIR;
 	}
-	rc = usbd_add_descriptor(&ef800_usbd, &ef800_manufacturer);
-	if (rc < 0) {
-		return rc;
-	}
-	rc = usbd_add_descriptor(&ef800_usbd, &ef800_product);
-	if (rc < 0) {
-		return rc;
-	}
-	rc = usbd_add_configuration(&ef800_usbd, USBD_SPEED_FS, &ef800_config);
-	if (rc < 0) {
-		return rc;
-	}
-	rc = usbd_register_all_classes(&ef800_usbd, USBD_SPEED_FS, 1, NULL);
-	if (rc < 0) {
-		return rc;
-	}
-	rc = usbd_init(&ef800_usbd);
-	if (rc < 0) {
-		return rc;
-	}
-
-	return usbd_enable(&ef800_usbd);
+	ret = fs_mkdir(path);
+	return ret == -EEXIST ? 0 : ret;
 }
-#endif /* CONFIG_EF800_BACKUP_USB_MSC */
+
+static int create_recovery_roots(void)
+{
+	static const char *const paths[] = {
+		"/EF800:/.configuration",
+		"/DATA:/data",
+		"/DATA:/plugins",
+		"/DATA:/fwu",
+	};
+
+	for (size_t index = 0U; index < ARRAY_SIZE(paths); ++index) {
+		int ret = ensure_directory(paths[index]);
+
+		if (ret != 0) {
+			LOG_ERR("Cannot prepare MTP root %s: %d", paths[index], ret);
+			return ret;
+		}
+	}
+	return 0;
+}
 
 int main(void)
 {
+	const struct device *const udc = DEVICE_DT_GET(EF800_USB_UDC_NODE);
+	const struct flash_area *data_area;
+	bool legacy_layout;
+	bool configuration_mounted = false;
+	bool data_mounted = false;
+	int ret;
+
 	(void)ef800_console_init(true);
 	printk("ef800 backup application: console=%u\r\n",
 	       ef800_console_get_target());
 	backup_watchdog_start();
-#if CONFIG_EF800_BACKUP_USB_MSC
-	const struct device *const udc = DEVICE_DT_GET(EF800_USB_UDC_NODE);
-	int rc;
 
 	if (!device_is_ready(udc)) {
-		return 0;
+		LOG_ERR("USB device controller unavailable; recovery MTP not started");
+		goto wait;
+	}
+	ret = flash_area_open(PARTITION_ID(qspi_storage_partition), &data_area);
+	if (ret != 0) {
+		LOG_ERR("Shared-data QSPI partition unavailable: %d", ret);
+		goto wait;
+	}
+	ret = ef800_qspi_layout_check_legacy(data_area->fa_dev, &legacy_layout);
+	if (ret != 0 || legacy_layout) {
+		LOG_ERR("Legacy or unavailable QSPI layout; recovery MTP not started: %d",
+			ret != 0 ? ret : -ENOTSUP);
+		goto wait;
+	}
+	ret = fs_mount(&configuration_mount);
+	if (ret != 0) {
+		LOG_ERR("Configuration FAT mount failed (no format attempted): %d", ret);
+		goto wait;
+	}
+	configuration_mounted = true;
+	ret = fs_mount(&data_mount);
+	if (ret != 0) {
+		LOG_ERR("Shared-data FAT mount failed (no format attempted): %d", ret);
+		goto cleanup;
+	}
+	data_mounted = true;
+	ret = create_recovery_roots();
+	if (ret != 0) {
+		goto cleanup;
+	}
+	{
+		enum ef800_lcd_contrast_mode mode;
+
+		ret = ef800_backup_composition_lcd_contrast_mode(&mode);
+		if (ret == 0) {
+			ret = ef800_lcd_contrast_init(&lcd_contrast, mode,
+				&backup_contrast_ops, NULL);
+		}
+		if (ret != 0) {
+			LOG_WRN("Backup LCD contrast initialization failed: %d", ret);
+		}
+	}
+	ret = ef800_backup_usb_mtp_start();
+	if (ret != 0) {
+		LOG_ERR("Recovery MTP start failed: %d", ret);
+		goto cleanup;
+	}
+	LOG_INF("Backup recovery MTP active: Configuration, Data, Plugins, FWU");
+	goto wait;
+
+cleanup:
+	if (data_mounted) {
+		(void)fs_unmount(&data_mount);
+	}
+	if (configuration_mounted) {
+		(void)fs_unmount(&configuration_mount);
 	}
 
-	/* MSC owns the disk. Do not call fs_mount() in this application. */
-	(void)disk_access_init(EF800_DISK_NAME);
-	(void)disk_access_status(EF800_DISK_NAME);
-
-	rc = ef800_usb_start();
-	if (rc < 0) {
-		return 0;
-	}
-#endif
-
+wait:
 	while (true) {
 		k_sleep(K_FOREVER);
 	}

@@ -33,6 +33,29 @@ but only one explicit controller can send keypad events. Stop with:
 docker compose -f docker-compose.virtual-ef800.yml down
 ```
 
+## MainApplication MTP file view
+
+The browser file panel lists only MainApplication's named `Data`, `Plugins`,
+and `FWU` MTP storages. It does not expose Configuration, NVS, or raw flash.
+On a clean virtual image, select MainApplication's USB MTP personality:
+
+1. Acquire keypad control.
+2. From Main menu, press `e` for Settings, then `p` for Port assignment.
+3. Select USB Port `4`, select device `m` (USB MTP), then choose the USB MTP
+   connection in the connection list and press Enter.
+
+The browser then lists folders, downloads files, and accepts drag-and-drop or
+file-picker uploads into the current directory. The gateway rejects absolute or
+traversal paths and limits each browser file to 32 KiB. Transfers use bounded
+simulator messages, the in-process Zephyr USB host, the native-sim virtual UHC
+and UDC, and MainApplication's production device-next MTP class. The browser
+gateway does not read or write the simulator filesystem directly. Progress,
+completion, failure, and cancellation are surfaced in the file panel; a
+download is offered only after byte count and checksum verification.
+
+This verifies behavioral native-sim MTP flow only. It is not physical USB, QSPI
+qualification, or a request to flash a target.
+
 ## MainApplication diagnostics
 
 The browser front panel includes a bounded **MainApplication logs** panel for the
@@ -52,26 +75,20 @@ These logs are native-sim behavioral diagnostics only. They do not qualify physi
 console routing, STM32 behavior, ARM package loading, MPU containment, electrical
 timing, or fitted peripheral wiring.
 
-## Native-sim plugin upload
+## Native-sim plugins and virtual devices
 
-The browser deployment accepts native-sim `.PMP` packages without switching
-USB mode. Uploading is bounded and writes through the simulator control
-connection into the virtual FAT `/plugins` directory. A successful upload does
-not hot-load code; use the separate **Restart simulator** action to activate it
-through normal startup discovery.
+Upload native-sim measurement `.PMP` files through the MTP file panel by
+selecting the `Plugins` storage. The same 32 KiB browser transfer limit,
+relative-path checks, virtual USB host, and production MainApplication MTP class
+apply. Plugin discovery is startup-only; upload does not hot-load code. Request
+a simulator restart separately to make new packages available to normal startup
+discovery.
 
-The local gateway endpoints are:
-
-```text
-POST /api/plugins
-POST /api/simulator/restart
-POST /api/devices/<1|2>
-```
-
-Only native-sim packages are accepted. Physical ARM packages remain separate
-artifacts and are rejected by the native package target/loader. Virtual device
-profiles configure bounded serial response bytes, delay, availability, and
-errors for docked plugin-port tests.
+The gateway keeps `POST /api/simulator/restart` for scripted activation and
+`POST /api/devices/<1|2>` for bounded virtual serial profiles. The legacy
+`POST /api/plugins` package-upload endpoint remains for API compatibility, but
+the browser no longer has a separate plugin-management panel. Only native-sim
+packages are accepted; physical ARM packages remain separate artifacts.
 
 The `native_sim` executable is built as a dynamically linked ELF 32-bit i386
 Linux binary inside `EF800_Devcontainer`. The runtime uses the matching

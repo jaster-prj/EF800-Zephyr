@@ -7,8 +7,11 @@ sys.path.insert(0, str(Path(__file__).parent))
 from protocol import (FRAME_SIZE, FrameParser, LOG_GAP, LOG_REPLAY,
                        MSG_ACK, MSG_CAPABILITIES, MSG_KEY_DOWN, MSG_LCD_FRAME,
                        MSG_LOG_RECORD, ProtocolError, decode_lcd_frame,
-                       decode_log_record, encode_log_record, encode_message,
-                       lcd_payload)
+                        decode_log_record, encode_log_record, encode_message,
+                        lcd_payload, MSG_COMPOSITION_CONTROL,
+                        encode_composition_control, decode_composition_control,
+                        decode_composition_result, COMPOSITION_RESULT,
+                        decode_composition_state)
 
 
 class VirtualFrontPanelTests(unittest.TestCase):
@@ -41,11 +44,17 @@ class VirtualFrontPanelTests(unittest.TestCase):
             parser.feed(encode_message(MSG_ACK)[:6] + b"\xff\xff" + encode_message(MSG_ACK)[8:])
 
     def test_lcd_payload_round_trip(self):
-        payload = lcd_payload(7, bytes(FRAME_SIZE), ["Main menu"] + [""] * 7)
+        payload = lcd_payload(7, bytes(FRAME_SIZE))
+        self.assertEqual(len(payload), 4 + FRAME_SIZE)
         decoded = decode_lcd_frame(payload)
         self.assertEqual(decoded["sequence"], 7)
         self.assertEqual(decoded["pixels"], bytes(FRAME_SIZE))
-        self.assertEqual(decoded["text"][0], "Main menu")
+        self.assertNotIn("text", decoded)
+
+    def test_lcd_decoder_rejects_legacy_text_row_payload(self):
+        legacy_payload = lcd_payload(7, bytes(FRAME_SIZE)) + bytes(8 * 41)
+        with self.assertRaises(ProtocolError):
+            decode_lcd_frame(legacy_payload)
 
     def test_protocol_message_types(self):
         data = encode_message(MSG_CAPABILITIES, b"lcd=virtual") + encode_message(MSG_LCD_FRAME, lcd_payload(1, bytes(FRAME_SIZE)))
@@ -71,6 +80,30 @@ class VirtualFrontPanelTests(unittest.TestCase):
         payload[0] = 9
         with self.assertRaises(ProtocolError):
             decode_log_record(payload)
+
+    def test_composition_control_is_bounded_and_round_trips(self):
+        payload = encode_composition_control(19, "LCDCONTR", "LCDCONTR1")
+        self.assertEqual(decode_composition_control(payload), {
+            "requestId": 19, "group": "LCDCONTR", "token": "LCDCONTR1"})
+        frame = FrameParser().feed(encode_message(MSG_COMPOSITION_CONTROL, payload))
+        self.assertEqual(frame[0][0], MSG_COMPOSITION_CONTROL)
+        with self.assertRaises(ProtocolError):
+            encode_composition_control(0, "LCDCONTR", "LCDCONTR1")
+        with self.assertRaises(ProtocolError):
+            encode_composition_control(1, "LCDCONTR", "lowercase")
+        with self.assertRaises(ProtocolError):
+            decode_composition_control(payload[:-1])
+
+    def test_composition_result_and_state_validation(self):
+        result = decode_composition_result(COMPOSITION_RESULT.pack(4, 1, -114))
+        self.assertEqual(result, {"requestId": 4, "accepted": False, "error": -114})
+        state = decode_composition_state(b'{"type":"composition","version":1,"available":true,"restartRequired":false,"groups":[{"id":"LCDCONTR","active":"LCDCONTR0","selected":"LCDCONTR1","options":[{"token":"LCDCONTR0","default":true},{"token":"LCDCONTR1","default":false}]}]}')
+        self.assertTrue(state["available"])
+        self.assertEqual(state["groups"][0]["selected"], "LCDCONTR1")
+        with self.assertRaises(ProtocolError):
+            decode_composition_result(COMPOSITION_RESULT.pack(0, 0, 0))
+        with self.assertRaises(ProtocolError):
+            decode_composition_state(b'{"type":"composition","version":1,"available":true,"restartRequired":false,"groups":[{"id":"LCDCONTR","active":"LCDCONTR9","selected":"LCDCONTR1","options":[{"token":"LCDCONTR0","default":true},{"token":"LCDCONTR1","default":false}]}]}')
 
 
 if __name__ == "__main__":

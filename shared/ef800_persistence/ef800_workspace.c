@@ -8,6 +8,9 @@
 #include <string.h>
 
 #include <zephyr/kernel.h>
+#include <zephyr/sys/byteorder.h>
+
+static int workspace_transaction_recover(struct ef800_workspace *workspace);
 
 static bool has_suffix(const char *value, const char *suffix)
 {
@@ -195,6 +198,11 @@ int ef800_workspace_load_current(struct ef800_workspace *workspace)
 	if (ret != 0) {
 		return ret;
 	}
+	ret = workspace_transaction_recover(workspace);
+	if (ret != 0) {
+		workspace->selected = false;
+		return ret;
+	}
 	ret = ef800_persistence_stat(workspace->storage, EF800_PERSISTENCE_DATA,
 					 workspace->filename, &entry);
 	if (ret != 0) {
@@ -211,6 +219,7 @@ int ef800_workspace_load_current(struct ef800_workspace *workspace)
 
 int ef800_workspace_create(struct ef800_workspace *workspace, const char *name)
 {
+	struct ef800_workspace candidate;
 	struct ef800_persistence_entry entry;
 	char filename[sizeof(workspace->filename)];
 	int ret;
@@ -219,6 +228,15 @@ int ef800_workspace_create(struct ef800_workspace *workspace, const char *name)
 		return -EINVAL;
 	}
 	ret = make_filename(name, filename, sizeof(filename));
+	if (ret != 0) {
+		return ret;
+	}
+	candidate = *workspace;
+	ret = select_filename(&candidate, filename, strlen(filename));
+	if (ret != 0) {
+		return ret;
+	}
+	ret = workspace_transaction_recover(&candidate);
 	if (ret != 0) {
 		return ret;
 	}
@@ -250,6 +268,7 @@ int ef800_workspace_create(struct ef800_workspace *workspace, const char *name)
 
 int ef800_workspace_select(struct ef800_workspace *workspace, const char *name)
 {
+	struct ef800_workspace candidate;
 	struct ef800_persistence_entry entry;
 	char filename[sizeof(workspace->filename)];
 	int ret;
@@ -258,6 +277,15 @@ int ef800_workspace_select(struct ef800_workspace *workspace, const char *name)
 		return -EINVAL;
 	}
 	ret = make_filename(name, filename, sizeof(filename));
+	if (ret != 0) {
+		return ret;
+	}
+	candidate = *workspace;
+	ret = select_filename(&candidate, filename, strlen(filename));
+	if (ret != 0) {
+		return ret;
+	}
+	ret = workspace_transaction_recover(&candidate);
 	if (ret != 0) {
 		return ret;
 	}
@@ -273,11 +301,9 @@ int ef800_workspace_select(struct ef800_workspace *workspace, const char *name)
 	if (ret != 0) {
 		return ret;
 	}
-	ret = select_filename(workspace, filename, strlen(filename));
-	if (ret == 0) {
-		workspace_extract_context(workspace);
-	}
-	return ret;
+	*workspace = candidate;
+	workspace_extract_context(workspace);
+	return 0;
 }
 
 int ef800_workspace_delete_selected(struct ef800_workspace *workspace)
@@ -390,6 +416,850 @@ int ef800_workspace_size(const struct ef800_workspace *workspace, size_t *size)
 		return -EISDIR;
 	}
 	*size = entry.size;
+	return 0;
+}
+
+#define WORKSPACE_ROW_SCAN_CHUNK 128U
+#define WORKSPACE_EDIT_COPY_CHUNK 256U
+#define WORKSPACE_TXN_RECORD_SIZE 48U
+#define WORKSPACE_TXN_RECORD_CHECKSUM_OFFSET 44U
+
+enum workspace_transaction_phase {
+	WORKSPACE_TXN_PREPARED = 1U,
+	WORKSPACE_TXN_BACKED_UP = 2U,
+	WORKSPACE_TXN_COMMITTED = 3U,
+};
+
+struct workspace_transaction {
+	uint32_t generation;
+	enum workspace_transaction_phase phase;
+	size_t old_size;
+	uint64_t old_fingerprint;
+	size_t new_size;
+	uint64_t new_fingerprint;
+};
+
+int ef800_workspace_row_at(const struct ef800_workspace *workspace, size_t start,
+			   struct ef800_workspace_row *row)
+{
+	uint8_t buffer[WORKSPACE_ROW_SCAN_CHUNK];
+	size_t file_size;
+	size_t offset;
+	int ret;
+
+	if (row == NULL) {
+		return -EINVAL;
+	}
+	ret = ef800_workspace_size(workspace, &file_size);
+	if (ret != 0) {
+		return ret;
+	}
+	if (start >= file_size) {
+		return -ENOENT;
+	}
+
+	row->start = start;
+	row->text_end = file_size;
+	row->end = file_size;
+	row->ending_length = 0U;
+	for (offset = start; offset < file_size;) {
+		size_t requested = MIN(sizeof(buffer), file_size - offset);
+		size_t length;
+
+		ret = ef800_workspace_read_range(workspace, offset, offset + requested,
+						 buffer, sizeof(buffer), &length);
+		if (ret != 0) {
+			return ret;
+		}
+		if (length != requested) {
+			return -EIO;
+		}
+		for (size_t index = 0U; index < length; ++index) {
+			uint8_t character = buffer[index];
+			size_t delimiter = offset + index;
+
+			if (character == '\n') {
+				row->text_end = delimiter;
+				row->end = delimiter + 1U;
+				row->ending_length = 1U;
+				return 0;
+			}
+			if (character == '\r') {
+				bool followed_by_lf = false;
+
+				if (delimiter + 1U < file_size) {
+					if (index + 1U < length) {
+						followed_by_lf = buffer[index + 1U] == '\n';
+					} else {
+						uint8_t next;
+					size_t next_length;
+
+						ret = ef800_workspace_read_range(workspace,
+							delimiter + 1U, delimiter + 2U, &next, 1U,
+							&next_length);
+						if (ret != 0) {
+							return ret;
+						}
+						if (next_length != 1U) {
+							return -EIO;
+						}
+						followed_by_lf = next == '\n';
+					}
+				}
+				row->text_end = delimiter;
+				row->ending_length = followed_by_lf ? 2U : 1U;
+				row->end = delimiter + row->ending_length;
+				return 0;
+			}
+		}
+		offset += length;
+	}
+	return 0;
+}
+
+int ef800_workspace_row_before(const struct ef800_workspace *workspace,
+			       size_t row_start,
+			       struct ef800_workspace_row *row)
+{
+	uint8_t buffer[WORKSPACE_ROW_SCAN_CHUNK];
+	size_t file_size;
+	size_t delimiter_start;
+	size_t search_end;
+	size_t row_start_offset = 0U;
+	uint8_t previous;
+	size_t length;
+	int ret;
+
+	if (row == NULL) {
+		return -EINVAL;
+	}
+	ret = ef800_workspace_size(workspace, &file_size);
+	if (ret != 0) {
+		return ret;
+	}
+	if (row_start == 0U || row_start > file_size) {
+		return -ENOENT;
+	}
+	ret = ef800_workspace_read_range(workspace, row_start - 1U, row_start,
+					 &previous, 1U, &length);
+	if (ret != 0) {
+		return ret;
+	}
+	if (length != 1U) {
+		return -EIO;
+	}
+	if (previous == '\n') {
+		delimiter_start = row_start - 1U;
+		if (delimiter_start > 0U) {
+			ret = ef800_workspace_read_range(workspace, delimiter_start - 1U,
+							 delimiter_start, &previous, 1U,
+							 &length);
+			if (ret != 0) {
+				return ret;
+			}
+			if (length != 1U) {
+				return -EIO;
+			}
+			if (previous == '\r') {
+				--delimiter_start;
+			}
+		}
+	} else if (previous == '\r') {
+		delimiter_start = row_start - 1U;
+	} else {
+		return -EINVAL;
+	}
+
+	search_end = delimiter_start;
+	while (search_end > 0U) {
+		size_t chunk_start = search_end > sizeof(buffer) ?
+			search_end - sizeof(buffer) : 0U;
+
+		ret = ef800_workspace_read_range(workspace, chunk_start, search_end,
+						 buffer, sizeof(buffer), &length);
+		if (ret != 0) {
+			return ret;
+		}
+		if (length != search_end - chunk_start) {
+			return -EIO;
+		}
+		for (size_t index = length; index > 0U; --index) {
+			if (buffer[index - 1U] == '\r' || buffer[index - 1U] == '\n') {
+				row_start_offset = chunk_start + index;
+				search_end = 0U;
+				break;
+			}
+		}
+		if (search_end != 0U) {
+			search_end = chunk_start;
+		}
+	}
+
+	row->start = row_start_offset;
+	row->text_end = delimiter_start;
+	row->end = row_start;
+	row->ending_length = (uint8_t)(row_start - delimiter_start);
+	return 0;
+}
+
+static int workspace_edit_artifact_name(const struct ef800_workspace *workspace,
+					const char *suffix, char *name,
+					size_t capacity)
+{
+	int length;
+
+	if (workspace == NULL || !workspace->selected || suffix == NULL ||
+	    name == NULL || capacity == 0U) {
+		return -EINVAL;
+	}
+	length = snprintk(name, capacity, ".ef800-edit-%s-%s",
+			  workspace->name, suffix);
+	return length < 0 || (size_t)length >= capacity ? -ENAMETOOLONG : 0;
+}
+
+static uint64_t workspace_fingerprint_update(uint64_t fingerprint,
+					     const uint8_t *bytes, size_t length)
+{
+	for (size_t index = 0U; index < length; ++index) {
+		fingerprint ^= bytes[index];
+		fingerprint *= UINT64_C(1099511628211);
+	}
+	return fingerprint;
+}
+
+static int workspace_file_fingerprint(struct ef800_persistence *storage,
+				      const char *filename, size_t *file_size,
+				      uint64_t *fingerprint)
+{
+	uint8_t buffer[WORKSPACE_EDIT_COPY_CHUNK];
+	struct ef800_persistence_entry entry;
+	size_t offset = 0U;
+	uint64_t hash = UINT64_C(14695981039346656037);
+	int ret;
+
+	if (storage == NULL || filename == NULL || file_size == NULL ||
+	    fingerprint == NULL) {
+		return -EINVAL;
+	}
+	ret = ef800_persistence_stat(storage, EF800_PERSISTENCE_DATA, filename, &entry);
+	if (ret != 0) {
+		return ret;
+	}
+	if (entry.type != EF800_PERSISTENCE_FILE) {
+		return -EISDIR;
+	}
+	while (offset < entry.size) {
+		size_t requested = MIN(sizeof(buffer), entry.size - offset);
+		size_t length;
+
+		ret = ef800_persistence_read_range(storage, EF800_PERSISTENCE_DATA,
+			filename, offset, buffer, requested, &length);
+		if (ret != 0) {
+			return ret;
+		}
+		if (length != requested) {
+			return -EIO;
+		}
+		hash = workspace_fingerprint_update(hash, buffer, length);
+		offset += length;
+	}
+	*file_size = entry.size;
+	*fingerprint = hash;
+	return 0;
+}
+
+int ef800_workspace_get_version(const struct ef800_workspace *workspace,
+				struct ef800_workspace_version *version)
+{
+	if (workspace == NULL || workspace->storage == NULL ||
+	    version == NULL || !workspace->selected) {
+		return workspace != NULL && workspace->storage != NULL &&
+		       !workspace->selected ? -ENODEV : -EINVAL;
+	}
+	return workspace_file_fingerprint(workspace->storage, workspace->filename,
+					  &version->size, &version->fingerprint);
+}
+
+static void workspace_transaction_encode(const struct workspace_transaction *txn,
+					uint8_t bytes[WORKSPACE_TXN_RECORD_SIZE])
+{
+	memset(bytes, 0, WORKSPACE_TXN_RECORD_SIZE);
+	memcpy(bytes, "WSE1", 4U);
+	sys_put_le32(txn->generation, &bytes[4]);
+	bytes[8] = (uint8_t)txn->phase;
+	sys_put_le64((uint64_t)txn->old_size, &bytes[12]);
+	sys_put_le64(txn->old_fingerprint, &bytes[20]);
+	sys_put_le64((uint64_t)txn->new_size, &bytes[28]);
+	sys_put_le64(txn->new_fingerprint, &bytes[36]);
+	sys_put_le32(ef800_crc32(bytes, WORKSPACE_TXN_RECORD_CHECKSUM_OFFSET),
+		     &bytes[WORKSPACE_TXN_RECORD_CHECKSUM_OFFSET]);
+}
+
+static int workspace_transaction_decode(const uint8_t *bytes, size_t length,
+					struct workspace_transaction *txn)
+{
+	uint64_t old_size;
+	uint64_t new_size;
+
+	if (bytes == NULL || txn == NULL || length != WORKSPACE_TXN_RECORD_SIZE ||
+	    memcmp(bytes, "WSE1", 4U) != 0 || bytes[9] != 0U || bytes[10] != 0U ||
+	    bytes[11] != 0U || sys_get_le32(&bytes[WORKSPACE_TXN_RECORD_CHECKSUM_OFFSET]) !=
+				       ef800_crc32(bytes,
+						   WORKSPACE_TXN_RECORD_CHECKSUM_OFFSET)) {
+		return -EBADMSG;
+	}
+	txn->generation = sys_get_le32(&bytes[4]);
+	txn->phase = (enum workspace_transaction_phase)bytes[8];
+	old_size = sys_get_le64(&bytes[12]);
+	new_size = sys_get_le64(&bytes[28]);
+	if (txn->generation == 0U || txn->phase < WORKSPACE_TXN_PREPARED ||
+	    txn->phase > WORKSPACE_TXN_COMMITTED || old_size > SIZE_MAX ||
+	    new_size > SIZE_MAX) {
+		return -EBADMSG;
+	}
+	txn->old_size = (size_t)old_size;
+	txn->old_fingerprint = sys_get_le64(&bytes[20]);
+	txn->new_size = (size_t)new_size;
+	txn->new_fingerprint = sys_get_le64(&bytes[36]);
+	return 0;
+}
+
+static int workspace_transaction_read_slot(struct ef800_workspace *workspace,
+					   const char *suffix,
+					   struct workspace_transaction *txn,
+					   bool *exists)
+{
+	uint8_t bytes[WORKSPACE_TXN_RECORD_SIZE];
+	char name[EF800_PERSISTENCE_MAX_NAME + 1U];
+	size_t length;
+	int ret;
+
+	ret = workspace_edit_artifact_name(workspace, suffix, name, sizeof(name));
+	if (ret != 0) {
+		return ret;
+	}
+	ret = ef800_persistence_read(workspace->storage, EF800_PERSISTENCE_DATA,
+		name, bytes, sizeof(bytes), &length);
+	if (ret == -ENOENT) {
+		*exists = false;
+		return ret;
+	}
+	*exists = true;
+	if (ret != 0) {
+		return ret;
+	}
+	return workspace_transaction_decode(bytes, length, txn);
+}
+
+static int workspace_transaction_write_slot(struct ef800_workspace *workspace,
+					    const struct workspace_transaction *txn)
+{
+	uint8_t bytes[WORKSPACE_TXN_RECORD_SIZE];
+	char suffix[4];
+	char name[EF800_PERSISTENCE_MAX_NAME + 1U];
+	int ret;
+
+	snprintk(suffix, sizeof(suffix), "j%u", (unsigned)((txn->generation - 1U) % 2U));
+	ret = workspace_edit_artifact_name(workspace, suffix, name, sizeof(name));
+	if (ret != 0) {
+		return ret;
+	}
+	workspace_transaction_encode(txn, bytes);
+	ret = ef800_persistence_write(workspace->storage, EF800_PERSISTENCE_DATA,
+		name, bytes, sizeof(bytes));
+	if (ret != 0) {
+		return ret;
+	}
+	return ef800_persistence_sync(workspace->storage, EF800_PERSISTENCE_DATA, name);
+}
+
+static int workspace_edit_remove_if_present(struct ef800_workspace *workspace,
+					    const char *suffix)
+{
+	struct ef800_persistence_entry entry;
+	char name[EF800_PERSISTENCE_MAX_NAME + 1U];
+	int ret;
+
+	ret = workspace_edit_artifact_name(workspace, suffix, name, sizeof(name));
+	if (ret != 0) {
+		return ret;
+	}
+	ret = ef800_persistence_stat(workspace->storage, EF800_PERSISTENCE_DATA,
+		name, &entry);
+	if (ret == -ENOENT) {
+		return 0;
+	}
+	if (ret != 0) {
+		return ret;
+	}
+	if (entry.type != EF800_PERSISTENCE_FILE) {
+		return -EISDIR;
+	}
+	return ef800_persistence_remove(workspace->storage,
+		EF800_PERSISTENCE_DATA, name);
+}
+
+static int workspace_edit_file_matches(struct ef800_workspace *workspace,
+				       const char *filename, size_t expected_size,
+				       uint64_t expected_fingerprint, bool *matches)
+{
+	size_t actual_size;
+	uint64_t actual_fingerprint;
+	int ret = workspace_file_fingerprint(workspace->storage, filename,
+					     &actual_size, &actual_fingerprint);
+
+	if (ret == -ENOENT) {
+		*matches = false;
+		return 0;
+	}
+	if (ret != 0) {
+		return ret;
+	}
+	*matches = actual_size == expected_size &&
+		actual_fingerprint == expected_fingerprint;
+	return 0;
+}
+
+static int workspace_edit_file_exists(struct ef800_workspace *workspace,
+				      const char *filename, bool *exists)
+{
+	struct ef800_persistence_entry entry;
+	int ret = ef800_persistence_stat(workspace->storage, EF800_PERSISTENCE_DATA,
+					 filename, &entry);
+
+	if (ret == -ENOENT) {
+		*exists = false;
+		return 0;
+	}
+	if (ret != 0) {
+		return ret;
+	}
+	if (entry.type != EF800_PERSISTENCE_FILE) {
+		return -EISDIR;
+	}
+	*exists = true;
+	return 0;
+}
+
+static int workspace_transaction_recover(struct ef800_workspace *workspace)
+{
+	struct workspace_transaction slots[2];
+	struct workspace_transaction *txn = NULL;
+	char backup_name[EF800_PERSISTENCE_MAX_NAME + 1U];
+	bool slot_exists[2] = {false, false};
+	bool slot_valid[2] = {false, false};
+	bool backup_exists;
+	bool source_exists;
+	bool source_old = false;
+	bool source_new = false;
+	bool backup_old = false;
+	int slot_result[2];
+	int ret;
+
+	if (workspace == NULL || workspace->storage == NULL || !workspace->selected) {
+		return -EINVAL;
+	}
+	ret = workspace_edit_artifact_name(workspace, "bak", backup_name,
+					   sizeof(backup_name));
+	if (ret != 0) {
+		return ret;
+	}
+	slot_result[0] = workspace_transaction_read_slot(workspace, "j0", &slots[0],
+							 &slot_exists[0]);
+	slot_result[1] = workspace_transaction_read_slot(workspace, "j1", &slots[1],
+							 &slot_exists[1]);
+	for (size_t index = 0U; index < ARRAY_SIZE(slots); ++index) {
+		if (slot_result[index] == 0) {
+			slot_valid[index] = true;
+		} else if (slot_result[index] != -ENOENT &&
+			   slot_result[index] != -EBADMSG) {
+			return slot_result[index];
+		}
+	}
+	ret = workspace_edit_file_exists(workspace, backup_name, &backup_exists);
+	if (ret != 0) {
+		return ret;
+	}
+	ret = workspace_edit_file_exists(workspace, workspace->filename, &source_exists);
+	if (ret != 0) {
+		return ret;
+	}
+	if (!slot_valid[0] && !slot_valid[1]) {
+		if (backup_exists || !source_exists) {
+			if (slot_exists[0] || slot_exists[1] || backup_exists) {
+				return -EBADMSG;
+			}
+			return 0;
+		}
+		/* No destructive rename can occur before a valid PREPARED slot. */
+		ret = workspace_edit_remove_if_present(workspace, "tmp");
+		if (ret == 0 && slot_exists[0]) {
+			ret = workspace_edit_remove_if_present(workspace, "j0");
+		}
+		if (ret == 0 && slot_exists[1]) {
+			ret = workspace_edit_remove_if_present(workspace, "j1");
+		}
+		return ret;
+	}
+	if (slot_valid[0] && slot_valid[1]) {
+		txn = slots[0].generation >= slots[1].generation ? &slots[0] : &slots[1];
+	} else {
+		txn = slot_valid[0] ? &slots[0] : &slots[1];
+	}
+	ret = workspace_edit_file_matches(workspace, workspace->filename,
+		txn->old_size, txn->old_fingerprint, &source_old);
+	if (ret != 0) {
+		return ret;
+	}
+	ret = workspace_edit_file_matches(workspace, workspace->filename,
+		txn->new_size, txn->new_fingerprint, &source_new);
+	if (ret != 0) {
+		return ret;
+	}
+	if (backup_exists) {
+		ret = workspace_edit_file_matches(workspace, backup_name,
+			txn->old_size, txn->old_fingerprint, &backup_old);
+		if (ret != 0) {
+			return ret;
+		}
+		if (!backup_old) {
+			return -EBADMSG;
+		}
+	}
+
+	switch (txn->phase) {
+	case WORKSPACE_TXN_PREPARED:
+	case WORKSPACE_TXN_BACKED_UP:
+		if (backup_exists) {
+			if (source_exists && !source_old) {
+				if (!source_new) {
+					return -EEXIST;
+				}
+				ret = ef800_persistence_remove(workspace->storage,
+					EF800_PERSISTENCE_DATA, workspace->filename);
+				if (ret != 0) {
+					return ret;
+			}
+			}
+			if (!source_old) {
+				ret = ef800_persistence_rename(workspace->storage,
+					EF800_PERSISTENCE_DATA, backup_name,
+					workspace->filename);
+				if (ret != 0) {
+					return ret;
+				}
+				backup_exists = false;
+			}
+		} else if (!source_old) {
+			return -EBADMSG;
+		}
+		break;
+	case WORKSPACE_TXN_COMMITTED:
+		if (source_exists && !source_new && !source_old) {
+			return -EEXIST;
+		}
+		if (!source_exists) {
+			if (!backup_exists || !backup_old) {
+				return -EBADMSG;
+			}
+			ret = ef800_persistence_rename(workspace->storage,
+				EF800_PERSISTENCE_DATA, backup_name, workspace->filename);
+			if (ret != 0) {
+				return ret;
+			}
+			backup_exists = false;
+		}
+		break;
+	default:
+		return -EBADMSG;
+	}
+
+	if (backup_exists) {
+		ret = workspace_edit_remove_if_present(workspace, "bak");
+		if (ret != 0) {
+			return ret;
+		}
+	}
+	ret = workspace_edit_remove_if_present(workspace, "tmp");
+	if (ret == 0) {
+		ret = workspace_edit_remove_if_present(workspace, "j0");
+	}
+	if (ret == 0) {
+		ret = workspace_edit_remove_if_present(workspace, "j1");
+	}
+	return ret;
+}
+
+static int workspace_edit_append(struct ef800_workspace *workspace,
+				 const char *temporary_name, const void *bytes,
+				 size_t length, size_t *new_size,
+				uint64_t *new_fingerprint)
+{
+	int ret;
+
+	if (length == 0U) {
+		return 0;
+	}
+	ret = ef800_persistence_append(workspace->storage, EF800_PERSISTENCE_DATA,
+		temporary_name, bytes, length);
+	if (ret != 0) {
+		return ret;
+	}
+	if (SIZE_MAX - *new_size < length) {
+		return -EOVERFLOW;
+	}
+	*new_size += length;
+	*new_fingerprint = workspace_fingerprint_update(*new_fingerprint,
+		bytes, length);
+	return 0;
+}
+
+static int workspace_edit_copy_range(struct ef800_workspace *workspace,
+				     const char *temporary_name, size_t start,
+				     size_t end, size_t *new_size,
+				     uint64_t *new_fingerprint)
+{
+	uint8_t buffer[WORKSPACE_EDIT_COPY_CHUNK];
+
+	if (end < start) {
+		return -EINVAL;
+	}
+	while (start < end) {
+		size_t requested = MIN(sizeof(buffer), end - start);
+		size_t length;
+		int ret = ef800_workspace_read_range(workspace, start, start + requested,
+						     buffer, sizeof(buffer), &length);
+
+		if (ret != 0) {
+			return ret;
+		}
+		if (length != requested) {
+			return -EIO;
+		}
+		ret = workspace_edit_append(workspace, temporary_name, buffer, length,
+					     new_size, new_fingerprint);
+		if (ret != 0) {
+			return ret;
+		}
+		start += length;
+	}
+	return 0;
+}
+
+static int workspace_transaction_commit_phase(struct ef800_workspace *workspace,
+					      struct workspace_transaction *txn,
+					      enum workspace_transaction_phase phase)
+{
+	if (txn->generation == UINT32_MAX) {
+		return -EOVERFLOW;
+	}
+	++txn->generation;
+	txn->phase = phase;
+	return workspace_transaction_write_slot(workspace, txn);
+}
+
+int ef800_workspace_replace_row(struct ef800_workspace *workspace,
+				const struct ef800_workspace_version *expected_version,
+				const struct ef800_workspace_row *row,
+				const void *replacement, size_t replacement_length,
+				bool delete_row)
+{
+	struct ef800_workspace_row current_row;
+	struct workspace_transaction txn;
+	struct ef800_persistence_entry staged_entry;
+	char temporary_name[EF800_PERSISTENCE_MAX_NAME + 1U];
+	char backup_name[EF800_PERSISTENCE_MAX_NAME + 1U];
+	uint8_t ending[EF800_WORKSPACE_ROW_ENDING_MAX];
+	size_t file_size;
+	size_t old_size;
+	size_t staged_size = 0U;
+	size_t ending_length = 0U;
+	uint64_t old_fingerprint;
+	uint64_t staged_fingerprint = UINT64_C(14695981039346656037);
+	uint64_t verified_fingerprint;
+	size_t verified_size;
+	bool journal_started = false;
+	int ret;
+
+	if (workspace == NULL || workspace->storage == NULL ||
+	    expected_version == NULL || row == NULL ||
+	    !workspace->selected || (replacement == NULL && replacement_length != 0U)) {
+		return workspace != NULL && workspace->storage != NULL &&
+		       !workspace->selected ? -ENODEV : -EINVAL;
+	}
+	if (!delete_row && replacement_length > 255U) {
+		return -EFBIG;
+	}
+	if (!delete_row) {
+		const uint8_t *characters = replacement;
+
+		for (size_t index = 0U; index < replacement_length; ++index) {
+			if (characters[index] == '\r' || characters[index] == '\n' ||
+			    characters[index] == '\0') {
+				return -EINVAL;
+			}
+		}
+	}
+	if (row->end < row->text_end || row->text_end < row->start ||
+	    row->end - row->text_end != row->ending_length ||
+	    row->ending_length > EF800_WORKSPACE_ROW_ENDING_MAX) {
+		return -EINVAL;
+	}
+	ret = workspace_transaction_recover(workspace);
+	if (ret != 0) {
+		return ret;
+	}
+	ret = ef800_workspace_size(workspace, &file_size);
+	if (ret != 0) {
+		return ret;
+	}
+	if (row->end > file_size || row->start == row->end) {
+		return -EINVAL;
+	}
+	ret = ef800_workspace_row_at(workspace, row->start, &current_row);
+	if (ret != 0) {
+		return ret;
+	}
+	if (current_row.start != row->start || current_row.text_end != row->text_end ||
+	    current_row.end != row->end ||
+	    current_row.ending_length != row->ending_length) {
+		return -EAGAIN;
+	}
+	if (!delete_row && row->text_end - row->start > 255U) {
+		return -EFBIG;
+	}
+	ret = workspace_file_fingerprint(workspace->storage, workspace->filename,
+					 &old_size, &old_fingerprint);
+	if (ret != 0) {
+		return ret;
+	}
+	if (old_size != expected_version->size ||
+	    old_fingerprint != expected_version->fingerprint) {
+		return -EAGAIN;
+	}
+	ret = workspace_edit_artifact_name(workspace, "tmp", temporary_name,
+					   sizeof(temporary_name));
+	if (ret != 0) {
+		return ret;
+	}
+	ret = workspace_edit_artifact_name(workspace, "bak", backup_name,
+					   sizeof(backup_name));
+	if (ret != 0) {
+		return ret;
+	}
+	ret = ef800_persistence_write(workspace->storage, EF800_PERSISTENCE_DATA,
+		temporary_name, NULL, 0U);
+	if (ret != 0) {
+		return ret;
+	}
+	ret = workspace_edit_copy_range(workspace, temporary_name, 0U, row->start,
+					&staged_size, &staged_fingerprint);
+	if (ret == 0 && !delete_row) {
+		ret = workspace_edit_append(workspace, temporary_name, replacement,
+			replacement_length, &staged_size, &staged_fingerprint);
+	}
+	if (ret == 0 && !delete_row && row->ending_length != 0U) {
+		ret = ef800_workspace_read_range(workspace, row->text_end, row->end,
+						 ending, sizeof(ending), &ending_length);
+		if (ret == 0 && ending_length != row->ending_length) {
+			ret = -EIO;
+		}
+		if (ret == 0) {
+			ret = workspace_edit_append(workspace, temporary_name, ending,
+				ending_length, &staged_size, &staged_fingerprint);
+		}
+	}
+	if (ret == 0) {
+		ret = workspace_edit_copy_range(workspace, temporary_name, row->end,
+			file_size, &staged_size, &staged_fingerprint);
+	}
+	if (ret != 0) {
+		(void)workspace_edit_remove_if_present(workspace, "tmp");
+		return ret;
+	}
+	ret = ef800_persistence_sync(workspace->storage, EF800_PERSISTENCE_DATA,
+		temporary_name);
+	if (ret == 0) {
+		ret = ef800_persistence_stat(workspace->storage, EF800_PERSISTENCE_DATA,
+			temporary_name, &staged_entry);
+	}
+	if (ret == 0 && (staged_entry.type != EF800_PERSISTENCE_FILE ||
+			 staged_entry.size != staged_size)) {
+		ret = -EIO;
+	}
+	if (ret == 0) {
+		ret = workspace_file_fingerprint(workspace->storage, temporary_name,
+			&verified_size, &verified_fingerprint);
+	}
+	if (ret == 0 && (verified_size != staged_size ||
+			 verified_fingerprint != staged_fingerprint)) {
+		ret = -EIO;
+	}
+	if (ret == 0) {
+		size_t current_size;
+		uint64_t current_fingerprint;
+
+		ret = workspace_file_fingerprint(workspace->storage, workspace->filename,
+			&current_size, &current_fingerprint);
+		if (ret == 0 && (current_size != expected_version->size ||
+				 current_fingerprint != expected_version->fingerprint)) {
+			ret = -EAGAIN;
+		}
+	}
+	if (ret != 0) {
+		(void)workspace_edit_remove_if_present(workspace, "tmp");
+		return ret;
+	}
+
+	txn.generation = 1U;
+	txn.phase = WORKSPACE_TXN_PREPARED;
+	txn.old_size = old_size;
+	txn.old_fingerprint = old_fingerprint;
+	txn.new_size = staged_size;
+	txn.new_fingerprint = staged_fingerprint;
+	journal_started = true;
+	ret = workspace_transaction_write_slot(workspace, &txn);
+	if (ret == 0) {
+		ret = ef800_persistence_rename(workspace->storage,
+			EF800_PERSISTENCE_DATA, workspace->filename, backup_name);
+	}
+	if (ret == 0) {
+		ret = workspace_transaction_commit_phase(workspace, &txn,
+			WORKSPACE_TXN_BACKED_UP);
+	}
+	if (ret == 0) {
+		ret = ef800_persistence_rename(workspace->storage,
+			EF800_PERSISTENCE_DATA, temporary_name, workspace->filename);
+	}
+	if (ret == 0) {
+		ret = workspace_file_fingerprint(workspace->storage, workspace->filename,
+			&verified_size, &verified_fingerprint);
+	}
+	if (ret == 0 && (verified_size != staged_size ||
+			 verified_fingerprint != staged_fingerprint)) {
+		ret = -EIO;
+	}
+	if (ret == 0) {
+		ret = workspace_transaction_commit_phase(workspace, &txn,
+			WORKSPACE_TXN_COMMITTED);
+	}
+	if (ret != 0) {
+		if (journal_started) {
+			int recovery_result = workspace_transaction_recover(workspace);
+
+			if (recovery_result != 0) {
+				return recovery_result;
+			}
+		} else {
+			(void)workspace_edit_remove_if_present(workspace, "tmp");
+		}
+		return ret;
+	}
+	ret = workspace_transaction_recover(workspace);
+	if (ret != 0) {
+		return ret;
+	}
+	workspace_extract_context(workspace);
 	return 0;
 }
 

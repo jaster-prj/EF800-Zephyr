@@ -13,22 +13,6 @@
 BUILD_ASSERT(sizeof(struct ef800_boot_metadata) == EF800_BOOT_METADATA_SIZE,
 	     "EF800 boot metadata layout changed");
 
-static uint8_t assignment_byte(uint64_t assignments, uint8_t port_id)
-{
-	return port_id >= 1U && port_id <= 5U ?
-		(uint8_t)((assignments >> ((port_id - 1U) * 8U)) & 0xffU) : 0U;
-}
-
-static uint8_t assignment_builder(uint64_t assignments, uint8_t port_id)
-{
-	return assignment_byte(assignments, port_id) & 0x0fU;
-}
-
-static uint8_t assignment_connection(uint64_t assignments, uint8_t port_id)
-{
-	return (assignment_byte(assignments, port_id) >> 4) & 0x0fU;
-}
-
 bool ef800_port_builder_connection_valid(uint8_t builder_id,
 								 uint8_t connection)
 {
@@ -42,6 +26,8 @@ bool ef800_port_builder_connection_valid(uint8_t builder_id,
 		return false;
 	case EF800_PORT_BUILDER_MSD:
 		return connection == EF800_PORT_CONNECTION_USB_MSD;
+	case EF800_PORT_BUILDER_MTP:
+		return connection == EF800_PORT_CONNECTION_USB_MTP;
 	case EF800_PORT_BUILDER_BLUENRG:
 		return connection == EF800_PORT_CONNECTION_SPI;
 	default:
@@ -51,13 +37,16 @@ bool ef800_port_builder_connection_valid(uint8_t builder_id,
 
 bool ef800_port_builder_allowed_on_port(uint8_t port_id, uint8_t builder_id)
 {
-	if (port_id < 1U || port_id > 5U || builder_id > EF800_PORT_BUILDER_BLUENRG) {
+	if (port_id < 1U || port_id > 5U || builder_id > EF800_PORT_BUILDER_MTP) {
 		return false;
 	}
 	if (builder_id == EF800_PORT_BUILDER_NONE) {
 		return true;
 	}
 	if (builder_id == EF800_PORT_BUILDER_MSD) {
+		return port_id == 4U;
+	}
+	if (builder_id == EF800_PORT_BUILDER_MTP) {
 		return port_id == 4U;
 	}
 	if (builder_id == EF800_PORT_BUILDER_BLUENRG) {
@@ -75,8 +64,8 @@ bool ef800_port_assignment_record_valid(uint8_t port_id, uint8_t builder_id,
 								uint8_t connection)
 {
 	if (port_id < 1U || port_id > 5U ||
-		builder_id > EF800_PORT_BUILDER_BLUENRG ||
-		connection > EF800_PORT_CONNECTION_SPI) {
+		builder_id > EF800_PORT_BUILDER_MTP ||
+		connection > EF800_PORT_CONNECTION_USB_MTP) {
 		return false;
 	}
 	if (!ef800_port_builder_allowed_on_port(port_id, builder_id)) {
@@ -105,7 +94,9 @@ bool ef800_port_assignment_record_valid(uint8_t port_id, uint8_t builder_id,
 		return (builder_id == EF800_PORT_BUILDER_DEBUG &&
 			connection == EF800_PORT_CONNECTION_USB_CDC) ||
 			(builder_id == EF800_PORT_BUILDER_MSD &&
-			 connection == EF800_PORT_CONNECTION_USB_MSD);
+			 connection == EF800_PORT_CONNECTION_USB_MSD) ||
+			(builder_id == EF800_PORT_BUILDER_MTP &&
+			 connection == EF800_PORT_CONNECTION_USB_MTP);
 	case 5U:
 		return builder_id == EF800_PORT_BUILDER_BLUENRG &&
 			connection == EF800_PORT_CONNECTION_SPI;
@@ -114,25 +105,8 @@ bool ef800_port_assignment_record_valid(uint8_t port_id, uint8_t builder_id,
 	}
 }
 
-static int assignment_set_record(uint64_t *assignments, uint8_t port_id,
-					 uint8_t builder_id, uint8_t connection)
-{
-	uint64_t mask;
-	uint8_t value;
-
-	if (assignments == NULL || !ef800_port_assignment_record_valid(port_id,
-										 builder_id, connection)) {
-		return -EINVAL;
-	}
-	mask = 0xffULL << ((port_id - 1U) * 8U);
-	value = (uint8_t)(builder_id | (connection << 4));
-	*assignments = (*assignments & ~mask) |
-		((uint64_t)value << ((port_id - 1U) * 8U));
-	return 0;
-}
-
 static void metadata_encode_fields(const struct ef800_boot_metadata *metadata,
-					   uint8_t *buffer)
+						   uint8_t *buffer)
 {
 	sys_put_le32(metadata->magic, &buffer[0]);
 	sys_put_le16(metadata->version, &buffer[4]);
@@ -140,14 +114,6 @@ static void metadata_encode_fields(const struct ef800_boot_metadata *metadata,
 	sys_put_le32(metadata->main_failures, &buffer[8]);
 	sys_put_le32(metadata->last_target, &buffer[12]);
 	sys_put_le32(metadata->sequence, &buffer[16]);
-	sys_put_le32(metadata->console_target, &buffer[20]);
-	sys_put_le64(metadata->port_assignments, &buffer[24]);
-	for (uint8_t index = 0U; index < 5U; ++index) {
-		sys_put_le32(metadata->ports[index].plugin_id, &buffer[32U + index * 8U]);
-		sys_put_le32(metadata->ports[index].connection,
-			&buffer[36U + index * 8U]);
-	}
-	sys_put_le32(metadata->reserved, &buffer[76]);
 }
 
 int ef800_boot_metadata_encode(const struct ef800_boot_metadata *metadata,
@@ -158,7 +124,7 @@ int ef800_boot_metadata_encode(const struct ef800_boot_metadata *metadata,
 	}
 	memset(buffer, 0, EF800_BOOT_METADATA_SIZE);
 	metadata_encode_fields(metadata, buffer);
-	sys_put_le32(metadata->crc32, &buffer[72]);
+	sys_put_le32(metadata->crc32, &buffer[20]);
 	return 0;
 }
 
@@ -175,16 +141,7 @@ int ef800_boot_metadata_decode(const uint8_t *buffer, size_t length,
 	metadata->main_failures = sys_get_le32(&buffer[8]);
 	metadata->last_target = sys_get_le32(&buffer[12]);
 	metadata->sequence = sys_get_le32(&buffer[16]);
-	metadata->console_target = sys_get_le32(&buffer[20]);
-	metadata->port_assignments = sys_get_le64(&buffer[24]);
-	for (uint8_t index = 0U; index < 5U; ++index) {
-		metadata->ports[index].plugin_id =
-			sys_get_le32(&buffer[32U + index * 8U]);
-		metadata->ports[index].connection =
-			sys_get_le32(&buffer[36U + index * 8U]);
-	}
-	metadata->crc32 = sys_get_le32(&buffer[72]);
-	metadata->reserved = sys_get_le32(&buffer[76]);
+	metadata->crc32 = sys_get_le32(&buffer[20]);
 	return 0;
 }
 
@@ -311,7 +268,7 @@ uint32_t ef800_boot_metadata_crc(const struct ef800_boot_metadata *metadata)
 		return 0U;
 	}
 	metadata_encode_fields(metadata, buffer);
-	return ef800_crc32(buffer, 72U);
+	return ef800_crc32(buffer, 20U);
 }
 
 void ef800_boot_metadata_init(struct ef800_boot_metadata *metadata)
@@ -326,16 +283,6 @@ void ef800_boot_metadata_init(struct ef800_boot_metadata *metadata)
 	metadata->main_failures = 0U;
 	metadata->last_target = EF800_BOOT_TARGET_MAIN;
 	metadata->sequence = 0U;
-	metadata->console_target = EF800_CONSOLE_TARGET_NONE;
-	metadata->port_assignments = 0U;
-	for (uint8_t index = 0U; index < 5U; ++index) {
-		metadata->ports[index] = (struct ef800_boot_port_assignment){0};
-	}
-	metadata->reserved = 0U;
-	metadata->ports[4] = (struct ef800_boot_port_assignment){
-		.plugin_id = EF800_PORT_BUILDER_BLUENRG,
-		.connection = EF800_PORT_CONNECTION_SPI,
-	};
 	metadata->crc32 = ef800_boot_metadata_crc(metadata);
 }
 
@@ -344,29 +291,8 @@ bool ef800_boot_metadata_valid(const struct ef800_boot_metadata *metadata)
 	if (metadata == NULL || metadata->magic != EF800_BOOT_METADATA_MAGIC ||
 		metadata->version != EF800_BOOT_METADATA_VERSION ||
 		metadata->size != EF800_BOOT_METADATA_SIZE ||
-		metadata->reserved != 0U ||
 		metadata->last_target > EF800_BOOT_TARGET_BACKUP) {
 		return false;
-	}
-
-	if (metadata->console_target != EF800_CONSOLE_TARGET_NONE &&
-		!ef800_console_target_valid(metadata->console_target)) {
-		return false;
-	}
-	if (metadata->console_target != EF800_CONSOLE_TARGET_NONE &&
-		ef800_boot_metadata_plugin_id(metadata,
-			ef800_console_target_port(metadata->console_target)) !=
-			EF800_PORT_BUILDER_DEBUG) {
-		return false;
-	}
-	for (uint8_t index = 0U; index < 5U; ++index) {
-		if (metadata->ports[index].connection > EF800_PORT_CONNECTION_SPI) {
-			return false;
-		}
-		if (metadata->ports[index].plugin_id == 0U &&
-			metadata->ports[index].connection != EF800_PORT_CONNECTION_NONE) {
-			return false;
-		}
 	}
 	return metadata->crc32 == ef800_boot_metadata_crc(metadata);
 }
@@ -376,176 +302,61 @@ int ef800_boot_metadata_migrate_v1(const uint8_t *buffer, size_t length,
 {
 	uint32_t magic;
 	uint16_t version;
-	uint64_t assignments;
 
-	if (buffer == NULL || metadata == NULL || length != 40U) return -EINVAL;
+	if (buffer == NULL || metadata == NULL || length != 40U) {
+		return -EINVAL;
+	}
 	magic = sys_get_le32(&buffer[0]);
 	version = sys_get_le16(&buffer[4]);
 	if (magic != EF800_BOOT_METADATA_MAGIC ||
-		version != EF800_BOOT_METADATA_LEGACY_VERSION) return -EINVAL;
+		version != EF800_BOOT_METADATA_LEGACY_VERSION) {
+		return -EINVAL;
+	}
 	ef800_boot_metadata_init(metadata);
 	metadata->main_failures = sys_get_le32(&buffer[8]);
 	metadata->last_target = sys_get_le32(&buffer[12]);
 	metadata->sequence = sys_get_le32(&buffer[16]);
-	metadata->console_target = sys_get_le32(&buffer[20]);
-	assignments = sys_get_le64(&buffer[24]);
-	for (uint8_t port_id = 1U; port_id <= 5U; ++port_id) {
-		uint8_t builder = assignment_builder(assignments, port_id);
-		uint8_t connection = assignment_connection(assignments, port_id);
-		if (builder == EF800_PORT_BUILDER_DEBUG ||
-			builder == EF800_PORT_BUILDER_MSD ||
-			builder == EF800_PORT_BUILDER_BLUENRG) {
-			metadata->ports[port_id - 1U] = (struct ef800_boot_port_assignment){
-				.plugin_id = builder,
-				.connection = connection,
-			};
-		}
+	if (metadata->last_target > EF800_BOOT_TARGET_BACKUP) {
+		return -EINVAL;
 	}
-	metadata->version = EF800_BOOT_METADATA_VERSION;
-	metadata->size = EF800_BOOT_METADATA_SIZE;
 	metadata->crc32 = ef800_boot_metadata_crc(metadata);
 	return 0;
 }
 
-uint32_t ef800_console_target_encode(uint8_t port_id, uint8_t builder_id)
+int ef800_boot_metadata_migrate_v2(const uint8_t *buffer, size_t length,
+	struct ef800_boot_metadata *metadata)
 {
-	return (uint32_t)port_id | ((uint32_t)builder_id << 8);
-}
+	uint32_t magic;
+	uint16_t version;
+	uint16_t size;
+	uint32_t failures;
+	uint32_t last_target;
+	uint32_t sequence;
+	uint32_t stored_crc;
 
-uint8_t ef800_console_target_port(uint32_t target)
-{
-	return (uint8_t)(target & 0xffU);
-}
-
-uint8_t ef800_console_target_builder(uint32_t target)
-{
-	return (uint8_t)((target >> 8) & 0xffU);
-}
-
-bool ef800_console_target_valid(uint32_t target)
-{
-	uint8_t port_id = ef800_console_target_port(target);
-	uint8_t builder_id = ef800_console_target_builder(target);
-
-	return port_id != 0U && builder_id == EF800_PORT_BUILDER_DEBUG &&
-		port_id <= 4U && (target >> 16) == 0U;
-}
-
-bool ef800_port_assignments_valid(uint64_t assignments)
-{
-	const uint64_t defined_bits = 0x000000ffffffffffULL;
-	bool debug_assigned = false;
-
-	if ((assignments & ~defined_bits) != 0U) {
-		return false;
-	}
-	for (uint8_t port_id = 1U; port_id <= 5U; ++port_id) {
-		uint8_t builder_id = assignment_builder(assignments, port_id);
-
-		if (!ef800_port_assignment_record_valid(port_id, builder_id,
-					     assignment_connection(assignments, port_id))) {
-			return false;
-		}
-		if (builder_id == EF800_PORT_BUILDER_DEBUG) {
-			if (debug_assigned) {
-				return false;
-			}
-			debug_assigned = true;
-		}
-	}
-	return true;
-}
-
-uint8_t ef800_console_port_select(const struct ef800_boot_metadata *metadata,
-					  bool usb_debug_available)
-{
-	uint8_t port_id;
-
-	if (metadata == NULL) {
-		return EF800_CONSOLE_NO_TARGET;
-	}
-	if (metadata->console_target != EF800_CONSOLE_TARGET_NONE &&
-		ef800_console_target_valid(metadata->console_target)) {
-		port_id = ef800_console_target_port(metadata->console_target);
-		if (port_id != 4U || usb_debug_available) {
-			return port_id;
-		}
-	}
-	if (ef800_boot_metadata_plugin_id(metadata, EF800_CONSOLE_FALLBACK_PORT) ==
-		EF800_PORT_BUILDER_NONE) {
-		return EF800_CONSOLE_FALLBACK_PORT;
-	}
-	return EF800_CONSOLE_NO_TARGET;
-}
-
-int ef800_boot_metadata_set_console(struct ef800_boot_metadata *metadata,
-					    uint8_t debug_port)
-{
-	if (metadata == NULL ||
-		(debug_port != 0U && !ef800_console_target_valid(
-			ef800_console_target_encode(debug_port,
-							    EF800_PORT_BUILDER_DEBUG)))) {
+	if (buffer == NULL || metadata == NULL ||
+		length != EF800_BOOT_METADATA_V2_SIZE) {
 		return -EINVAL;
 	}
-	metadata->console_target = debug_port == 0U ? EF800_CONSOLE_TARGET_NONE :
-		ef800_console_target_encode(debug_port, EF800_PORT_BUILDER_DEBUG);
-	return 0;
-}
-
-uint8_t ef800_port_assignment_builder(uint64_t assignments, uint8_t port_id)
-{
-	return assignment_builder(assignments, port_id);
-}
-
-uint8_t ef800_port_assignment_connection(uint64_t assignments, uint8_t port_id)
-{
-	return assignment_connection(assignments, port_id);
-}
-
-uint32_t ef800_boot_metadata_plugin_id(const struct ef800_boot_metadata *metadata,
-	uint8_t port_id)
-{
-	return metadata != NULL && port_id >= 1U && port_id <= 5U ?
-		metadata->ports[port_id - 1U].plugin_id : 0U;
-}
-
-uint32_t ef800_boot_metadata_connection(const struct ef800_boot_metadata *metadata,
-	uint8_t port_id)
-{
-	return metadata != NULL && port_id >= 1U && port_id <= 5U ?
-		metadata->ports[port_id - 1U].connection : 0U;
-}
-
-int ef800_boot_metadata_set_assignment(struct ef800_boot_metadata *metadata,
-	uint8_t port_id, uint32_t plugin_id, uint32_t connection)
-{
-	if (metadata == NULL || port_id < 1U || port_id > 5U) return -EINVAL;
-	metadata->ports[port_id - 1U] = (struct ef800_boot_port_assignment){
-		.plugin_id = plugin_id,
-		.connection = connection,
-	};
-	return 0;
-}
-
-int ef800_port_assignment_set_record(uint64_t *assignments, uint8_t port_id,
-					     uint8_t builder_id, uint8_t connection)
-{
-	return assignment_set_record(assignments, port_id, builder_id, connection);
-}
-
-int ef800_port_assignment_set_builder(uint64_t *assignments, uint8_t port_id,
-					      uint8_t builder_id)
-{
-	uint8_t connection = EF800_PORT_CONNECTION_NONE;
-
-	if (builder_id != EF800_PORT_BUILDER_NONE) {
-		connection = port_id == 4U ?
-			(builder_id == EF800_PORT_BUILDER_MSD ?
-			 EF800_PORT_CONNECTION_USB_MSD : EF800_PORT_CONNECTION_USB_CDC) :
-			(port_id == 5U ? EF800_PORT_CONNECTION_SPI :
-			 (port_id == 2U && builder_id == EF800_PORT_BUILDER_DEBUG ?
-			  EF800_PORT_CONNECTION_SERIAL_FLOW_CONTROL :
-			  EF800_PORT_CONNECTION_SERIAL));
+	magic = sys_get_le32(&buffer[0]);
+	version = sys_get_le16(&buffer[4]);
+	size = sys_get_le16(&buffer[6]);
+	failures = sys_get_le32(&buffer[8]);
+	last_target = sys_get_le32(&buffer[12]);
+	sequence = sys_get_le32(&buffer[16]);
+	stored_crc = sys_get_le32(&buffer[72]);
+	if (magic != EF800_BOOT_METADATA_MAGIC ||
+		version != EF800_BOOT_METADATA_V2_VERSION ||
+		size != EF800_BOOT_METADATA_V2_SIZE ||
+		last_target > EF800_BOOT_TARGET_BACKUP ||
+		sys_get_le32(&buffer[76]) != 0U ||
+		stored_crc != ef800_crc32(buffer, 72U)) {
+		return -EBADMSG;
 	}
-	return assignment_set_record(assignments, port_id, builder_id, connection);
+	ef800_boot_metadata_init(metadata);
+	metadata->main_failures = failures;
+	metadata->last_target = last_target;
+	metadata->sequence = sequence;
+	metadata->crc32 = ef800_boot_metadata_crc(metadata);
+	return 0;
 }

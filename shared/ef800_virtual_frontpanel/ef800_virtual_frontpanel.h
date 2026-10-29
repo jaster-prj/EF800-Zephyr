@@ -19,6 +19,9 @@ struct ef800_virtual_frontpanel {
 typedef int (*ef800_virtual_plugin_assign_fn)(void *context, uint8_t port_id,
 	uint32_t plugin_id, uint32_t connection);
 typedef int (*ef800_virtual_plugin_execute_fn)(void *context, uint8_t port_id);
+typedef int (*ef800_virtual_composition_set_fn)(void *context,
+						const char *group,
+						const char *token);
 
 int ef800_virtual_frontpanel_start(struct ef800_virtual_frontpanel *panel,
 					   struct ef800_virtual_display *display,
@@ -29,6 +32,12 @@ void ef800_virtual_frontpanel_set_plugin_assign_callback(
 	ef800_virtual_plugin_assign_fn callback, void *context);
 void ef800_virtual_frontpanel_set_plugin_execute_callback(
 	ef800_virtual_plugin_execute_fn callback, void *context);
+void ef800_virtual_frontpanel_set_composition_callback(
+	ef800_virtual_composition_set_fn callback, void *context);
+void ef800_virtual_frontpanel_set_composition_state(const char *json,
+						    size_t length);
+void ef800_virtual_frontpanel_set_lcd_contrast(bool enabled,
+						uint8_t duty_percent);
 
 void ef800_virtual_frontpanel_log_record(uint8_t severity,
 						 const uint8_t *text, size_t length);

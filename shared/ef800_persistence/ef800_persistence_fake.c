@@ -170,6 +170,42 @@ static int fake_remove(void *context, enum ef800_persistence_root root,
 	return 0;
 }
 
+static int fake_rename(void *context, enum ef800_persistence_root root,
+		       const char *source_name, const char *destination_name)
+{
+	struct ef800_persistence_fake *fake = context;
+	struct ef800_persistence_fake_file *source =
+		find_file(fake, root, source_name);
+
+	if (source == NULL) {
+		return -ENOENT;
+	}
+	if (find_file(fake, root, destination_name) != NULL) {
+		return -EEXIST;
+	}
+	strcpy(source->name, destination_name);
+	return 0;
+}
+
+static int fake_sync(void *context, enum ef800_persistence_root root,
+		     const char *name)
+{
+	struct ef800_persistence_fake *fake = context;
+	struct ef800_persistence_fake_file *file = find_file(fake, root, name);
+
+	if (file == NULL) {
+		return -ENOENT;
+	}
+	if (fake->corrupt_on_sync_enabled &&
+	    strcmp(fake->corrupt_on_sync_name, name) == 0) {
+		if (file->length != 0U) {
+			file->data[0] ^= 0x01U;
+		}
+		fake->corrupt_on_sync_enabled = false;
+	}
+	return 0;
+}
+
 void ef800_persistence_fake_init(struct ef800_persistence_fake *fake)
 {
 	if (fake == NULL) {
@@ -184,4 +220,6 @@ void ef800_persistence_fake_init(struct ef800_persistence_fake *fake)
 	fake->backend.stat = fake_stat;
 	fake->backend.list = fake_list;
 	fake->backend.remove = fake_remove;
+	fake->backend.rename = fake_rename;
+	fake->backend.sync = fake_sync;
 }
