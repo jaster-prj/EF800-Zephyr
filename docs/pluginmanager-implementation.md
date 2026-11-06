@@ -31,6 +31,13 @@ PluginManager unit tests remain in the PluginManager repository.
 - Native target plugins execute from RAM with MPU disabled. Packages are CRC
   checked but not authenticated.
 
+For controlled hardware bring-up only, `application/ef800-main/plugin-dev.conf`
+is an explicit development overlay that disables the ARM MPU so the current RAM
+loader can execute locally built ELTA3/FTS3XX packages. It removes MPU and MPU
+stack-guard protection and accepts unsigned executable packages; never use this
+overlay in a production image or with untrusted package files. Build the normal
+MainApplication without the overlay to retain the production configuration.
+
 ### Feature-Complete EF800 Gate
 
 EF800 integration is complete only when:

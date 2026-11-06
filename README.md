@@ -103,6 +103,10 @@ historical option-byte values, recovery-image hashes, and erase record. See
 
 See `docs/` for the migration contract and hardware assumptions.
 
+The system architecture is documented under [`architecture/`](architecture/index.md)
+using separately maintained arc42 sections, with block views and runtime
+diagrams under `architecture/diagram_as_code/`.
+
 For physical target testing with semantic virtual keyboard input, see
 `docs/hardware-debug-keyboard.md`.
 

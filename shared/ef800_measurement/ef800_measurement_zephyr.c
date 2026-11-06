@@ -3,7 +3,6 @@
 #include "ef800_measurement_zephyr.h"
 
 #include <errno.h>
-
 #include <zephyr/drivers/uart.h>
 #include <zephyr/kernel.h>
 
@@ -21,16 +20,106 @@ static int zephyr_write(void *context, const uint8_t *data, size_t length)
 	return (int)length;
 }
 
-static int zephyr_read(void *context, uint8_t *data, int32_t timeout_ms)
+static void zephyr_uart_callback(const struct device *dev,
+	void *user_data)
+{
+	struct ef800_measurement_zephyr_transport *transport = user_data;
+	int sent;
+
+	if (transport == NULL || transport->tx_data == NULL ||
+		uart_irq_update(dev) <= 0 || !uart_irq_tx_ready(dev)) {
+		return;
+	}
+	sent = uart_fifo_fill(dev, transport->tx_data + transport->tx_offset,
+		transport->tx_length - transport->tx_offset);
+	if (sent < 0) {
+		transport->tx_status = sent;
+		transport->tx_faulted = true;
+		uart_irq_tx_disable(dev);
+		transport->tx_data = NULL;
+		k_sem_give(&transport->tx_complete);
+		return;
+	}
+	transport->tx_offset += (size_t)sent;
+	if (transport->tx_offset == transport->tx_length) {
+		transport->tx_status = 0;
+		uart_irq_tx_disable(dev);
+		transport->tx_data = NULL;
+		k_sem_give(&transport->tx_complete);
+	}
+}
+
+static int zephyr_write_until(void *context, const uint8_t *data,
+	size_t length, uint64_t deadline_ms)
 {
 	struct ef800_measurement_zephyr_transport *transport = context;
-	int64_t deadline;
+	uint64_t now_ms;
+	int ret;
 
 	if (transport == NULL || transport->uart == NULL || data == NULL ||
-		timeout_ms < 0) {
+		length == 0U || transport->tx_faulted) {
+		return transport != NULL && transport->tx_faulted ? -EIO : -EINVAL;
+	}
+	if ((uint64_t)k_uptime_get() >= deadline_ms) {
+		return -ETIMEDOUT;
+	}
+	if (transport->tx_data != NULL) {
+		return -EBUSY;
+	}
+	ret = uart_irq_callback_user_data_set(transport->uart,
+		zephyr_uart_callback, transport);
+	if (ret != 0) {
+		return ret;
+	}
+	k_sem_reset(&transport->tx_complete);
+	transport->tx_data = data;
+	transport->tx_length = length;
+	transport->tx_offset = 0U;
+	transport->tx_status = -EINPROGRESS;
+	uart_irq_tx_enable(transport->uart);
+
+	now_ms = (uint64_t)k_uptime_get();
+	if (now_ms < deadline_ms) {
+		ret = k_sem_take(&transport->tx_complete,
+			K_MSEC((int32_t)(deadline_ms - now_ms)));
+		if (ret == 0) {
+			return transport->tx_status == 0 ? (int)length :
+				transport->tx_status;
+		}
+	}
+
+	if (k_sem_take(&transport->tx_complete, K_NO_WAIT) == 0) {
+		return transport->tx_status == 0 ? -ETIMEDOUT :
+			transport->tx_status;
+	}
+	/* Stop queued TX interrupts and reconfigure the peripheral to discard
+	 * partially queued bytes before the host staging buffer can be reused. */
+	uart_irq_tx_disable(transport->uart);
+	transport->tx_data = NULL;
+	ret = uart_configure(transport->uart, &transport->uart_config);
+	if (ret != 0) {
+		transport->tx_faulted = true;
+		transport->tx_status = -EIO;
+		return -EIO;
+	}
+	/* A partial command may have reached the instrument. Keep this binding
+	 * unavailable until host recovery reinitializes the route. */
+	transport->tx_faulted = true;
+	transport->tx_status = -ETIMEDOUT;
+	return -ETIMEDOUT;
+}
+
+static int zephyr_read_until(void *context, uint8_t *data,
+	uint64_t deadline_ms)
+{
+	struct ef800_measurement_zephyr_transport *transport = context;
+
+	if (transport == NULL || transport->uart == NULL || data == NULL) {
 		return -EINVAL;
 	}
-	deadline = k_uptime_get() + timeout_ms;
+	if (transport->tx_faulted) {
+		return -EIO;
+	}
 	while (true) {
 		int result = uart_poll_in(transport->uart, data);
 
@@ -40,11 +129,20 @@ static int zephyr_read(void *context, uint8_t *data, int32_t timeout_ms)
 		if (result != -1) {
 			return result;
 		}
-		if (k_uptime_get() >= deadline) {
+		if ((uint64_t)k_uptime_get() >= deadline_ms) {
 			return 0;
 		}
 		k_msleep(1);
 	}
+}
+
+static int zephyr_read(void *context, uint8_t *data, int32_t timeout_ms)
+{
+	if (timeout_ms < 0) {
+		return -EINVAL;
+	}
+	return zephyr_read_until(context, data,
+		(uint64_t)k_uptime_get() + (uint32_t)timeout_ms);
 }
 
 int ef800_measurement_zephyr_init_with_config(
@@ -129,10 +227,15 @@ int ef800_measurement_zephyr_init_with_config(
 		return result;
 	}
 	transport->uart = uart;
+	k_sem_init(&transport->tx_complete, 0, 1);
+	transport->tx_faulted = false;
+	transport->uart_config = uart_config;
 	transport->transport = (struct ef800_measurement_transport){
 		.write = zephyr_write,
 		.read = zephyr_read,
 		.context = transport,
+		.write_until = zephyr_write_until,
+		.read_until = zephyr_read_until,
 	};
 	return 0;
 }

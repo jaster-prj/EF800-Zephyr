@@ -8,12 +8,11 @@
 
 struct ef800_plugin_runtime {
     struct ef800_measurement_instance public_instance;
-    const struct ef800_port_api *port;
+    ef800_port_binding binding;
     uint32_t active;
     uint32_t reserved[3];
 };
 
-const struct ef800_port_api *ef800_find_port(const struct pm_service_table *services);
 int pm_plugin_create(const struct pm_service_table *services, void **instance);
 int pm_plugin_destroy(void *instance);
 void ef800_measurement_display_init(struct ef800_measurement_display *display,

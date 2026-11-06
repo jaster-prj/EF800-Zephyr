@@ -9,6 +9,7 @@
 
 #include <zephyr/device.h>
 #include <zephyr/devicetree.h>
+#include <zephyr/drivers/adc.h>
 #include <zephyr/drivers/uart.h>
 #include <zephyr/drivers/gpio.h>
 #include <zephyr/fs/fs.h>
@@ -18,7 +19,14 @@
 #include <zephyr/sys/printk.h>
 #include <zephyr/sys/reboot.h>
 
+#ifdef CONFIG_BOARD_NATIVE_SIM
+#include <zephyr/drivers/adc/adc_emul.h>
+#endif
+
 #include "ef800_max17043.h"
+#include "ef800_battery_soc.h"
+#include "ef800_battery_soc_gauge.h"
+#include "ef800_battery_soc_store.h"
 #include "ef800_main.h"
 #include "ef800_mcp23017.h"
 #include "ef800_persistence.h"
@@ -49,6 +57,7 @@
 #include "ef800_ui.h"
 #ifdef CONFIG_BOARD_NATIVE_SIM
 #include "ef800_virtual_frontpanel.h"
+#include "ef800_virtual_profile.h"
 #include "ef800_virtual_protocol.h"
 #include "ef800_virtual_usb_peer.h"
 #endif
@@ -98,19 +107,26 @@ static void keyboard_uart_isr(const struct device *dev, void *user_data);
 static struct ef800_mcp23017 mcp23017;
 static struct ef800_t6963 lcd;
 static struct ef800_max17043 fuel_gauge;
+static struct ef800_battery_soc_gauge battery_gauge_source;
+static struct ef800_battery_soc_store battery_soc_store;
 static struct ef800_runtime_state runtime_state;
 static struct ef800_persistence persistence;
 static struct ef800_composition_service composition_service;
 static struct ef800_lcd_contrast lcd_contrast;
 static bool composition_service_ready;
+static bool qspi_format_confirmation_pending;
+static int64_t qspi_format_confirmation_deadline_ms;
 static const struct ef800_composition_catalog_entry composition_entries[] = {
 #if defined(CONFIG_BOARD_NATIVE_SIM)
 	{ "USBMSD0", "USBMSD", 0U, true, true },
 	{ "USBMSD1", "USBMSD", 1U, false, false },
 #else
-	{ "USBMSD0", "USBMSD", 0U, false, false },
+	{ "USBMSD0", "USBMSD", 0U, false, true },
 	{ "USBMSD1", "USBMSD", 1U, true, true },
 #endif
+	{ "BATSOC0", "BATSOC", EF800_BATTERY_SOC_SOURCE_NONE, false, true },
+	{ "BATSOC1", "BATSOC", EF800_BATTERY_SOC_SOURCE_ADC, false, true },
+	{ "BATSOC2", "BATSOC", EF800_BATTERY_SOC_SOURCE_MAX17048, true, true },
 	{ "LCDCONTR0", "LCDCONTR", EF800_LCD_CONTRAST_STATIC, true, true },
 	{ "LCDCONTR1", "LCDCONTR", EF800_LCD_CONTRAST_PWM, false, true },
 };
@@ -133,7 +149,14 @@ static int32_t measurement_number;
 static struct ef800_measurement_record measurement_record;
 static char measurement_code[EF800_MEASUREMENT_TEXT_MAX + 1U] = "02";
 static bool lcd_ready;
-static bool fuel_gauge_ready;
+#ifdef CONFIG_BOARD_NATIVE_SIM
+static bool virtual_power_off;
+#endif
+static bool battery_soc_store_ready;
+static bool battery_adc_ready;
+static bool mcumgr_transport_active;
+static const struct adc_dt_spec battery_adc =
+	ADC_DT_SPEC_GET_BY_NAME(DT_PATH(zephyr_user), battery);
 static bool runtime_state_ready;
 static char header_title[17];
 static uint8_t menu_selection;
@@ -142,6 +165,23 @@ static uint8_t selected_builder_id;
 static uint32_t selected_plugin_id;
 static struct ef800_measurement_plugin_session measurement_plugin_session;
 static struct ef800_ui_state ui_state;
+#if CONFIG_EF800_MAIN_PLUGIN_USER_WORKER
+static bool plugin_async_ui_pending;
+static uint32_t plugin_async_ui_token;
+static enum ef800_plugin_async_operation plugin_async_ui_operation;
+static bool plugin_measurement_fixed;
+static bool plugin_display_valid;
+static struct ef800_measurement_display plugin_display_cache;
+static bool plugin_failure_context_valid;
+static uint8_t plugin_failure_parent_menu;
+static uint8_t plugin_failure_parent_selection;
+static uint32_t plugin_failure_plugin_id;
+static int plugin_failure_status;
+static enum ef800_plugin_failure_class plugin_failure_class;
+static struct ef800_plugin_async_result plugin_async_ui_result;
+static char calculation_snapshot[EF800_PLUGIN_WORKER_MAX_WORKSPACE_SNAPSHOT];
+static bool calculation_result_pending;
+#endif
 
 static bool usb_msd_composition_enabled(void)
 {
@@ -183,6 +223,37 @@ static enum ef800_lcd_contrast_mode lcd_contrast_composition_mode(void)
 		}
 	}
 	return EF800_LCD_CONTRAST_STATIC;
+}
+
+static const struct ef800_composition_catalog_entry *
+battery_soc_composition_entry(void)
+{
+	const struct ef800_composition_snapshot *snapshot =
+		composition_service_ready ?
+		ef800_composition_service_active(&composition_service) : NULL;
+
+	if (snapshot != NULL) {
+		for (size_t index = 0U; index < snapshot->effective_count; ++index) {
+			const struct ef800_composition_catalog_entry *entry =
+				snapshot->effective[index].catalog_entry;
+
+			if (entry != NULL && strcmp(entry->group, "BATSOC") == 0) {
+				return entry;
+			}
+		}
+	}
+	return NULL;
+}
+
+static enum ef800_battery_soc_source battery_soc_composition_source(void)
+{
+	const struct ef800_composition_catalog_entry *entry =
+		battery_soc_composition_entry();
+
+	if (entry != NULL && entry->selection <= EF800_BATTERY_SOC_SOURCE_MAX17048) {
+		return (enum ef800_battery_soc_source)entry->selection;
+	}
+	return EF800_BATTERY_SOC_SOURCE_MAX17048;
 }
 
 #ifdef CONFIG_BOARD_NATIVE_SIM
@@ -414,6 +485,8 @@ enum application_menu {
 	APPLICATION_MENU_MEASUREMENT_EDITOR,
 	APPLICATION_MENU_CALCULATIONS,
 	APPLICATION_MENU_LCD_CONTRAST,
+	APPLICATION_MENU_PLUGIN_FAILURE,
+	APPLICATION_MENU_CALCULATION_CONFIRMATION,
 };
 
 #define WORKSPACE_LIST_MAX 16U
@@ -538,6 +611,7 @@ struct workspace_row_editor_state {
 static struct workspace_row_editor_state workspace_row_editor;
 
 static void start_time_editor(void);
+static void display_time_editor(void);
 static void clear_display(void);
 static void display_workspace_list(void);
 static void display_workspace_management_menu(void);
@@ -565,12 +639,19 @@ static int trigger_measurement(bool fixed);
 static int send_measurement_input(uint32_t input);
 static bool selected_measurement_has_submenu(void);
 static void close_measurement_plugin_session(void);
+#if CONFIG_EF800_MAIN_PLUGIN_USER_WORKER
+static void process_plugin_async_completion(void);
+static int submit_plugin_async(
+	const struct ef800_plugin_async_request *request);
+#endif
 static void start_measurement_editor(void);
 static const struct device *port_uart_device(enum ef800_port_uart_id uart_id);
 static int port_uart_check_ready(uint8_t port_id, uint32_t connection);
 static int claim_loaded_port_assignments(void);
-static int reconcile_measurement_assignments(void);
+static int reconcile_plugin_assignments(void);
+#ifndef CONFIG_BOARD_NATIVE_SIM
 static int set_console_for_port(uint8_t port_id);
+#endif
 #ifdef CONFIG_BOARD_NATIVE_SIM
 static int initialize_virtual_measurement_transport(uint8_t port_id,
 	uint32_t plugin_id)
@@ -659,10 +740,20 @@ static enum ef800_port_uart_id port_uart_id_for_console(uint8_t port_id)
 
 static int reconcile_port_uart_state(void)
 {
+#ifndef CONFIG_BOARD_NATIVE_SIM
 	uint8_t debug_port = 0U;
+#endif
 	uint8_t console_port;
 	int result;
 
+#ifdef CONFIG_BOARD_NATIVE_SIM
+	/* native_sim owns its shell/log console outside the EF800 UART routes.
+	 * Claiming the physical fallback UART4 returns -ENOSYS and used to abort
+	 * assignment reconciliation before the emulated instrument ports started. */
+	console_port = EF800_CONSOLE_NO_TARGET;
+	ef800_console_clear_target();
+	result = 0;
+#else
 	for (uint8_t port_id = 1U; port_id <= EF800_PORT_COUNT; ++port_id) {
 		uint32_t plugin_id = ef800_port_assignment_get_plugin_id(
 			&port_assignments, port_id);
@@ -686,7 +777,13 @@ static int reconcile_port_uart_state(void)
 	if (result != 0) {
 		ef800_console_clear_target();
 		console_port = EF800_CONSOLE_NO_TARGET;
+		LOG_WRN("Serial console unavailable; continuing port assignment reconciliation: %d",
+			result);
+		/* DebugConsole is optional. Do not let its unavailable UART prevent
+		 * independent measurement ports from claiming their configured routes. */
+		result = 0;
 	}
+#endif
 	{
 		char diagnostic[64];
 		int length = snprintk(diagnostic, sizeof(diagnostic),
@@ -694,10 +791,6 @@ static int reconcile_port_uart_state(void)
 		if (length > 0) {
 			(void)ef800_console_write((const uint8_t *)diagnostic, (size_t)length);
 		}
-	}
-	if (result != 0) {
-		LOG_WRN("Console selection failed: %d", result);
-		return result;
 	}
 	result = ef800_port_uart_registry_init(&port_uart_registry,
 								 port_uart_id_for_console(console_port));
@@ -721,41 +814,67 @@ static uint8_t uart_owner_for_plugin(uint32_t plugin_id)
 		EF800_PORT_BUILDER_DEBUG : (uint8_t)plugin_id;
 }
 
-static int reconcile_measurement_assignments(void)
+static int clear_stale_plugin_assignment(uint8_t port_id)
+{
+	int result = ef800_port_assignment_remove(&port_assignments, port_id);
+	int runtime_result;
+
+	if (result == 0) {
+		return 0;
+	}
+
+	/* Keep this boot safe even if deleting the persisted record fails. The
+	 * startup cleanup can retry on the next boot. */
+	runtime_result = ef800_port_assignment_import_with_connection(&port_assignments,
+		port_id, EF800_PORT_BUILDER_NONE, EF800_PORT_CONNECTION_NONE);
+	if (runtime_result != 0) {
+		LOG_ERR("Cannot clear stale plugin assignment on port %u: remove=%d runtime=%d",
+			port_id, result, runtime_result);
+		return runtime_result;
+	}
+	LOG_WRN("Port %u stale plugin assignment cleared for this boot; persistence failed: %d",
+		port_id, result);
+	return result;
+}
+
+static int reconcile_plugin_assignments(void)
 {
 	int first_error = 0;
 
 	for (uint8_t port_id = 1U; port_id <= EF800_PORT_COUNT; ++port_id) {
 		uint32_t plugin_id = ef800_port_assignment_get_plugin_id(&port_assignments,
 			port_id);
+		uint8_t builder_id = ef800_port_assignment_get_builder(&port_assignments,
+			port_id);
+		const struct ef800_port_device_descriptor *device =
+			ef800_port_device_get(builder_id);
 		const struct ef800_plugin_registry_entry *entry;
 		bool keep;
 
 		if (!ef800_port_assignment_is_assigned(&port_assignments, port_id) ||
-			plugin_id == EF800_PORT_BUILDER_NONE ||
-			plugin_id == EF800_PORT_BUILDER_DEBUG ||
-			plugin_id == EF800_PORT_BUILDER_MSD ||
-			plugin_id == EF800_PORT_BUILDER_MTP ||
-			plugin_id == EF800_PORT_BUILDER_BLUENRG) {
+			plugin_id == EF800_PORT_BUILDER_NONE || device != NULL) {
 			continue;
 		}
 		entry = ef800_plugin_registry_find(&plugin_registry, plugin_id);
-		keep = entry != NULL && entry->state == EF800_PLUGIN_REGISTRY_READY &&
-			entry->info.kind == EF800_PLUGIN_KIND_MEASUREMENT &&
-			entry->info.required_hardware == EF800_PLUGIN_HARDWARE_SERIAL &&
-			ef800_port_connection_is_valid(port_id,
-				ef800_port_assignment_get_connection(&port_assignments, port_id));
-		if (keep) continue;
+		keep = entry != NULL && entry->state == EF800_PLUGIN_REGISTRY_READY;
+		if (keep && entry->info.kind == EF800_PLUGIN_KIND_MEASUREMENT) {
+			keep = entry->info.required_hardware == EF800_PLUGIN_HARDWARE_SERIAL &&
+				ef800_port_connection_is_valid(port_id,
+					ef800_port_assignment_get_connection(&port_assignments,
+						port_id));
+		}
+		if (keep) {
+			continue;
+		}
 
-		LOG_WRN("Clearing unavailable measurement plugin %u on port %u",
+		LOG_WRN("Clearing missing or unavailable plugin %u on port %u",
 			(unsigned)plugin_id, port_id);
-		if (ef800_storage_is_mounted()) {
-			int result = ef800_port_assignment_remove(&port_assignments, port_id);
-			if (result != 0 && first_error == 0) first_error = result;
-		} else {
-			int result = ef800_port_assignment_import_with_connection(&port_assignments,
-				port_id, EF800_PORT_BUILDER_NONE, EF800_PORT_CONNECTION_NONE);
-			if (result != 0 && first_error == 0) first_error = result;
+		{
+			int result = clear_stale_plugin_assignment(port_id);
+
+			if (result != 0 && first_error == 0) {
+				first_error = result;
+			}
 		}
 	}
 	return first_error;
@@ -776,6 +895,10 @@ static int claim_loaded_port_assignments(void)
 		}
 		uint32_t connection = ef800_port_assignment_get_connection(
 			&port_assignments, port->id);
+		LOG_INF("Restoring port assignment: port=%u builder=%u plugin=%u connection=%u",
+			port->id,
+			ef800_port_assignment_get_builder(&port_assignments, port->id),
+			plugin_id, connection);
 
 		result = port_uart_check_ready(port->id, connection);
 		if (result != 0) {
@@ -819,12 +942,16 @@ static int claim_loaded_port_assignments(void)
 			}
 			if (result != 0 && first_error == 0) {
 				first_error = result;
+			} else if (result == 0) {
+				LOG_INF("Measurement transport ready: port=%u plugin=%u uart=%s",
+					port->id, plugin_id, route->name);
 			}
 		}
 	}
 	return first_error;
 }
 
+#ifndef CONFIG_BOARD_NATIVE_SIM
 static void default_debug_serial_config(
 	struct ef800_measurement_serial_config *config)
 {
@@ -853,6 +980,7 @@ static int set_console_for_port(uint8_t port_id)
 	}
 	return ef800_console_set_target_with_config(port_id, &config);
 }
+#endif
 
 static const struct gpio_dt_spec keyboard_reset =
 	GPIO_DT_SPEC_GET_OR(EF800_USER_NODE, keyboard_reset_gpios, {0});
@@ -892,6 +1020,30 @@ static int port_uart_check_ready(uint8_t port_id, uint32_t connection)
 #if DT_HAS_COMPAT_STATUS_OKAY(maxim_max17048)
 static const struct i2c_dt_spec fuel_gauge_i2c =
 	I2C_DT_SPEC_GET(DT_COMPAT_GET_ANY_STATUS_OKAY(maxim_max17048));
+
+static int probe_max17048(void *context)
+{
+	int ret;
+
+	if (context == NULL) {
+		return -ENODEV;
+	}
+	ret = ef800_max17043_init(context, &fuel_gauge_i2c);
+	if (ret != 0) {
+		LOG_WRN("MAX17048 deferred probe failed; SOC unavailable until restart: %d",
+			ret);
+	}
+	return ret;
+}
+
+static int read_max17048(void *context,
+	struct ef800_max17043_status *status)
+{
+	if (context == NULL) {
+		return -ENODEV;
+	}
+	return ef800_max17043_read(context, status);
+}
 #endif
 
 static const struct ef800_t6963_config lcd_config = {
@@ -2806,6 +2958,12 @@ static int load_measurement_ports(void)
 			EF800_PLUGIN_REGISTRY_READY &&
 			measurement_transports[port_id - 1U].uart != NULL) {
 			measurement_port_ids[measurement_port_count++] = port_id;
+		} else if (ef800_port_assignment_is_assigned(&port_assignments, port_id) &&
+			plugin_id != EF800_PORT_BUILDER_NONE) {
+			LOG_WRN("Measurement assignment not ready: port=%u plugin=%u registry=%u transport=%u",
+				port_id, plugin_id,
+				ef800_plugin_registry_state_for(&plugin_registry, plugin_id),
+				measurement_transports[port_id - 1U].uart != NULL);
 		}
 	}
 	return measurement_port_count == 0U ? -ENODEV : 0;
@@ -2885,6 +3043,12 @@ static bool selected_measurement_has_submenu(void)
 
 static size_t measurement_plugin_action_count(void)
 {
+#if CONFIG_EF800_MAIN_PLUGIN_USER_WORKER
+	if (!plugin_display_valid) {
+		return 0U;
+	}
+	uint32_t actions = plugin_display_cache.actions;
+#else
 	struct ef800_measurement_display display;
 
 	if (!selected_measurement_has_submenu() ||
@@ -2892,9 +3056,11 @@ static size_t measurement_plugin_action_count(void)
 		&measurement_plugin_session, &display) != 0) {
 		return 0U;
 	}
+	uint32_t actions = display.actions;
+#endif
 	size_t count = 0U;
 	for (uint32_t action = 1U; action != 0U; action <<= 1U) {
-		if ((display.actions & action) != 0U) {
+		if ((actions & action) != 0U) {
 			++count;
 		}
 	}
@@ -2903,9 +3069,22 @@ static size_t measurement_plugin_action_count(void)
 
 static void close_measurement_plugin_session(void)
 {
+#if CONFIG_EF800_MAIN_PLUGIN_USER_WORKER
+	if (measurement_plugin_session.state != EF800_MEASUREMENT_SESSION_CLOSED) {
+		const struct ef800_plugin_async_request request = {
+			.operation = EF800_PLUGIN_ASYNC_SESSION_CLOSE,
+			.session = &measurement_plugin_session,
+		};
+		if (submit_plugin_async(&request) != 0) {
+			LOG_WRN("Unable to queue plugin session close");
+		}
+	}
+#else
 	ef800_plugin_host_measurement_session_close(&measurement_plugin_session);
+#endif
 }
 
+#if !CONFIG_EF800_MAIN_PLUGIN_USER_WORKER
 static void append_plugin_workspace_record(void)
 {
 	char record[256];
@@ -2925,9 +3104,22 @@ static void append_plugin_workspace_record(void)
 		&measurement_plugin_session, result);
 	display_line(6U, result == 0 ? "Measurement saved" : "Save failed");
 }
+#endif
 
 static void display_measurement_plugin_menu(void)
 {
+#if CONFIG_EF800_MAIN_PLUGIN_USER_WORKER
+	struct ef800_measurement_display *display = &plugin_display_cache;
+	char line[STATUS_LINE_SIZE];
+
+	clear_display();
+	if (!plugin_display_valid) {
+		display_line(0U, "Measurement plugin");
+		display_line(6U, plugin_async_ui_pending ? "Plugin working..." :
+			"Plugin display unavailable");
+		return;
+	}
+#else
 	struct ef800_measurement_display display;
 	char line[STATUS_LINE_SIZE];
 
@@ -2937,17 +3129,37 @@ static void display_measurement_plugin_menu(void)
 		display_line(6U, "Plugin display unavailable");
 		return;
 	}
+#endif
+#if CONFIG_EF800_MAIN_PLUGIN_USER_WORKER
+	display_line(0U, display->title);
+#else
 	display_line(0U, display.title);
+#endif
 	snprintk(line, sizeof(line), "Port %u: %s", selected_measurement_port,
 		measurement_device_title(selected_measurement_port));
 	display_line(1U, line);
 	display_line(2U, "Select action");
-	for (size_t index = 0U; index < display.row_count && index < 4U; ++index) {
+	for (size_t index = 0U;
+#if CONFIG_EF800_MAIN_PLUGIN_USER_WORKER
+		index < display->row_count && index < 4U;
+#else
+		index < display.row_count && index < 4U;
+#endif
+		++index) {
+#if CONFIG_EF800_MAIN_PLUGIN_USER_WORKER
+		snprintk(line, sizeof(line), "%c %s", index == display->selected_action ? '>' : ' ',
+			display->rows[index]);
+#else
 		snprintk(line, sizeof(line), "%c %s", index == display.selected_action ? '>' : ' ',
 			display.rows[index]);
+#endif
 		display_line((uint8_t)(3U + index), line);
 	}
+#if CONFIG_EF800_MAIN_PLUGIN_USER_WORKER
+	display_line(7U, display->footer);
+#else
 	display_line(7U, display.footer);
+#endif
 }
 
 static void display_measurement_editor(void)
@@ -2980,10 +3192,89 @@ static void start_measurement_editor(void)
 	display_measurement_editor();
 }
 
+#if CONFIG_EF800_MAIN_PLUGIN_USER_WORKER
+static int recover_plugin_uart_route(void *context,
+	const struct ef800_plugin_recovery_ledger *ledger)
+{
+	const struct ef800_port_uart_route *route;
+	const struct device *device;
+	struct ef800_measurement_serial_config config;
+	uint8_t port_id;
+	int ret;
+
+	ARG_UNUSED(context);
+	if (ledger == NULL || !ledger->route_claimed) {
+		return 0;
+	}
+	port_id = ledger->route_port_id;
+	if (port_id == 0U || port_id > EF800_PORT_COUNT ||
+		ledger->route_transport !=
+			&measurement_transports[port_id - 1U].transport ||
+		!ef800_port_assignment_is_assigned(&port_assignments, port_id) ||
+		ef800_port_assignment_get_plugin_id(&port_assignments, port_id) !=
+			ledger->plugin_id ||
+		ef800_port_assignment_get_connection(&port_assignments, port_id) !=
+			ledger->route_connection) {
+		return -ESTALE;
+	}
+	ret = ef800_plugin_host_serial_config(ledger->plugin_id, NULL, &config);
+	if (ret != 0) {
+		return ret;
+	}
+	route = ef800_port_uart_for_connection(port_id, ledger->route_connection);
+	device = route == NULL ? NULL : port_uart_device(route->uart_id);
+	if (device == NULL) {
+		return -ENODEV;
+	}
+	ret = ef800_measurement_zephyr_init_with_config(
+		&measurement_transports[port_id - 1U], device, &config);
+	if (ret != 0) {
+		return ret;
+	}
+	ret = ef800_port_uart_release(&port_uart_registry, port_id,
+		uart_owner_for_plugin(ledger->plugin_id), ledger->route_connection);
+	if (ret == 0) {
+		ef800_plugin_host_recovery_route_released(port_id,
+			ledger->route_connection);
+	}
+	return ret;
+}
+
+static void set_plugin_async_route(
+	struct ef800_plugin_async_request *request, uint8_t port_id,
+	uint32_t plugin_id)
+{
+	if (request == NULL || port_id == 0U || port_id > EF800_PORT_COUNT) {
+		return;
+	}
+	request->route_port_id = port_id;
+	request->route_connection = ef800_port_assignment_get_connection(
+		&port_assignments, port_id);
+	request->route_claimed =
+		ef800_port_assignment_is_assigned(&port_assignments, port_id) &&
+		ef800_port_assignment_get_plugin_id(&port_assignments, port_id) ==
+			plugin_id &&
+		ef800_port_connection_is_valid(port_id,
+			request->route_connection) &&
+		measurement_transports[port_id - 1U].uart != NULL &&
+		ef800_port_uart_is_claimed(&port_uart_registry, port_id);
+}
+#endif
+
 static int trigger_measurement(bool fixed)
 {
 	uint32_t plugin_id = ef800_port_assignment_get_plugin_id(&port_assignments,
 		selected_measurement_port);
+#if CONFIG_EF800_MAIN_PLUGIN_USER_WORKER
+	struct ef800_plugin_async_request request = {
+		.operation = EF800_PLUGIN_ASYNC_MEASURE,
+		.plugin_id = plugin_id,
+		.transport = &measurement_transports[selected_measurement_port - 1U].transport,
+	};
+	set_plugin_async_route(&request, selected_measurement_port, plugin_id);
+	plugin_measurement_fixed = fixed;
+	return submit_plugin_async(&request) == 0 ? -EINPROGRESS : -EBUSY;
+#else
 	struct ef800_measurement_data data;
 	int result;
 
@@ -3005,6 +3296,7 @@ static int trigger_measurement(bool fixed)
 	measurement_pending = true;
 	measurement_fixed = fixed;
 	return 0;
+#endif
 }
 
 static int send_measurement_input(uint32_t input)
@@ -3014,7 +3306,18 @@ static int send_measurement_input(uint32_t input)
 	const struct ef800_measurement_transport *transport =
 		&measurement_transports[selected_measurement_port - 1U].transport;
 
+#if CONFIG_EF800_MAIN_PLUGIN_USER_WORKER
+	struct ef800_plugin_async_request request = {
+		.operation = EF800_PLUGIN_ASYNC_INPUT,
+		.plugin_id = plugin_id,
+		.transport = transport,
+		.input = input,
+	};
+	set_plugin_async_route(&request, selected_measurement_port, plugin_id);
+	return submit_plugin_async(&request) == 0 ? -EINPROGRESS : -EBUSY;
+#else
 	return ef800_plugin_host_input(plugin_id, transport, input);
+#endif
 }
 
 static int save_measurement(void)
@@ -3160,6 +3463,136 @@ static void display_calculation_menu(void)
 	display_line(7U, "ENTER select  ESC back");
 }
 
+#if CONFIG_EF800_MAIN_PLUGIN_USER_WORKER
+static void display_plugin_failure(void)
+{
+	const struct ef800_plugin_registry_entry *entry =
+		ef800_plugin_registry_find(&plugin_registry, plugin_failure_plugin_id);
+	char line[STATUS_LINE_SIZE];
+
+	clear_display();
+	display_line(0U, "Plugin failure");
+	display_line(1U, entry == NULL ? "External plugin" : entry->info.name);
+	switch (plugin_failure_class) {
+	case EF800_PLUGIN_FAILURE_TIMEOUT:
+		display_line(3U, "Plugin timed out");
+		break;
+	case EF800_PLUGIN_FAILURE_FAULT:
+		display_line(3U, "Plugin faulted");
+		break;
+	case EF800_PLUGIN_FAILURE_RECOVERY:
+		display_line(3U, "Recovery failed");
+		break;
+	default:
+		display_line(3U, "Plugin call failed");
+		break;
+	}
+	snprintk(line, sizeof(line), "Status %d", plugin_failure_status);
+	display_line(4U, line);
+	display_line(5U, entry != NULL &&
+		(entry->state == EF800_PLUGIN_REGISTRY_FAULTED ||
+		 entry->state == EF800_PLUGIN_REGISTRY_TIMED_OUT) ?
+		"Disabled until reboot" : "Host retains resource control");
+	display_line(7U, "ENTER/ESC return");
+}
+
+static void return_from_plugin_failure(void)
+{
+	active_menu = (enum application_menu)plugin_failure_parent_menu;
+	menu_selection = plugin_failure_parent_selection;
+	plugin_failure_context_valid = false;
+	plugin_display_valid = false;
+	display_active_menu();
+}
+
+static void show_plugin_failure(uint32_t plugin_id,
+	enum ef800_plugin_failure_class failure_class, int status)
+{
+	plugin_failure_plugin_id = plugin_id;
+	plugin_failure_status = status;
+	plugin_failure_class = failure_class;
+	if (!plugin_failure_context_valid) {
+		plugin_failure_parent_menu = APPLICATION_MENU_MEASUREMENTS;
+		plugin_failure_parent_selection = 0U;
+	}
+	active_menu = APPLICATION_MENU_PLUGIN_FAILURE;
+	menu_selection = 0U;
+	display_plugin_failure();
+}
+
+static int quarantine_plugin_failure(uint32_t plugin_id,
+	enum ef800_plugin_failure_class failure_class)
+{
+	enum ef800_plugin_registry_state state;
+
+	if (failure_class == EF800_PLUGIN_FAILURE_FAULT) {
+		state = EF800_PLUGIN_REGISTRY_FAULTED;
+	} else if (failure_class == EF800_PLUGIN_FAILURE_TIMEOUT) {
+		state = EF800_PLUGIN_REGISTRY_TIMED_OUT;
+	} else {
+		return 0;
+	}
+	if (plugin_id == 0U) {
+		return -EINVAL;
+	}
+	int ret = ef800_plugin_registry_set_state(&plugin_registry, plugin_id, state);
+	if (ret == 0) {
+		LOG_WRN("Plugin %u quarantined for this boot: %s",
+			(unsigned)plugin_id, state == EF800_PLUGIN_REGISTRY_FAULTED ?
+			"fault" : "timeout");
+	}
+	return ret;
+}
+
+static void display_calculation_confirmation(void)
+{
+	const struct ef800_plugin_registry_entry *entry =
+		ef800_plugin_registry_find(&plugin_registry, plugin_failure_plugin_id);
+	char line[STATUS_LINE_SIZE];
+
+	clear_display();
+	display_line(0U, "Calculation result");
+	display_line(1U, entry == NULL ? "Plugin" : entry->info.name);
+	snprintk(line, sizeof(line), "Result: %u bytes",
+		(unsigned)plugin_async_ui_result.value.calculation.length);
+	display_line(3U, line);
+	display_line(5U, "Apply result to Workspace?");
+	display_line(7U, "ENTER apply  ESC discard");
+}
+
+static void finish_calculation_confirmation(bool apply)
+{
+	int status = 0;
+
+	if (apply) {
+		const struct ef800_plugin_async_result *result =
+			&plugin_async_ui_result;
+
+		if (!calculation_result_pending ||
+			result->value.calculation.data == NULL ||
+			result->value.calculation.length == 0U ||
+			result->value.calculation.length > EF800_PLUGIN_MAX_RESULT) {
+			status = -EINVAL;
+		} else {
+			status = ef800_workspace_append(&workspace,
+				result->value.calculation.data,
+				result->value.calculation.length);
+		}
+	}
+	(void)ef800_plugin_host_async_release(plugin_async_ui_token);
+	calculation_result_pending = false;
+	plugin_failure_context_valid = false;
+	active_menu = APPLICATION_MENU_CALCULATIONS;
+	display_active_menu();
+	if (apply) {
+		display_line(6U, status == 0 ? "Calculation applied" :
+			"Calculation apply failed");
+	} else {
+		display_line(6U, "Calculation discarded");
+	}
+}
+#endif
+
 static void display_active_menu(void)
 {
 	switch (active_menu) {
@@ -3215,6 +3648,20 @@ static void display_active_menu(void)
 	case APPLICATION_MENU_MEASUREMENT_EDITOR:
 		display_measurement_editor();
 		break;
+	case APPLICATION_MENU_PLUGIN_FAILURE:
+#if CONFIG_EF800_MAIN_PLUGIN_USER_WORKER
+		display_plugin_failure();
+#else
+		display_measurement_devices();
+#endif
+		break;
+	case APPLICATION_MENU_CALCULATION_CONFIRMATION:
+#if CONFIG_EF800_MAIN_PLUGIN_USER_WORKER
+		display_calculation_confirmation();
+#else
+		display_calculation_menu();
+#endif
+		break;
 	case APPLICATION_MENU_CALCULATIONS:
 		display_calculation_menu();
 		break;
@@ -3228,6 +3675,203 @@ static void display_active_menu(void)
 		break;
 	}
 }
+
+#if CONFIG_EF800_MAIN_PLUGIN_USER_WORKER
+static int submit_plugin_async(
+	const struct ef800_plugin_async_request *request)
+{
+	uint32_t token;
+	int ret;
+
+	if (plugin_async_ui_pending) {
+		return -EBUSY;
+	}
+	ret = ef800_plugin_host_async_submit(request, &token);
+	if (ret == 0) {
+		if (!plugin_failure_context_valid &&
+			(request->operation == EF800_PLUGIN_ASYNC_SESSION_OPEN ||
+			 request->operation == EF800_PLUGIN_ASYNC_MEASURE ||
+			 request->operation == EF800_PLUGIN_ASYNC_INPUT ||
+			 request->operation == EF800_PLUGIN_ASYNC_CALCULATE)) {
+			plugin_failure_parent_menu = request->operation ==
+				EF800_PLUGIN_ASYNC_SESSION_OPEN ?
+				APPLICATION_MENU_MEASUREMENTS : active_menu;
+			plugin_failure_parent_selection = menu_selection;
+			plugin_failure_plugin_id = request->plugin_id;
+			plugin_failure_context_valid = true;
+		}
+		plugin_async_ui_pending = true;
+		plugin_async_ui_token = token;
+		plugin_async_ui_operation = request->operation;
+		display_line(6U, "Plugin working...");
+	}
+	return ret;
+}
+
+static int request_plugin_render(void)
+{
+	const struct ef800_plugin_async_request request = {
+		.operation = EF800_PLUGIN_ASYNC_SESSION_RENDER,
+		.session = &measurement_plugin_session,
+	};
+	return submit_plugin_async(&request);
+}
+
+static void accept_plugin_measurement(
+	const struct ef800_measurement_data *data, bool fixed)
+{
+	if (data == NULL || measurement_number == INT32_MAX) {
+		display_line(6U, data == NULL ? "Measurement failed" :
+			"Measurement number full");
+		return;
+	}
+	measurement_record.number = ++measurement_number;
+	measurement_record.data = *data;
+	measurement_record.staff_height_mm = 0;
+	strncpy(measurement_record.code, measurement_code,
+		sizeof(measurement_record.code) - 1U);
+	measurement_record.code[sizeof(measurement_record.code) - 1U] = '\0';
+	measurement_pending = true;
+	measurement_fixed = fixed;
+	active_menu = APPLICATION_MENU_MEASUREMENT_EDITOR;
+	start_measurement_editor();
+}
+
+static void process_plugin_async_completion(void)
+{
+	struct ef800_plugin_async_result *result = &plugin_async_ui_result;
+	int ret;
+
+	if (!plugin_async_ui_pending) {
+		return;
+	}
+	ret = ef800_plugin_host_async_poll(plugin_async_ui_token, result);
+	if (ret == -EAGAIN) {
+		return;
+	}
+	plugin_async_ui_pending = false;
+	if (ret != 0) {
+		LOG_WRN("Plugin supervisor completion rejected: %d", ret);
+		display_line(6U, "Plugin operation failed");
+		return;
+	}
+	if (result->recovery_required) {
+		if (result->recovery_status != 0) {
+			LOG_ERR("Plugin recovery could not prove safe state: op=%u status=%d",
+				(unsigned)result->operation, result->recovery_status);
+			sys_reboot(SYS_REBOOT_COLD);
+			return;
+		}
+		ret = quarantine_plugin_failure(result->plugin_id,
+			result->failure_class);
+		if (ret != 0) {
+			LOG_ERR("Cannot quarantine failed plugin %u: %d",
+				(unsigned)result->plugin_id, ret);
+			sys_reboot(SYS_REBOOT_COLD);
+			return;
+		}
+		show_plugin_failure(result->plugin_id, result->failure_class,
+			result->status);
+		return;
+	}
+	if (result->status != 0 && !(result->operation ==
+		EF800_PLUGIN_ASYNC_WORKSPACE_RECORD && result->status == -ENODATA)) {
+		show_plugin_failure(result->plugin_id,
+			result->failure_class == EF800_PLUGIN_FAILURE_NONE ?
+				EF800_PLUGIN_FAILURE_CALLBACK : result->failure_class,
+			result->status);
+		return;
+	}
+	switch (result->operation) {
+	case EF800_PLUGIN_ASYNC_SESSION_OPEN:
+		plugin_display_valid = false;
+		active_menu = APPLICATION_MENU_MEASUREMENT_ACTIONS;
+		menu_selection = 0U;
+		(void)request_plugin_render();
+		break;
+	case EF800_PLUGIN_ASYNC_SESSION_RENDER:
+		if (result->status == 0) {
+			plugin_display_cache = result->value.display;
+			plugin_display_valid = true;
+			display_active_menu();
+		} else {
+			plugin_display_valid = false;
+			display_line(6U, "Plugin display unavailable");
+		}
+		break;
+	case EF800_PLUGIN_ASYNC_SESSION_KEY:
+		if (result->status == 0 && result->value.key.consumed) {
+			const struct ef800_plugin_async_request request = {
+				.operation = EF800_PLUGIN_ASYNC_WORKSPACE_RECORD,
+				.session = &measurement_plugin_session,
+			};
+			if (submit_plugin_async(&request) != 0) {
+				(void)request_plugin_render();
+			}
+		} else if (result->status == 0) {
+			(void)request_plugin_render();
+		}
+		break;
+	case EF800_PLUGIN_ASYNC_SESSION_INPUT:
+	case EF800_PLUGIN_ASYNC_SESSION_MEASURE:
+		if (result->status == 0 &&
+			result->operation == EF800_PLUGIN_ASYNC_SESSION_MEASURE) {
+			accept_plugin_measurement(&result->value.measurement, false);
+		} else if (result->status == 0) {
+			(void)request_plugin_render();
+		}
+		break;
+	case EF800_PLUGIN_ASYNC_WORKSPACE_RECORD:
+		if (result->status == -ENODATA) {
+			(void)request_plugin_render();
+		} else if (result->status == 0) {
+			int workspace_status = ef800_workspace_append(&workspace,
+				result->value.workspace_record.data,
+				result->value.workspace_record.length);
+			const struct ef800_plugin_async_request request = {
+				.operation = EF800_PLUGIN_ASYNC_WORKSPACE_RESULT,
+				.session = &measurement_plugin_session,
+				.workspace_status = workspace_status,
+			};
+			display_line(6U, workspace_status == 0 ? "Measurement saved" :
+				"Save failed");
+			if (submit_plugin_async(&request) != 0) {
+				(void)request_plugin_render();
+			}
+		} else {
+			display_line(6U, "Plugin record unavailable");
+		}
+		break;
+	case EF800_PLUGIN_ASYNC_WORKSPACE_RESULT:
+		(void)request_plugin_render();
+		break;
+	case EF800_PLUGIN_ASYNC_MEASURE:
+		accept_plugin_measurement(&result->value.measurement,
+			plugin_measurement_fixed);
+		plugin_failure_context_valid = false;
+		break;
+	case EF800_PLUGIN_ASYNC_INPUT:
+		plugin_failure_context_valid = false;
+		break;
+	case EF800_PLUGIN_ASYNC_CALCULATE:
+		LOG_INF("Calculation plugin %u completed (%u bytes)",
+			(unsigned)result->plugin_id,
+			(unsigned)result->value.calculation.length);
+		calculation_result_pending = true;
+		active_menu = APPLICATION_MENU_CALCULATION_CONFIRMATION;
+		display_calculation_confirmation();
+		break;
+	case EF800_PLUGIN_ASYNC_SESSION_CLOSE:
+		plugin_display_valid = false;
+		plugin_failure_context_valid = false;
+		break;
+	default:
+		LOG_WRN("Unexpected plugin completion operation %u",
+			(unsigned)result->operation);
+		break;
+	}
+}
+#endif
 
 static size_t active_menu_count(void)
 {
@@ -3265,6 +3909,8 @@ static size_t active_menu_count(void)
 	case APPLICATION_MENU_MEASUREMENT_ACTIONS:
 		return selected_measurement_has_submenu() ? measurement_plugin_action_count() : 7U;
 	case APPLICATION_MENU_MEASUREMENT_EDITOR:
+	case APPLICATION_MENU_PLUGIN_FAILURE:
+	case APPLICATION_MENU_CALCULATION_CONFIRMATION:
 		return 0U;
 	case APPLICATION_MENU_CALCULATIONS:
 		return calculation_plugin_count();
@@ -3309,7 +3955,20 @@ static void return_to_main_menu(void)
 
 static void return_from_child_menu(void)
 {
-	if (active_menu == APPLICATION_MENU_WORKSPACE_VIEW) {
+	if (active_menu == APPLICATION_MENU_PLUGIN_FAILURE) {
+#if CONFIG_EF800_MAIN_PLUGIN_USER_WORKER
+		return_from_plugin_failure();
+#else
+		return_to_main_menu();
+#endif
+	} else if (active_menu == APPLICATION_MENU_CALCULATION_CONFIRMATION) {
+#if CONFIG_EF800_MAIN_PLUGIN_USER_WORKER
+		finish_calculation_confirmation(false);
+#else
+		active_menu = APPLICATION_MENU_CALCULATIONS;
+		display_calculation_menu();
+#endif
+	} else if (active_menu == APPLICATION_MENU_WORKSPACE_VIEW) {
 		workspace_view_reset();
 		return_to_workspace_menu();
 	} else if (active_menu == APPLICATION_MENU_WORKSPACE_ROW_ACTIONS) {
@@ -4162,6 +4821,8 @@ static void activate_menu_entry(void)
 		case 3U:
 			active_menu = APPLICATION_MENU_CALCULATIONS;
 			menu_selection = 0U;
+			LOG_INF("Calculation menu opened with %u plugin(s)",
+				(unsigned)calculation_plugin_count());
 			display_calculation_menu();
 			break;
 		case 4U:
@@ -4251,6 +4912,52 @@ static void activate_menu_entry(void)
 		commit_port_assignment_connection();
 		return;
 	}
+	if (active_menu == APPLICATION_MENU_CALCULATIONS) {
+#if CONFIG_EF800_MAIN_PLUGIN_USER_WORKER
+		const struct ef800_plugin_registry_entry *entry =
+			calculation_plugin_at(menu_selection);
+		size_t snapshot_length = 0U;
+		int result;
+
+		if (entry == NULL) {
+			display_line(6U, "Calculation unavailable");
+			return;
+		}
+		LOG_INF("Calculation selection %u maps to plugin %u",
+			(unsigned)menu_selection, (unsigned)entry->info.plugin_id);
+		if (!ef800_workspace_is_selected(&workspace)) {
+			LOG_WRN("Calculation plugin %u not run: no Workspace selected",
+				(unsigned)entry->info.plugin_id);
+			display_line(6U, "Workspace not selected");
+			return;
+		}
+		result = ef800_workspace_snapshot(&workspace, calculation_snapshot,
+			sizeof(calculation_snapshot), &snapshot_length);
+		if (result != 0 || snapshot_length == 0U) {
+			LOG_WRN("Calculation plugin %u not run: Workspace snapshot unavailable (%d, %u)",
+				(unsigned)entry->info.plugin_id, result,
+				(unsigned)snapshot_length);
+			display_line(6U, "Workspace snapshot unavailable");
+			return;
+		}
+		const struct ef800_plugin_async_request request = {
+			.operation = EF800_PLUGIN_ASYNC_CALCULATE,
+			.plugin_id = entry->info.plugin_id,
+			.workspace = &workspace,
+			.snapshot = calculation_snapshot,
+			.snapshot_length = snapshot_length,
+			.output_capacity = EF800_PLUGIN_MAX_RESULT,
+		};
+		if (submit_plugin_async(&request) != 0) {
+			LOG_WRN("Calculation plugin %u request rejected",
+				(unsigned)entry->info.plugin_id);
+			display_line(6U, "Calculation unavailable");
+		}
+#else
+		display_line(6U, "Calculation worker unavailable");
+#endif
+		return;
+	}
 	if (active_menu == APPLICATION_MENU_MEASUREMENTS) {
 		if (menu_selection < measurement_port_count) {
 			selected_measurement_port = measurement_port_ids[menu_selection];
@@ -4265,6 +4972,22 @@ static void activate_menu_entry(void)
 				if (current_code != NULL) {
 					strncpy(context.code, current_code, sizeof(context.code) - 1U);
 				}
+#if CONFIG_EF800_MAIN_PLUGIN_USER_WORKER
+				struct ef800_plugin_async_request request = {
+					.operation = EF800_PLUGIN_ASYNC_SESSION_OPEN,
+					.session = &measurement_plugin_session,
+					.plugin_id = plugin_id,
+					.transport = &measurement_transports[
+						selected_measurement_port - 1U].transport,
+					.context = context,
+				};
+				set_plugin_async_route(&request, selected_measurement_port,
+					plugin_id);
+				if (submit_plugin_async(&request) != 0) {
+					display_line(6U, "Plugin unavailable");
+				}
+				return;
+#else
 				int session_result = ef800_plugin_host_measurement_session_open(
 						&measurement_plugin_session, plugin_id,
 						&measurement_transports[selected_measurement_port - 1U].transport);
@@ -4276,6 +4999,7 @@ static void activate_menu_entry(void)
 					display_line(6U, "Plugin unavailable");
 					return;
 				}
+#endif
 			}
 			active_menu = APPLICATION_MENU_MEASUREMENT_ACTIONS;
 			menu_selection = 0U;
@@ -4286,6 +5010,16 @@ static void activate_menu_entry(void)
 	if (active_menu == APPLICATION_MENU_MEASUREMENT_ACTIONS) {
 		int result;
 		if (selected_measurement_has_submenu()) {
+#if CONFIG_EF800_MAIN_PLUGIN_USER_WORKER
+			const struct ef800_plugin_async_request request = {
+				.operation = EF800_PLUGIN_ASYNC_SESSION_KEY,
+				.session = &measurement_plugin_session,
+				.key = '\r',
+			};
+			if (submit_plugin_async(&request) != 0) {
+				display_line(6U, "Plugin action unavailable");
+			}
+#else
 			bool consumed = false;
 			result = ef800_plugin_host_measurement_session_key(
 				&measurement_plugin_session, '\r', &consumed);
@@ -4297,6 +5031,7 @@ static void activate_menu_entry(void)
 					result, consumed);
 				display_line(6U, "Plugin action failed");
 			}
+#endif
 			return;
 		}
 
@@ -4307,6 +5042,8 @@ static void activate_menu_entry(void)
 			if (result == 0) {
 				active_menu = APPLICATION_MENU_MEASUREMENT_EDITOR;
 				start_measurement_editor();
+			} else if (result == -EINPROGRESS) {
+				display_line(6U, "Measuring...");
 			} else {
 				display_line(6U, "Measurement failed");
 				LOG_WRN("Measurement trigger failed: %d", result);
@@ -4321,6 +5058,8 @@ static void activate_menu_entry(void)
 				if (result == 0) {
 					active_menu = APPLICATION_MENU_MEASUREMENT_EDITOR;
 					start_measurement_editor();
+				} else if (result == -EINPROGRESS) {
+					display_line(6U, "Measuring...");
 				} else {
 					measurement_fixed = false;
 					LOG_WRN("Fixed measurement trigger failed: %d", result);
@@ -4334,15 +5073,18 @@ static void activate_menu_entry(void)
 			break;
 		case 4U:
 			result = send_measurement_input(EF800_MEASUREMENT_INPUT_UP);
-			display_line(6U, result == 0 ? "Device up sent" : "Device up failed");
+			display_line(6U, result == 0 ? "Device up sent" :
+				result == -EINPROGRESS ? "Plugin working..." : "Device up failed");
 			break;
 		case 5U:
 			result = send_measurement_input(EF800_MEASUREMENT_INPUT_DOWN);
-			display_line(6U, result == 0 ? "Device down sent" : "Device down failed");
+			display_line(6U, result == 0 ? "Device down sent" :
+				result == -EINPROGRESS ? "Plugin working..." : "Device down failed");
 			break;
 		case 6U:
 			result = send_measurement_input(EF800_MEASUREMENT_INPUT_ENTER);
-			display_line(6U, result == 0 ? "Device enter sent" : "Device enter failed");
+			display_line(6U, result == 0 ? "Device enter sent" :
+				result == -EINPROGRESS ? "Plugin working..." : "Device enter failed");
 			break;
 		default:
 			break;
@@ -4422,6 +5164,26 @@ static bool handle_application_key(uint8_t key)
 	const char *const *shortcuts;
 	size_t count;
 
+#if CONFIG_EF800_MAIN_PLUGIN_USER_WORKER
+	if (plugin_async_ui_pending) {
+		return true;
+	}
+	if (active_menu == APPLICATION_MENU_PLUGIN_FAILURE) {
+		if (key == '\r' || key == '\n' || key == 0x1BU || key == 0x08U ||
+			key == 0x7FU) {
+			return_from_plugin_failure();
+		}
+		return true;
+	}
+	if (active_menu == APPLICATION_MENU_CALCULATION_CONFIRMATION) {
+		if (key == '\r' || key == '\n') {
+			finish_calculation_confirmation(true);
+		} else if (key == 0x1BU || key == 0x08U || key == 0x7FU) {
+			finish_calculation_confirmation(false);
+		}
+		return true;
+	}
+#endif
 	if (active_menu == APPLICATION_MENU_WORKSPACE_CREATE) {
 		handle_workspace_dialog_key(key);
 		return true;
@@ -4477,6 +5239,15 @@ static bool handle_application_key(uint8_t key)
 	if (active_menu == APPLICATION_MENU_MEASUREMENT_ACTIONS &&
 		measurement_plugin_session.state == EF800_MEASUREMENT_SESSION_ACTIVE &&
 		key != '\r' && key != '\n') {
+#if CONFIG_EF800_MAIN_PLUGIN_USER_WORKER
+		const struct ef800_plugin_async_request request = {
+			.operation = EF800_PLUGIN_ASYNC_SESSION_KEY,
+			.session = &measurement_plugin_session,
+			.key = key,
+		};
+		(void)submit_plugin_async(&request);
+		return true;
+#else
 		bool consumed = false;
 		int result = ef800_plugin_host_measurement_session_key(
 			&measurement_plugin_session, key, &consumed);
@@ -4485,6 +5256,7 @@ static bool handle_application_key(uint8_t key)
 			if (result != 0) display_line(6U, "Plugin action failed");
 			return true;
 		}
+#endif
 	}
 	if (key == '\r' || key == '\n') {
 		activate_menu_entry();
@@ -4565,6 +5337,65 @@ static bool handle_application_key(uint8_t key)
 	return false;
 }
 
+static int read_adc_battery(void *context,
+	struct ef800_max17043_status *status)
+{
+	struct ef800_battery_soc_table table;
+	struct adc_sequence sequence;
+	int16_t raw_sample;
+	int32_t pin_mv;
+#ifdef CONFIG_BOARD_NATIVE_SIM
+	uint16_t pin_mv_input;
+#endif
+	int result;
+
+	ARG_UNUSED(context);
+	if (status == NULL || !battery_adc_ready || !battery_soc_store_ready) {
+		return -ENODEV;
+	}
+	result = ef800_battery_soc_store_get_table(&battery_soc_store, &table);
+	if (result != 0) {
+		return result;
+	}
+#ifdef CONFIG_BOARD_NATIVE_SIM
+	if (!ef800_virtual_profile_available(4U)) {
+		return -ENODEV;
+	}
+	result = ef800_battery_pin_mv_from_soc(&table,
+		ef800_virtual_profile_battery_soc(), &pin_mv_input);
+	if (result != 0) {
+		return result;
+	}
+	result = adc_emul_const_value_set(battery_adc.dev,
+		battery_adc.channel_id, pin_mv_input);
+	if (result != 0) {
+		return result;
+	}
+#endif
+	result = adc_sequence_init_dt(&battery_adc, &sequence);
+	if (result != 0) {
+		return result;
+	}
+	sequence.buffer = &raw_sample;
+	sequence.buffer_size = sizeof(raw_sample);
+	result = adc_read_dt(&battery_adc, &sequence);
+	if (result != 0) {
+		return result;
+	}
+	pin_mv = raw_sample;
+	result = adc_raw_to_millivolts_dt(&battery_adc, &pin_mv);
+	if (result != 0 || pin_mv < 0 ||
+	    pin_mv > (int32_t)EF800_BATTERY_SOC_ADC_MAX_MV) {
+		return result != 0 ? result : -ERANGE;
+	}
+	result = ef800_battery_soc_from_pin_mv(&table, (uint16_t)pin_mv,
+		&status->soc_percent);
+	if (result == 0) {
+		status->voltage_uv = (uint32_t)pin_mv * 1000U;
+	}
+	return result;
+}
+
 static void draw_battery_icon(uint8_t soc)
 {
 	static const uint16_t outline[][2] = {
@@ -4624,7 +5455,7 @@ static const char *time_editor_prompt(enum time_editor_field field)
 {
 	switch (field) {
 	case TIME_EDITOR_WEEKDAY:
-		return "Weekday 1-7";
+		return "Weekday Mon-Sun";
 	case TIME_EDITOR_DATE:
 		return "Date 1-31";
 	case TIME_EDITOR_MONTH:
@@ -4646,6 +5477,27 @@ static const char *time_editor_prompt(enum time_editor_field field)
 	}
 }
 
+static const char *time_editor_weekday_name(int weekday)
+{
+	static const char *const weekdays[] = {
+		"Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat",
+	};
+
+	if (weekday < 0 || weekday >= (int)ARRAY_SIZE(weekdays)) {
+		return "Sun";
+	}
+	return weekdays[weekday];
+}
+
+static void time_editor_adjust_weekday(int direction)
+{
+	int weekday = time_editor.local.tm_wday;
+
+	weekday = (weekday + direction + 7) % 7;
+	time_editor.local.tm_wday = weekday;
+	display_time_editor();
+}
+
 static void display_time_editor(void)
 {
 	char line[STATUS_LINE_SIZE];
@@ -4665,9 +5517,15 @@ static void display_time_editor(void)
 		time_editor.settings.daylight_saving ? 1 : 0);
 	display_line(3U, line);
 	display_line(5U, time_editor_prompt(time_editor.field));
-	snprintk(line, sizeof(line), "> %s", time_editor.input);
+	if (time_editor.field == TIME_EDITOR_WEEKDAY) {
+		snprintk(line, sizeof(line), "> %s",
+			time_editor_weekday_name(time_editor.local.tm_wday));
+	} else {
+		snprintk(line, sizeof(line), "> %s", time_editor.input);
+	}
 	display_line(6U, line);
-	display_line(7U, "ENTER next  ESC cancel");
+	display_line(7U, time_editor.field == TIME_EDITOR_WEEKDAY ?
+		"UP/DOWN change ENTER next" : "ENTER next  ESC cancel");
 }
 
 static void start_time_editor(void)
@@ -4725,16 +5583,18 @@ static int parse_time_editor_value(int *value)
 static int commit_time_editor_value(void)
 {
 	int value;
-	int ret = parse_time_editor_value(&value);
+	int ret;
+
+	if (time_editor.field == TIME_EDITOR_WEEKDAY) {
+		return time_editor.local.tm_wday >= 0 &&
+			time_editor.local.tm_wday <= 6 ? 0 : -ERANGE;
+	}
+	ret = parse_time_editor_value(&value);
 
 	if (ret != 0) {
 		return ret;
 	}
 	switch (time_editor.field) {
-	case TIME_EDITOR_WEEKDAY:
-		if (value < 1 || value > 7) return -ERANGE;
-		time_editor.local.tm_wday = value - 1;
-		break;
 	case TIME_EDITOR_DATE:
 		time_editor.local.tm_mday = value;
 		break;
@@ -4833,6 +5693,9 @@ static void handle_time_editor_key(uint8_t key)
 		time_editor.length = 0U;
 		time_editor.input[0] = '\0';
 		display_time_editor();
+		return;
+	}
+	if (time_editor.field == TIME_EDITOR_WEEKDAY) {
 		return;
 	}
 	if ((key >= '0' && key <= '9') ||
@@ -5016,6 +5879,354 @@ static int cmd_keyboard_debug_stop(const struct shell *shell,
 	return 0;
 }
 
+static int cmd_battery_soc_table_show(const struct shell *shell, size_t argc,
+	char **argv)
+{
+	struct ef800_battery_soc_table table;
+	char hex[EF800_BATTERY_SOC_TABLE_MAX_HEX_LENGTH + 1U];
+	size_t hex_length;
+	int ret;
+
+	ARG_UNUSED(argc);
+	ARG_UNUSED(argv);
+	if (!battery_soc_store_ready) {
+		shell_error(shell, "battery SOC calibration storage unavailable");
+		return -ENOTSUP;
+	}
+	ret = ef800_battery_soc_store_get_table(&battery_soc_store, &table);
+	if (ret == -ENOENT) {
+		shell_print(shell, "no battery SOC calibration table is installed");
+		return 0;
+	}
+	if (ret != 0) {
+		shell_error(shell, "battery SOC table read failed: %d", ret);
+		return ret;
+	}
+	ret = ef800_battery_soc_store_get_hex(&battery_soc_store, hex, sizeof(hex),
+		&hex_length);
+	if (ret != 0) {
+		shell_error(shell, "battery SOC table encoding failed: %d", ret);
+		return ret;
+	}
+	shell_print(shell, "battery SOC table chemistry=%u points=%u",
+		(unsigned int)table.chemistry, (unsigned int)table.point_count);
+	for (size_t index = 0U; index < table.point_count; ++index) {
+		shell_print(shell, "%u mV -> %u%%",
+			(unsigned int)table.points[index].pin_mv,
+			(unsigned int)table.points[index].soc_percent);
+	}
+	shell_print(shell, "hex=%s", hex);
+	ARG_UNUSED(hex_length);
+	return 0;
+}
+
+static int cmd_mcumgr_start(const struct shell *shell, size_t argc, char **argv)
+{
+	int ret;
+
+	ARG_UNUSED(argv);
+	if (argc != 1U) {
+		shell_error(shell, "usage: mcumgr start");
+		return -EINVAL;
+	}
+	if (mcumgr_transport_active) {
+		shell_print(shell, "MCUmgr raw FS transport is already active");
+		return 0;
+	}
+	if (!ef800_storage_is_mounted()) {
+		shell_error(shell, "MCUmgr requires mounted EF800 storage");
+		return -ENOTSUP;
+	}
+	ret = ef800_mcumgr_transport_init();
+	if (ret != 0) {
+		shell_error(shell, "MCUmgr transport start failed: %d", ret);
+		return ret;
+	}
+	mcumgr_transport_active = true;
+	shell_print(shell,
+		"MCUmgr raw FS transport active; reset MainApplication to restore shell input");
+	return 0;
+}
+
+SHELL_STATIC_SUBCMD_SET_CREATE(mcumgr_commands,
+	SHELL_CMD_ARG(start, NULL, "Start raw serial FS transport (shell pauses)",
+		cmd_mcumgr_start, 1, 0),
+	SHELL_SUBCMD_SET_END
+);
+
+SHELL_CMD_REGISTER(mcumgr, &mcumgr_commands,
+	"Raw serial filesystem transport", NULL);
+
+static int cmd_battery_soc_table_set(const struct shell *shell, size_t argc,
+	char **argv)
+{
+	int ret;
+
+	if (argc != 2U) {
+		shell_error(shell, "usage: battery table set <hex-string>");
+		return -EINVAL;
+	}
+	if (!battery_soc_store_ready || !ef800_storage_configuration_is_mounted()) {
+		shell_error(shell, "battery SOC calibration storage unavailable");
+		return -ENOTSUP;
+	}
+	ret = ef800_battery_soc_store_set_hex(&battery_soc_store, argv[1],
+		strlen(argv[1]));
+	if (ret != 0) {
+		shell_error(shell, "battery SOC table rejected or not stored: %d", ret);
+		return ret;
+	}
+	shell_print(shell, "battery SOC table verified and stored");
+	return 0;
+}
+
+static int cmd_battery_soc_source_get(const struct shell *shell, size_t argc,
+	char **argv)
+{
+	const struct ef800_composition_catalog_entry *entry;
+
+	ARG_UNUSED(argc);
+	ARG_UNUSED(argv);
+	if (!composition_service_ready) {
+		shell_error(shell, "COMPOSITION service unavailable");
+		return -ENOTSUP;
+	}
+	entry = battery_soc_composition_entry();
+	shell_print(shell, "active BATSOC source: %s%s",
+		entry != NULL ? entry->token : "BATSOC2",
+		ef800_composition_service_restart_required(&composition_service) ?
+			" (restart required for committed selection)" : "");
+	return 0;
+}
+
+static int cmd_battery_soc_source_set(const struct shell *shell, size_t argc,
+	char **argv)
+{
+	const struct ef800_composition_catalog_entry *active;
+	int ret;
+
+	if (argc != 2U || (strcmp(argv[1], "BATSOC0") != 0 &&
+		strcmp(argv[1], "BATSOC1") != 0 &&
+		strcmp(argv[1], "BATSOC2") != 0)) {
+		shell_error(shell, "usage: battery source set <BATSOC0|BATSOC1|BATSOC2>");
+		return -EINVAL;
+	}
+	if (!composition_service_ready ||
+	    !ef800_storage_configuration_is_mounted()) {
+		shell_error(shell, "COMPOSITION Configuration storage unavailable");
+		return -ENOTSUP;
+	}
+	if (ef800_composition_service_restart_required(&composition_service)) {
+		shell_error(shell, "a COMPOSITION change is already committed; restart first");
+		return -EALREADY;
+	}
+	active = battery_soc_composition_entry();
+	if (active != NULL && strcmp(active->token, argv[1]) == 0) {
+		shell_print(shell, "%s is already active", argv[1]);
+		return 0;
+	}
+	ret = ef800_composition_service_stage_group_selection(&composition_service,
+		"BATSOC", argv[1]);
+	if (ret == 0) {
+		ret = ef800_composition_service_commit(&composition_service);
+	}
+	if (ret != 0) {
+		ef800_composition_service_discard(&composition_service);
+		shell_error(shell, "BATSOC source selection failed: %d", ret);
+		return ret;
+	}
+#ifdef CONFIG_BOARD_NATIVE_SIM
+	publish_virtual_composition_state();
+#endif
+	shell_print(shell, "%s committed; restart required", argv[1]);
+	return 0;
+}
+
+SHELL_STATIC_SUBCMD_SET_CREATE(battery_source_commands,
+	SHELL_CMD_ARG(get, NULL, "Show active BATSOC source",
+		cmd_battery_soc_source_get, 1, 0),
+	SHELL_CMD_ARG(set, NULL, "Stage and commit a BATSOC source",
+		cmd_battery_soc_source_set, 2, 0),
+	SHELL_SUBCMD_SET_END
+);
+
+SHELL_STATIC_SUBCMD_SET_CREATE(battery_table_commands,
+	SHELL_CMD_ARG(show, NULL, "Show active battery SOC calibration table",
+		cmd_battery_soc_table_show, 1, 0),
+	SHELL_CMD_ARG(set, NULL, "Set battery SOC calibration from a hex string",
+		cmd_battery_soc_table_set, 2, 0),
+	SHELL_SUBCMD_SET_END
+);
+
+SHELL_STATIC_SUBCMD_SET_CREATE(battery_commands,
+	SHELL_CMD(table, &battery_table_commands, "ADC SOC lookup-table calibration", NULL),
+	SHELL_CMD(source, &battery_source_commands, "BATSOC COMPOSITION selection", NULL),
+	SHELL_SUBCMD_SET_END
+);
+
+SHELL_CMD_REGISTER(battery, &battery_commands, "Battery configuration", NULL);
+
+static int cmd_usb_msd_get(const struct shell *shell, size_t argc, char **argv)
+{
+	const struct ef800_composition_snapshot *snapshot;
+
+	ARG_UNUSED(argc);
+	ARG_UNUSED(argv);
+	if (!composition_service_ready) {
+		shell_error(shell, "COMPOSITION service unavailable");
+		return -ENOTSUP;
+	}
+	snapshot = ef800_composition_service_active(&composition_service);
+	if (snapshot != NULL) {
+		for (size_t index = 0U; index < snapshot->effective_count; ++index) {
+			const struct ef800_composition_catalog_entry *entry =
+				snapshot->effective[index].catalog_entry;
+
+			if (entry != NULL && strcmp(entry->group, "USBMSD") == 0) {
+				shell_print(shell, "active USBMSD mode: %s%s", entry->token,
+					ef800_composition_service_restart_required(
+						&composition_service) ? " (restart required)" : "");
+				return 0;
+			}
+		}
+	}
+	shell_error(shell, "USBMSD composition selection unavailable");
+	return -ENODEV;
+}
+
+static int cmd_usb_msd_mode_set(const struct shell *shell, size_t argc,
+	char **argv)
+{
+	const struct ef800_composition_snapshot *snapshot;
+	int ret;
+
+	if (argc != 2U || (strcmp(argv[1], "USBMSD0") != 0 &&
+		strcmp(argv[1], "USBMSD1") != 0)) {
+		shell_error(shell, "usage: usbmsd mode <USBMSD0|USBMSD1>");
+		return -EINVAL;
+	}
+	if (!composition_service_ready ||
+	    !ef800_storage_configuration_is_mounted()) {
+		shell_error(shell, "COMPOSITION Configuration storage unavailable");
+		return -ENOTSUP;
+	}
+	if (ef800_composition_service_restart_required(&composition_service)) {
+		shell_error(shell, "a COMPOSITION change is already committed; restart first");
+		return -EALREADY;
+	}
+	snapshot = ef800_composition_service_active(&composition_service);
+	if (snapshot != NULL) {
+		for (size_t index = 0U; index < snapshot->effective_count; ++index) {
+			const struct ef800_composition_catalog_entry *entry =
+				snapshot->effective[index].catalog_entry;
+
+			if (entry != NULL && strcmp(entry->group, "USBMSD") == 0 &&
+			    strcmp(entry->token, argv[1]) == 0) {
+				shell_print(shell, "%s is already active", argv[1]);
+				return 0;
+			}
+		}
+	}
+	ret = ef800_composition_service_stage_group_selection(&composition_service,
+		"USBMSD", argv[1]);
+	if (ret == 0) {
+		ret = ef800_composition_service_commit(&composition_service);
+	}
+	if (ret != 0) {
+		ef800_composition_service_discard(&composition_service);
+		shell_error(shell, "USBMSD composition commit failed: %d", ret);
+		return ret;
+	}
+#ifdef CONFIG_BOARD_NATIVE_SIM
+	publish_virtual_composition_state();
+#endif
+	shell_print(shell, "%s committed; restart required", argv[1]);
+	return 0;
+}
+
+SHELL_STATIC_SUBCMD_SET_CREATE(usb_msd_commands,
+	SHELL_CMD_ARG(get, NULL, "Show active USB MSD composition mode",
+		cmd_usb_msd_get, 1, 0),
+	SHELL_CMD_ARG(mode, NULL, "Select USBMSD0 (off) or USBMSD1 (on)",
+		cmd_usb_msd_mode_set, 2, 0),
+	SHELL_SUBCMD_SET_END
+);
+
+SHELL_CMD_REGISTER(usbmsd, &usb_msd_commands,
+	"USB Mass Storage COMPOSITION selection", NULL);
+
+static int cmd_storage_format_qspi(const struct shell *shell, size_t argc,
+	char **argv)
+{
+	int ret;
+
+	if (argc == 1U) {
+		qspi_format_confirmation_pending = true;
+		qspi_format_confirmation_deadline_ms = k_uptime_get() + 30000;
+		shell_warn(shell, "This erases the entire 4 MiB QSPI: boot-state NVS and both FAT volumes.");
+		shell_print(shell, "It recreates and verifies Configuration and Shared Data FAT volumes.");
+		shell_print(shell, "Type 'storage format-qspi confirm' within 30 seconds to continue.");
+		return 0;
+	}
+	if (argc != 2U) {
+		shell_error(shell, "usage: storage format-qspi [confirm|cancel]");
+		return -EINVAL;
+	}
+	if (strcmp(argv[1], "cancel") == 0) {
+		qspi_format_confirmation_pending = false;
+		shell_print(shell, "QSPI format cancelled; no media changes made.");
+		return 0;
+	}
+	if (strcmp(argv[1], "confirm") != 0 || !qspi_format_confirmation_pending ||
+	    k_uptime_get() > qspi_format_confirmation_deadline_ms) {
+		qspi_format_confirmation_pending = false;
+		shell_error(shell, "confirmation missing or expired; run storage format-qspi first");
+		return -EACCES;
+	}
+	qspi_format_confirmation_pending = false;
+
+	if (ef800_main_usb_msd_requested() ||
+	    ef800_usb_manager_get() == EF800_USB_PERSONALITY_MSC) {
+		shell_error(shell, "USB MSC owns the shared disk; disconnect/disable MSC before formatting");
+		return -EBUSY;
+	}
+	if (ef800_usb_manager_get() != EF800_USB_PERSONALITY_NONE) {
+		ret = ef800_usb_manager_set(EF800_USB_PERSONALITY_NONE);
+		if (ret != 0) {
+			shell_error(shell, "USB storage shutdown failed: %d", ret);
+			return ret;
+		}
+	}
+	if (runtime_state_ready) {
+		ef800_runtime_state_stop(&runtime_state);
+	}
+	ret = ef800_storage_unmount_all();
+	if (ret != 0) {
+		shell_error(shell, "QSPI unmount failed; nothing erased: %d", ret);
+		return ret;
+	}
+	ret = ef800_storage_format_qspi_layout();
+	if (ret != 0) {
+		shell_error(shell, "QSPI erase/format/verification failed: %d; do not use the volumes",
+			ret);
+		return ret;
+	}
+	shell_print(shell, "QSPI erase and both FAT boot sectors verified; rebooting.");
+	k_msleep(100U);
+	sys_reboot(SYS_REBOOT_COLD);
+	return 0;
+}
+
+SHELL_STATIC_SUBCMD_SET_CREATE(storage_commands,
+	SHELL_CMD_ARG(format-qspi, NULL,
+		"Erase all QSPI and recreate both FAT volumes (requires confirmation)",
+		cmd_storage_format_qspi, 1, 1),
+	SHELL_SUBCMD_SET_END
+);
+
+SHELL_CMD_REGISTER(storage, &storage_commands,
+	"External QSPI storage maintenance", NULL);
+
 static int cmd_lcdcontrast_get(const struct shell *shell, size_t argc, char **argv)
 {
 	enum ef800_lcd_contrast_mode mode;
@@ -5154,6 +6365,34 @@ SHELL_CMD_REGISTER(rtc, &rtc_commands, "EF800 RTC commands", NULL);
 
 static void handle_keyboard_event(uint32_t event)
 {
+#ifdef CONFIG_BOARD_NATIVE_SIM
+	if (virtual_power_off) {
+		if ((event & KB_EVENT_ON) != 0U) {
+			LOG_INF("Virtual EF800 power on: restarting MainApplication");
+			exit(42);
+		}
+		return;
+	}
+	if ((event & KB_EVENT_ON) != 0U) {
+		/* The ON key is inert while the virtual target is already powered. */
+		return;
+	}
+	if ((event & KB_EVENT_OFF) != 0U) {
+		int text_clear = lcd_ready ? ef800_t6963_clear_text(&lcd) : -ENODEV;
+		int graphics_clear = lcd_ready ? ef800_t6963_clear_graphic(&lcd) : -ENODEV;
+
+		virtual_power_off = true;
+		if (text_clear != 0 || graphics_clear != 0) {
+			LOG_WRN("Virtual EF800 power-off LCD clear failed: text=%d graphics=%d",
+				text_clear, graphics_clear);
+		}
+		LOG_INF("Virtual EF800 powered off; waiting for ON");
+		return;
+	}
+#else
+	if ((event & KB_EVENT_ON) != 0U) {
+		return;
+	}
 	if (active_menu == APPLICATION_MENU_MEASUREMENT_ACTIONS &&
 		measurement_plugin_session.state == EF800_MEASUREMENT_SESSION_ACTIVE) {
 		/* Arrow events navigate the host-owned action list; activation remains host-owned. */
@@ -5176,6 +6415,26 @@ static void handle_keyboard_event(uint32_t event)
 		}
 		return;
 	}
+#endif
+#if CONFIG_EF800_MAIN_PLUGIN_USER_WORKER
+	if (plugin_async_ui_pending) {
+		return;
+	}
+	if (active_menu == APPLICATION_MENU_PLUGIN_FAILURE) {
+		if ((event & (KB_EVENT_ARROWLEFT | KB_EVENT_ARROWRIGHT)) != 0U) {
+			return_from_plugin_failure();
+		}
+		return;
+	}
+	if (active_menu == APPLICATION_MENU_CALCULATION_CONFIRMATION) {
+		if ((event & KB_EVENT_ARROWRIGHT) != 0U) {
+			finish_calculation_confirmation(true);
+		} else if ((event & KB_EVENT_ARROWLEFT) != 0U) {
+			finish_calculation_confirmation(false);
+		}
+		return;
+	}
+#endif
 	if (active_menu == APPLICATION_MENU_WORKSPACE_CREATE) {
 		if ((event & KB_EVENT_ARROWLEFT) != 0U) {
 			return_to_workspace_management_menu();
@@ -5204,6 +6463,13 @@ static void handle_keyboard_event(uint32_t event)
 		return;
 	}
 	if (time_editor.active) {
+		if (time_editor.field == TIME_EDITOR_WEEKDAY) {
+			if ((event & KB_EVENT_ARROWUP) != 0U) {
+				time_editor_adjust_weekday(-1);
+			} else if ((event & KB_EVENT_ARROWDOWN) != 0U) {
+				time_editor_adjust_weekday(1);
+			}
+		}
 		return;
 	}
 	if (measurement_editor.active) {
@@ -5245,6 +6511,24 @@ static void handle_keyboard_event(uint32_t event)
 			(event & KB_EVENT_ARROWDOWN) != 0U ? EF800_MEASUREMENT_INPUT_DOWN :
 		(event & KB_EVENT_ARROWRIGHT) != 0U ? EF800_MEASUREMENT_INPUT_ENTER : 0U;
 		if (input != 0U) {
+			#if CONFIG_EF800_MAIN_PLUGIN_USER_WORKER
+			if (input == EF800_MEASUREMENT_INPUT_ENTER) {
+				const struct ef800_plugin_async_request request = {
+					.operation = EF800_PLUGIN_ASYNC_SESSION_KEY,
+					.session = &measurement_plugin_session,
+					.key = '\r',
+				};
+				(void)submit_plugin_async(&request);
+			} else {
+				const struct ef800_plugin_async_request request = {
+					.operation = EF800_PLUGIN_ASYNC_SESSION_INPUT,
+					.session = &measurement_plugin_session,
+					.input = input,
+				};
+				(void)submit_plugin_async(&request);
+			}
+			return;
+			#else
 			int result;
 			if (input == EF800_MEASUREMENT_INPUT_ENTER) {
 				bool consumed = false;
@@ -5257,6 +6541,7 @@ static void handle_keyboard_event(uint32_t event)
 			}
 			display_active_menu();
 			return;
+			#endif
 		}
 	}
 	if ((event & KB_EVENT_ARROWUP) != 0U) {
@@ -5301,6 +6586,11 @@ static void process_keyboard_output(void)
 	uint32_t event;
 
 	while (ef800_keyboard_host_get_key(&keyboard_host, &key) == 0) {
+#ifdef CONFIG_BOARD_NATIVE_SIM
+		if (virtual_power_off) {
+			continue;
+		}
+#endif
 		if (time_editor.active) {
 			handle_time_editor_key(key);
 			continue;
@@ -5383,6 +6673,7 @@ int main(void)
 	bool mcp_controls_ready = false;
 	bool keyboard_rx_armed = false;
 	bool startup_mtp_pending = false;
+	bool plugin_discovery_ready = false;
 	int result;
 	uint16_t mcp_port;
 
@@ -5420,14 +6711,30 @@ int main(void)
 #endif
 	result = ef800_persistence_init(&persistence,
 				       ef800_persistence_zephyr_backend());
-	if (result != 0) {
-		LOG_ERR("Persistence service initialization failed: %d", result);
+		if (result != 0) {
+			LOG_ERR("Persistence service initialization failed: %d", result);
 #ifdef CONFIG_BOARD_NATIVE_SIM
-		publish_virtual_composition_state();
+			publish_virtual_composition_state();
 #endif
-	} else {
-		result = ef800_composition_service_init(&composition_service, &persistence,
-			&composition_catalog);
+		} else {
+			result = ef800_battery_soc_store_init(&battery_soc_store,
+				&persistence);
+			if (result == 0) {
+				battery_soc_store_ready = true;
+				if (ef800_battery_soc_store_has_table(&battery_soc_store)) {
+					LOG_INF("Battery SOC calibration table generation %u loaded",
+						(unsigned int)battery_soc_store.generation);
+				} else if (battery_soc_store.load_error != 0 &&
+					   battery_soc_store.load_error != -ENOENT) {
+					LOG_WRN("Battery SOC calibration unavailable: %d",
+						battery_soc_store.load_error);
+				}
+			} else {
+				LOG_WRN("Battery SOC calibration store initialization failed: %d",
+					result);
+			}
+			result = ef800_composition_service_init(&composition_service, &persistence,
+				&composition_catalog);
 		if (result != 0) {
 			composition_service_ready = false;
 			LOG_WRN("Target composition initialization failed; current behavior retained: %d",
@@ -5457,10 +6764,14 @@ int main(void)
 #ifdef CONFIG_BOARD_NATIVE_SIM
 		publish_virtual_composition_state();
 #endif
+		/* Foundation initialization mounts the data filesystem before plugin
+		 * discovery. Only a completed scan can prove an assignment is stale. */
 		if (ef800_storage_data_is_mounted()) {
 			result = ef800_plugin_host_init(&plugin_registry);
 			if (result != 0) {
 				LOG_WRN("External plugin discovery skipped: %d", result);
+			} else {
+				plugin_discovery_ready = true;
 			}
 		}
 		if (ef800_storage_configuration_is_mounted()) {
@@ -5483,25 +6794,27 @@ int main(void)
 			result = ef800_workspace_init(&workspace, &persistence);
 			if (result != 0) {
 				LOG_ERR("Workspace service initialization failed: %d", result);
+			} else if (ef800_storage_data_is_mounted()) {
+				result = ef800_workspace_load_current(&workspace);
+				if (result != 0 && result != -ENOENT) {
+					LOG_WRN("Current Workspace unavailable: %d", result);
+				}
+			}
+			if (ef800_storage_configuration_is_mounted()) {
+				result = ef800_port_assignment_load_all(&port_assignments);
+				if (result != 0) {
+					LOG_WRN("Port assignments unavailable: %d", result);
+				}
+				clear_unsupported_msd_assignment();
+			}
+			if (plugin_discovery_ready) {
+				result = reconcile_plugin_assignments();
+				if (result != 0) {
+					LOG_WRN("Plugin assignment reconciliation incomplete: %d",
+						result);
+				}
 			} else {
-				if (ef800_storage_configuration_is_mounted()) {
-					result = ef800_port_assignment_load_all(&port_assignments);
-					if (result != 0) {
-						LOG_WRN("Port assignments unavailable: %d", result);
-					}
-					clear_unsupported_msd_assignment();
-				}
-				if (ef800_storage_data_is_mounted()) {
-					result = ef800_workspace_load_current(&workspace);
-					if (result != 0 && result != -ENOENT) {
-						LOG_WRN("Current Workspace unavailable: %d", result);
-					}
-					result = reconcile_measurement_assignments();
-					if (result != 0) {
-						LOG_WRN("Measurement assignment reconciliation incomplete: %d",
-							result);
-					}
-				}
+				LOG_WRN("Plugin assignment cleanup skipped; filesystem scan unavailable");
 			}
 			{
 				enum ef800_usb_personality initial_usb =
@@ -5542,13 +6855,20 @@ int main(void)
 			if (result != 0) {
 				LOG_WRN("Port routing initialization incomplete: %d", result);
 			}
-			if (result == 0 && ef800_storage_is_mounted()) {
-				result = ef800_mcumgr_transport_init();
-				if (result != 0) {
-					LOG_WRN("MCUmgr DebugConsole transport unavailable: %d", result);
-				} else {
-					LOG_INF("MCUmgr raw FS transport active on DebugConsole; shell input is paused");
+#if CONFIG_EF800_MAIN_PLUGIN_USER_WORKER
+			if (plugin_discovery_ready) {
+				int recovery_handler_result =
+					ef800_plugin_host_set_route_recovery_handler(
+						recover_plugin_uart_route, NULL);
+
+				if (recovery_handler_result != 0) {
+					LOG_ERR("Plugin route recovery handler registration failed: %d",
+						recovery_handler_result);
 				}
+			}
+#endif
+			if (result == 0 && ef800_storage_is_mounted()) {
+				LOG_INF("Interactive shell active on DebugConsole; run 'mcumgr start' to enter raw FS mode");
 			}
 		}
 	}
@@ -5655,23 +6975,42 @@ result = ef800_mcp23017_open(&mcp23017,
 		}
 	}
 
-#if DT_HAS_COMPAT_STATUS_OKAY(maxim_max17048)
-	#if CONFIG_EF800_MAIN_PROBE_FUEL_GAUGE_AT_STARTUP
-	result = ef800_max17043_init(&fuel_gauge, &fuel_gauge_i2c);
-	if (result != 0) {
-		LOG_WRN("MAX17043 unavailable; continuing without battery status: %d",
-			result);
-	} else {
-		fuel_gauge_ready = true;
-	}
-	#else
-	LOG_INF("MAX17043 startup probe disabled; continuing without battery status");
-	#endif
-#else
-	LOG_INF("MAX17043-compatible fuel gauge disabled: no enabled MAX17048 node");
-#endif
+	enum ef800_battery_soc_source battery_source =
+		battery_soc_composition_source();
+	ef800_runtime_battery_reader_t battery_reader = NULL;
+	void *battery_reader_context = NULL;
 
-	ef800_runtime_state_init(&runtime_state, &fuel_gauge, fuel_gauge_ready);
+	if (battery_source == EF800_BATTERY_SOC_SOURCE_MAX17048) {
+#if DT_HAS_COMPAT_STATUS_OKAY(maxim_max17048)
+		#if CONFIG_EF800_MAIN_PROBE_FUEL_GAUGE_AT_STARTUP
+		result = ef800_battery_soc_gauge_init(&battery_gauge_source,
+			probe_max17048, read_max17048, &fuel_gauge);
+		if (result == 0) {
+			battery_reader = ef800_battery_soc_gauge_read;
+			battery_reader_context = &battery_gauge_source;
+			LOG_INF("MAX17048 will be probed once by the runtime battery worker");
+		} else {
+			LOG_ERR("MAX17048 source setup failed: %d", result);
+		}
+		#else
+		LOG_INF("MAX17048 probe disabled; battery SOC unavailable");
+		#endif
+#else
+		LOG_INF("MAX17048-compatible fuel gauge disabled: no enabled I2C node");
+#endif
+	} else if (battery_source == EF800_BATTERY_SOC_SOURCE_ADC) {
+		result = adc_channel_setup_dt(&battery_adc);
+		if (result != 0) {
+			LOG_WRN("Battery ADC unavailable on PC1: %d", result);
+		} else {
+			battery_adc_ready = true;
+			battery_reader = read_adc_battery;
+		}
+	} else {
+		LOG_INF("BATSOC0 active; battery SOC is disabled by composition");
+	}
+	ef800_runtime_state_init(&runtime_state, battery_reader,
+		battery_reader_context);
 	runtime_state_ready = true;
 	ef800_runtime_state_start(&runtime_state);
 	LOG_INF("Main startup checkpoint: runtime state started");
@@ -5700,6 +7039,17 @@ result = ef800_mcp23017_open(&mcp23017,
 		static int64_t next_status_update_ms;
 		static enum ef800_storage_owner storage_owner =
 			EF800_STORAGE_OWNER_FAT;
+#ifdef CONFIG_BOARD_NATIVE_SIM
+		if (virtual_power_off) {
+			if (k_msgq_get(&keyboard_rx_msgq, &byte, K_FOREVER) == 0) {
+				process_keyboard_byte(byte, k_uptime_get_32());
+			}
+			continue;
+		}
+#endif
+#if CONFIG_EF800_MAIN_PLUGIN_USER_WORKER
+		process_plugin_async_completion();
+#endif
 		bool requested = ef800_main_usb_msd_requested();
 		enum ef800_storage_action storage_action =
 			ef800_storage_owner_action(storage_owner, requested);
@@ -5712,9 +7062,11 @@ result = ef800_mcp23017_open(&mcp23017,
 		if (storage_action == EF800_STORAGE_ACTION_FAT_TO_MSC && !msc_requested) {
 			int unmount_result;
 			int msc_result = 0;
+			bool mcumgr_was_active = mcumgr_transport_active;
 
 			msc_requested = true;
 			ef800_mcumgr_transport_stop();
+			mcumgr_transport_active = false;
 			unmount_result = ef800_storage_unmount();
 			if (unmount_result == 0) {
 				msc_result = ef800_main_usb_msc_start();
@@ -5734,12 +7086,14 @@ result = ef800_mcp23017_open(&mcp23017,
 				if (mount_result != 0) {
 					LOG_ERR("QSPI FAT rollback after USB failure failed: %d",
 						mount_result);
-				} else {
+				} else if (mcumgr_was_active) {
 					int transport_result = ef800_mcumgr_transport_init();
 
 					if (transport_result != 0) {
 						LOG_WRN("MCUmgr transport rollback failed: %d",
 							transport_result);
+					} else {
+						mcumgr_transport_active = true;
 					}
 				}
 			}
@@ -5752,12 +7106,20 @@ result = ef800_mcp23017_open(&mcp23017,
 				LOG_WRN("USB MSD removal requires reboot before FAT remount");
 			}
 		}
-		if (k_msgq_get(&keyboard_rx_msgq, &byte, K_MSEC(1000)) == 0) {
+		if (k_msgq_get(&keyboard_rx_msgq, &byte,
+#if CONFIG_EF800_MAIN_PLUGIN_USER_WORKER
+			K_MSEC(plugin_async_ui_pending ? 20 : 1000)) == 0) {
+#else
+			K_MSEC(1000)) == 0) {
+#endif
 			process_keyboard_byte(byte, k_uptime_get_32());
 		}
 		while (k_msgq_get(&keyboard_rx_msgq, &byte, K_NO_WAIT) == 0) {
 			process_keyboard_byte(byte, k_uptime_get_32());
 		}
+#if CONFIG_EF800_MAIN_PLUGIN_USER_WORKER
+		process_plugin_async_completion();
+#endif
 		if (k_uptime_get() >= next_status_update_ms) {
 			update_lcd_status();
 			next_status_update_ms = k_uptime_get() +

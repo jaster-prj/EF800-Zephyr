@@ -14,6 +14,16 @@
 static const struct device *const watchdog = DEVICE_DT_GET(DT_ALIAS(watchdog0));
 static int watchdog_channel = -1;
 static bool watchdog_inherited;
+
+static int adopt_inherited_watchdog(void)
+{
+	/* IWDG survives SYS_REBOOT_COLD. After a warm reset Zephyr's device may
+	 * not be ready even though the bootloader-started hardware timer is live. */
+	watchdog_channel = -1;
+	watchdog_inherited = true;
+	LL_IWDG_ReloadCounter(IWDG);
+	return 0;
+}
 #endif
 
 static int ef800_watchdog_early_feed(void)
@@ -39,14 +49,12 @@ int ef800_watchdog_start(unsigned int timeout_ms)
 	int ret;
 
 	if (!device_is_ready(watchdog)) {
-		return -ENODEV;
+		return adopt_inherited_watchdog();
 	}
 	watchdog_channel = wdt_install_timeout(watchdog, &timeout);
-	if (watchdog_channel == -EALREADY) {
+	if (watchdog_channel == -EALREADY || watchdog_channel == -ENODEV) {
 		/* The resident bootloader started IWDG; keep feeding that instance. */
-		watchdog_inherited = true;
-		LL_IWDG_ReloadCounter(IWDG);
-		return 0;
+		return adopt_inherited_watchdog();
 	}
 	if (watchdog_channel < 0) {
 		return watchdog_channel;
@@ -79,7 +87,7 @@ int ef800_watchdog_inherit(void)
 {
 #if DT_HAS_ALIAS(watchdog0) && DT_NODE_HAS_STATUS(DT_ALIAS(watchdog0), okay)
 	if (!device_is_ready(watchdog)) {
-		return -ENODEV;
+		return adopt_inherited_watchdog();
 	}
 	/* IWDG cannot be stopped on STM32L4; only reload the inherited instance. */
 	watchdog_inherited = true;

@@ -16,7 +16,9 @@
 #include <zephyr/logging/log.h>
 #include <zephyr/sys/clock.h>
 #include <zephyr/sys/timeutil.h>
+#include <zephyr/sys/util.h>
 #include <zephyr/storage/flash_map.h>
+#include <zephyr/storage/disk_access.h>
 
 #include "ef800_mcp23017.h"
 #include "ef800_metadata.h"
@@ -24,6 +26,7 @@
 #include "ef800_update.h"
 #include "ef800_watchdog.h"
 #include "ef800_qspi_layout.h"
+#include "ef800_composition.h"
 #ifdef CONFIG_BOARD_NATIVE_SIM
 #include "ef800_virtual_profile.h"
 #endif
@@ -51,6 +54,16 @@ LOG_MODULE_REGISTER(ef800_main, LOG_LEVEL_INF);
 
 #define EF800_MAIN_CONFIGURATION_DISK_NAME "EF800"
 #define EF800_MAIN_DATA_DISK_NAME "DATA"
+#define EF800_MAIN_QSPI_BOOTSTATE_OFFSET 0x000000U
+#define EF800_MAIN_QSPI_BOOTSTATE_SIZE 0x008000U
+#define EF800_MAIN_QSPI_CONFIGURATION_OFFSET 0x008000U
+#define EF800_MAIN_QSPI_CONFIGURATION_SIZE 0x0F8000U
+#define EF800_MAIN_QSPI_DATA_OFFSET 0x100000U
+#define EF800_MAIN_QSPI_DATA_SIZE 0x300000U
+#define EF800_MAIN_FAT_SECTOR_SIZE 512U
+#define EF800_MAIN_COMPOSITION_DIR "/EF800:/.configuration"
+#define EF800_MAIN_COMPOSITION_SLOT_A EF800_MAIN_COMPOSITION_DIR "/target_profile_a"
+#define EF800_MAIN_COMPOSITION_SLOT_B EF800_MAIN_COMPOSITION_DIR "/target_profile_b"
 
 #if DT_HAS_ALIAS(status_led)
 static const struct gpio_dt_spec status_led =
@@ -71,6 +84,10 @@ static const struct device *const ds3231 =
 
 static FATFS configuration_fat_fs;
 static FATFS data_fat_fs;
+static uint8_t qspi_composition_record[EF800_COMPOSITION_RECORD_MAX];
+static uint8_t qspi_composition_readback[EF800_COMPOSITION_RECORD_MAX];
+static struct ef800_composition_profile qspi_composition_expected;
+static struct ef800_composition_profile qspi_composition_decoded;
 static struct fs_mount_t configuration_mount = {
 	.type = FS_FATFS,
 	.mnt_point = EF800_STORAGE_MOUNT_POINT,
@@ -138,6 +155,303 @@ static int mount_storage_volume(struct fs_mount_t *mount, bool *mounted,
 		*mounted = true;
 	}
 	return ret;
+}
+
+static int qspi_partition_has_fat(uint8_t partition_id, off_t expected_offset,
+	size_t expected_size, bool *has_fat)
+{
+	const struct flash_area *area;
+	uint8_t boot_sector[EF800_MAIN_FAT_SECTOR_SIZE];
+	int ret;
+
+	if (has_fat == NULL) {
+		return -EINVAL;
+	}
+	*has_fat = false;
+	ret = flash_area_open(partition_id, &area);
+	if (ret != 0) {
+		return ret;
+	}
+	if (area->fa_off != expected_offset || area->fa_size != expected_size) {
+		flash_area_close(area);
+		return -EINVAL;
+	}
+	ret = flash_area_read(area, 0U, boot_sector, sizeof(boot_sector));
+	flash_area_close(area);
+	if (ret == 0) {
+		*has_fat = ef800_qspi_layout_is_legacy_fat(boot_sector);
+	}
+	return ret;
+}
+
+static int qspi_verify_fat_partition(uint8_t partition_id, off_t expected_offset,
+	size_t expected_size, const char *name)
+{
+	bool has_fat;
+	int ret = qspi_partition_has_fat(partition_id, expected_offset,
+		expected_size, &has_fat);
+
+	if (ret != 0) {
+		LOG_ERR("QSPI %s boot-sector read failed: %d", name, ret);
+		return ret;
+	}
+	if (!has_fat) {
+		LOG_ERR("QSPI %s formatter returned success, but raw FAT boot sector is invalid",
+			name);
+		return -EIO;
+	}
+	LOG_INF("QSPI %s FAT boot sector verified", name);
+	return 0;
+}
+
+static int qspi_write_composition_slot(const char *path,
+	const struct ef800_composition_profile *profile)
+{
+	struct fs_file_t file;
+	size_t record_length = 0U;
+	ssize_t length;
+	ssize_t written;
+	int ret;
+
+	ret = ef800_composition_profile_encode(profile,
+		(char *)qspi_composition_record, sizeof(qspi_composition_record),
+		&record_length);
+	if (ret != 0) {
+		return ret;
+	}
+	fs_file_t_init(&file);
+	ret = fs_open(&file, path, FS_O_CREATE | FS_O_WRITE | FS_O_TRUNC);
+	if (ret != 0) {
+		return ret;
+	}
+	written = fs_write(&file, qspi_composition_record, record_length);
+	ret = written == (ssize_t)record_length ? fs_sync(&file) : -EIO;
+	if (fs_close(&file) != 0 && ret == 0) {
+		ret = -EIO;
+	}
+	if (ret != 0) {
+		return ret;
+	}
+	ret = disk_access_ioctl(EF800_MAIN_CONFIGURATION_DISK_NAME,
+		DISK_IOCTL_CTRL_SYNC, NULL);
+	if (ret != 0) {
+		return ret;
+	}
+	fs_file_t_init(&file);
+	ret = fs_open(&file, path, FS_O_READ);
+	if (ret != 0) {
+		return ret;
+	}
+	length = fs_read(&file, qspi_composition_readback,
+		sizeof(qspi_composition_readback));
+	ret = fs_close(&file);
+	if (ret != 0) {
+		return ret;
+	}
+	if (length <= 0) {
+		return length < 0 ? (int)length : -EIO;
+	}
+	ret = ef800_composition_profile_decode(qspi_composition_readback,
+		(size_t)length, &qspi_composition_decoded);
+	if (ret != 0) {
+		return ret;
+	}
+	return ef800_composition_profile_equal(profile,
+		&qspi_composition_decoded) ? 0 : -EBADMSG;
+}
+
+static int qspi_seed_initial_composition(void)
+{
+	int ret = fs_mount(&configuration_mount);
+	int unmount_ret;
+
+	if (ret != 0) {
+		LOG_ERR("QSPI Configuration mount for COMPOSITION seed failed: %d", ret);
+		return ret;
+	}
+	configuration_mounted = true;
+	ret = fs_mkdir(EF800_MAIN_COMPOSITION_DIR);
+	if (ret == -EEXIST) {
+		ret = 0;
+	}
+	qspi_composition_expected = (struct ef800_composition_profile){
+		.generation = 1U,
+		.token_count = 2U,
+	};
+	strcpy(qspi_composition_expected.tokens[0], "BATSOC0");
+	strcpy(qspi_composition_expected.tokens[1], "LCDCONTR1");
+	if (ret == 0) {
+		ret = qspi_write_composition_slot(EF800_MAIN_COMPOSITION_SLOT_A,
+			&qspi_composition_expected);
+	}
+	if (ret != 0) {
+		LOG_ERR("QSPI initial COMPOSITION slot A write/verify failed: %d", ret);
+	} else {
+		qspi_composition_expected.generation = 2U;
+		ret = qspi_write_composition_slot(EF800_MAIN_COMPOSITION_SLOT_B,
+			&qspi_composition_expected);
+		if (ret != 0) {
+			LOG_ERR("QSPI initial COMPOSITION slot B write/verify failed: %d",
+				ret);
+		}
+	}
+	if (ret == 0) {
+		ret = disk_access_ioctl(EF800_MAIN_CONFIGURATION_DISK_NAME,
+			DISK_IOCTL_CTRL_SYNC, NULL);
+	}
+	unmount_ret = fs_unmount(&configuration_mount);
+	if (unmount_ret == 0) {
+		configuration_mounted = false;
+	} else if (ret == 0) {
+		ret = unmount_ret;
+	}
+	if (ret == 0) {
+		LOG_INF("Initial COMPOSITION profile BATSOC0/LCDCONTR1 verified");
+	}
+	return ret;
+}
+
+static int format_qspi_fat_volumes(void)
+{
+	int configuration_ret;
+	int data_ret;
+	int ret;
+
+	ret = fs_mkfs(FS_FATFS,
+		(uintptr_t)(EF800_MAIN_CONFIGURATION_DISK_NAME ":"), NULL, 0U);
+	if (ret != 0) {
+		LOG_ERR("QSPI Configuration fs_mkfs failed: %d", ret);
+		return ret;
+	}
+	ret = disk_access_ioctl(EF800_MAIN_CONFIGURATION_DISK_NAME,
+		DISK_IOCTL_CTRL_SYNC, NULL);
+	if (ret != 0) {
+		LOG_ERR("QSPI Configuration sync failed: %d", ret);
+		return ret;
+	}
+	ret = fs_mkfs(FS_FATFS,
+		(uintptr_t)(EF800_MAIN_DATA_DISK_NAME ":"), NULL, 0U);
+	if (ret != 0) {
+		LOG_ERR("QSPI Shared Data fs_mkfs failed: %d", ret);
+		return ret;
+	}
+	ret = disk_access_ioctl(EF800_MAIN_DATA_DISK_NAME,
+		DISK_IOCTL_CTRL_SYNC, NULL);
+	if (ret != 0) {
+		LOG_ERR("QSPI Shared Data sync failed: %d", ret);
+		return ret;
+	}
+	configuration_ret = qspi_verify_fat_partition(
+		PARTITION_ID(qspi_configuration_partition),
+		EF800_MAIN_QSPI_CONFIGURATION_OFFSET,
+		EF800_MAIN_QSPI_CONFIGURATION_SIZE, "Configuration");
+	data_ret = qspi_verify_fat_partition(PARTITION_ID(qspi_storage_partition),
+		EF800_MAIN_QSPI_DATA_OFFSET, EF800_MAIN_QSPI_DATA_SIZE,
+		"Shared Data");
+	ret = configuration_ret != 0 ? configuration_ret : data_ret;
+	return ret == 0 ? qspi_seed_initial_composition() : ret;
+}
+
+static int format_blank_qspi_layout_if_needed(void)
+{
+	const struct flash_area *boot_state_area;
+	bool configuration_has_fat;
+	bool data_has_fat;
+	int ret;
+
+	ret = qspi_partition_has_fat(PARTITION_ID(qspi_configuration_partition),
+		EF800_MAIN_QSPI_CONFIGURATION_OFFSET,
+		EF800_MAIN_QSPI_CONFIGURATION_SIZE, &configuration_has_fat);
+	if (ret != 0) {
+		return ret;
+	}
+	ret = qspi_partition_has_fat(PARTITION_ID(qspi_storage_partition),
+		EF800_MAIN_QSPI_DATA_OFFSET, EF800_MAIN_QSPI_DATA_SIZE,
+		&data_has_fat);
+	if (ret != 0 || configuration_has_fat || data_has_fat) {
+		return ret;
+	}
+
+	LOG_WRN("No valid Configuration or Shared Data FAT boot sector detected; provisioning QSPI for development");
+	ret = format_qspi_fat_volumes();
+	if (ret != 0) {
+		return ret;
+	}
+	ret = flash_area_open(PARTITION_ID(qspi_bootstate_partition),
+		&boot_state_area);
+	if (ret != 0) {
+		return ret;
+	}
+	if (boot_state_area->fa_off != EF800_MAIN_QSPI_BOOTSTATE_OFFSET ||
+	    boot_state_area->fa_size != EF800_MAIN_QSPI_BOOTSTATE_SIZE) {
+		flash_area_close(boot_state_area);
+		return -EINVAL;
+	}
+	ret = flash_area_erase(boot_state_area, 0U, boot_state_area->fa_size);
+	flash_area_close(boot_state_area);
+	if (ret != 0) {
+		LOG_ERR("QSPI boot-state NVS erase failed: %d", ret);
+		return ret;
+	}
+	LOG_INF("Blank QSPI provisioning complete; boot-state NVS reset");
+	return 0;
+}
+
+static int format_legacy_qspi_layout_if_needed(void)
+{
+	const struct flash_area *boot_state_area;
+	bool legacy_layout;
+	int ret;
+
+	ret = flash_area_open(PARTITION_ID(qspi_bootstate_partition),
+		&boot_state_area);
+	if (ret != 0) {
+		return ret;
+	}
+	ret = ef800_qspi_layout_check_legacy_area(boot_state_area, &legacy_layout);
+	flash_area_close(boot_state_area);
+	if (ret != 0) {
+		return ret;
+	}
+	if (!legacy_layout) {
+#if defined(CONFIG_FS_FATFS_MKFS) && CONFIG_FS_FATFS_MKFS
+		return IS_ENABLED(CONFIG_EF800_MAIN_FORMAT_BLANK_QSPI) ?
+			format_blank_qspi_layout_if_needed() : 0;
+#else
+		return 0;
+#endif
+	}
+
+	LOG_WRN("Legacy monolithic QSPI FAT detected");
+#if defined(CONFIG_EF800_MAIN_REFORMAT_LEGACY_QSPI) && \
+	CONFIG_EF800_MAIN_REFORMAT_LEGACY_QSPI && \
+	defined(CONFIG_FS_FATFS_MKFS) && CONFIG_FS_FATFS_MKFS
+	LOG_WRN("Reformatting legacy QSPI for development; all old volume contents will be lost");
+	/* Keep the old boot sector recognizable until both FAT partitions have
+	 * formatted successfully. If power fails during either format, the next
+	 * boot detects the legacy layout again and retries. */
+	ret = format_qspi_fat_volumes();
+	if (ret != 0) {
+		return ret;
+	}
+	ret = flash_area_open(PARTITION_ID(qspi_bootstate_partition),
+		&boot_state_area);
+	if (ret != 0) {
+		LOG_ERR("Legacy QSPI boot-state partition unavailable: %d", ret);
+		return ret;
+	}
+	ret = flash_area_erase(boot_state_area, 0U, boot_state_area->fa_size);
+	flash_area_close(boot_state_area);
+	if (ret != 0) {
+		LOG_ERR("Legacy QSPI boot-state erase failed: %d", ret);
+		return ret;
+	}
+	LOG_INF("Legacy QSPI reformat complete: boot-state NVS and both FAT volumes are blank");
+	return 0;
+#else
+	LOG_ERR("Legacy QSPI layout found, but FAT formatting is disabled");
+	return -ENOTSUP;
+#endif
 }
 
 #if !defined(CONFIG_BOARD_NATIVE_SIM)
@@ -609,7 +923,7 @@ static bool probe_ds3231(void)
 
 int ef800_storage_mount(void)
 {
-	const struct flash_area *configuration_area;
+	const struct flash_area *boot_state_area;
 	bool legacy_layout;
 	int result;
 	int directory_result;
@@ -622,13 +936,14 @@ int ef800_storage_mount(void)
 		return -ENODEV;
 	}
 #endif
-	result = flash_area_open(PARTITION_ID(qspi_configuration_partition),
-				 &configuration_area);
+	result = flash_area_open(PARTITION_ID(qspi_bootstate_partition),
+				 &boot_state_area);
 	if (result != 0) {
 		return result;
 	}
-	result = ef800_qspi_layout_check_legacy(configuration_area->fa_dev,
-						&legacy_layout);
+	result = ef800_qspi_layout_check_legacy_area(boot_state_area,
+		&legacy_layout);
+	flash_area_close(boot_state_area);
 	if (result != 0) {
 		return result;
 	}
@@ -735,6 +1050,173 @@ int ef800_storage_unmount(void)
 		data_mounted = false;
 	}
 	return ret;
+}
+
+int ef800_storage_unmount_all(void)
+{
+	int ret;
+
+	if (data_mounted) {
+		ret = fs_unmount(&data_mount);
+		if (ret != 0) {
+			return ret;
+		}
+		data_mounted = false;
+	}
+	if (configuration_mounted) {
+		ret = fs_unmount(&configuration_mount);
+		if (ret != 0) {
+			return ret;
+		}
+		configuration_mounted = false;
+	}
+	return 0;
+}
+
+static int qspi_erase_disk(const char *disk_name, uint32_t expected_sectors)
+{
+	uint32_t sector_count;
+	uint32_t sector_size;
+	uint32_t erase_block_sectors;
+	uint32_t chunk_sectors;
+	int ret;
+
+	ret = disk_access_ioctl(disk_name, DISK_IOCTL_GET_SECTOR_COUNT,
+		&sector_count);
+	if (ret == 0) {
+		ret = disk_access_ioctl(disk_name, DISK_IOCTL_GET_SECTOR_SIZE,
+			&sector_size);
+	}
+	if (ret == 0) {
+		ret = disk_access_ioctl(disk_name, DISK_IOCTL_GET_ERASE_BLOCK_SZ,
+			&erase_block_sectors);
+	}
+	if (ret != 0) {
+		return ret;
+	}
+	if (sector_count != expected_sectors || sector_size != EF800_MAIN_FAT_SECTOR_SIZE ||
+	    erase_block_sectors == 0U) {
+		LOG_ERR("QSPI disk %s geometry mismatch: sectors=%u sector-size=%u erase-block=%u",
+			disk_name, sector_count, sector_size, erase_block_sectors);
+		return -EINVAL;
+	}
+	chunk_sectors = MAX(128U, erase_block_sectors);
+	chunk_sectors -= chunk_sectors % erase_block_sectors;
+	if (chunk_sectors == 0U) {
+		chunk_sectors = erase_block_sectors;
+	}
+	for (uint32_t start = 0U; start < sector_count;) {
+		uint32_t count = MIN(chunk_sectors, sector_count - start);
+
+		count -= count % erase_block_sectors;
+		if (count == 0U) {
+			return -EINVAL;
+		}
+		ret = disk_access_erase(disk_name, start, count,
+			DISK_ACCESS_ERASE_PHYSICAL);
+		if (ret != 0) {
+			LOG_ERR("QSPI disk %s erase sectors %u..%u failed: %d",
+				disk_name, start, start + count - 1U, ret);
+			return ret;
+		}
+		start += count;
+		ef800_watchdog_feed();
+	}
+	return disk_access_ioctl(disk_name, DISK_IOCTL_CTRL_SYNC, NULL);
+}
+
+static int qspi_validate_partition_map(uint8_t partition_id,
+	off_t expected_offset, size_t expected_size, const char *name)
+{
+	const struct flash_area *area;
+	int ret = flash_area_open(partition_id, &area);
+
+	if (ret != 0) {
+		LOG_ERR("QSPI %s partition open failed: %d", name, ret);
+		return ret;
+	}
+	ret = (area->fa_off == expected_offset && area->fa_size == expected_size) ?
+		0 : -EINVAL;
+	if (ret != 0) {
+		LOG_ERR("Refusing QSPI format: unexpected %s map off=0x%08x size=0x%08x",
+			name, (unsigned int)area->fa_off, (unsigned int)area->fa_size);
+	}
+	flash_area_close(area);
+	return ret;
+}
+
+int ef800_storage_format_qspi_layout(void)
+{
+	const struct flash_area *boot_state_area;
+	int ret;
+
+	if (configuration_mounted || data_mounted || ef800_main_usb_msd_requested()) {
+		return -EBUSY;
+	}
+	ret = qspi_validate_partition_map(PARTITION_ID(qspi_bootstate_partition),
+		EF800_MAIN_QSPI_BOOTSTATE_OFFSET, EF800_MAIN_QSPI_BOOTSTATE_SIZE,
+		"boot-state NVS");
+	if (ret == 0) {
+		ret = qspi_validate_partition_map(
+			PARTITION_ID(qspi_configuration_partition),
+			EF800_MAIN_QSPI_CONFIGURATION_OFFSET,
+			EF800_MAIN_QSPI_CONFIGURATION_SIZE, "Configuration FAT");
+	}
+	if (ret == 0) {
+		ret = qspi_validate_partition_map(PARTITION_ID(qspi_storage_partition),
+			EF800_MAIN_QSPI_DATA_OFFSET, EF800_MAIN_QSPI_DATA_SIZE,
+			"Shared Data FAT");
+	}
+	if (ret != 0) {
+		return ret;
+	}
+
+	LOG_WRN("Erasing all 4 MiB QSPI contents and formatting Configuration/Shared Data");
+	ret = disk_access_init(EF800_MAIN_CONFIGURATION_DISK_NAME);
+	if (ret == 0) {
+		ret = disk_access_init(EF800_MAIN_DATA_DISK_NAME);
+	}
+	if (ret == 0) {
+		ret = disk_access_ioctl(EF800_MAIN_CONFIGURATION_DISK_NAME,
+			DISK_IOCTL_CTRL_SYNC, NULL);
+	}
+	if (ret == 0) {
+		ret = disk_access_ioctl(EF800_MAIN_DATA_DISK_NAME,
+			DISK_IOCTL_CTRL_SYNC, NULL);
+	}
+	if (ret == 0) {
+		ret = qspi_erase_disk(EF800_MAIN_CONFIGURATION_DISK_NAME,
+			EF800_MAIN_QSPI_CONFIGURATION_SIZE /
+			EF800_MAIN_FAT_SECTOR_SIZE);
+	}
+	if (ret == 0) {
+		ret = qspi_erase_disk(EF800_MAIN_DATA_DISK_NAME,
+			EF800_MAIN_QSPI_DATA_SIZE / EF800_MAIN_FAT_SECTOR_SIZE);
+	}
+	if (ret != 0) {
+		LOG_ERR("QSPI FAT partition erase failed: %d", ret);
+		return ret;
+	}
+
+	ret = format_qspi_fat_volumes();
+	if (ret != 0) {
+		LOG_ERR("QSPI FAT format or raw verification failed: %d", ret);
+		return ret;
+	}
+	ret = flash_area_open(PARTITION_ID(qspi_bootstate_partition),
+		&boot_state_area);
+	if (ret != 0) {
+		return ret;
+	}
+	ret = flash_area_erase(boot_state_area, 0U, boot_state_area->fa_size);
+	flash_area_close(boot_state_area);
+	if (ret != 0) {
+		LOG_ERR("QSPI boot-state NVS erase failed: %d", ret);
+		return ret;
+	}
+	ef800_watchdog_feed();
+	LOG_INF("Full QSPI layout erase and FAT formatting verified");
+	return 0;
 }
 
 bool ef800_main_rtc_is_ready(void)
@@ -848,14 +1330,25 @@ int ef800_main_reload_time_settings(void)
 int ef800_main_foundation_init(void)
 {
 	bool watchdog_task_started;
+	int qspi_provisioning_result;
 	int storage_result;
 
 	watchdog_task_started = init_watchdog_task();
 	status_led_initialized = init_status_led();
 	mcp23017_detected = probe_mcp23017();
+	qspi_provisioning_result = format_legacy_qspi_layout_if_needed();
+	if (qspi_provisioning_result != 0) {
+		LOG_WRN("QSPI provisioning/reformat was not completed: %d",
+			qspi_provisioning_result);
+	}
 	/* Boot state is independent of both FAT volumes and must recover first. */
 	report_boot_state();
-	storage_result = ef800_storage_mount();
+	if (qspi_provisioning_result == 0) {
+		storage_result = ef800_storage_mount();
+	} else {
+		storage_result = qspi_provisioning_result;
+		LOG_WRN("QSPI mounts skipped because provisioning did not verify");
+	}
 	if (storage_result != 0 && storage_result != -ENOTSUP &&
 		storage_result != -EBUSY) {
 		LOG_WRN("QSPI storage unavailable: %d", storage_result);

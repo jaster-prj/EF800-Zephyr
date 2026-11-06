@@ -1,0 +1,35 @@
+@startuml main_startup_qspi
+title Main Startup and Guarded Legacy-QSPI Reformat
+autonumber
+
+participant Bootloader as BL
+participant "Main composition root" as Main
+participant "QSPI layout checker" as Layout
+database "QSPI partitions" as Q
+participant "FAT / NVS services" as FS
+participant "UI, ports, plugins, USB" as App
+
+BL -> Main : validated handoff
+Main -> Main : prepare console, shell and UI
+Main -> Layout : read logical QSPI offset zero
+Layout -> Q : read sector via flash-area base mapping
+Q --> Layout : boot-sector bytes
+alt validated legacy FAT and development reformat enabled
+  Layout --> Main : legacy layout detected
+  Main -> FS : format Configuration FAT
+  FS -> Q : initialize Configuration partition
+  Main -> FS : format Shared Data FAT
+  FS -> Q : initialize Shared Data partition
+  Main -> Q : erase boot-state NVS last
+  note over Main, Q : Old contents are discarded; no file migration
+else validated legacy FAT; option disabled
+  Layout --> Main : legacy layout detected
+  Main -> Main : skip incompatible QSPI-backed services
+else no validated legacy signature
+  Layout --> Main : new / blank / unrecognized layout
+  Main -> FS : read boot state and mount normal volumes
+end
+Main -> App : initialize with available storage
+App --> Main : defaults or persisted configuration
+Main -> Main : enter normal event/UI loop
+@enduml

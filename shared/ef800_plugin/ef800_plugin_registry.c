@@ -81,8 +81,9 @@ int ef800_plugin_registry_record_diagnostic(
 		.menu_category = EF800_PLUGIN_MENU_MEASUREMENT,
 	};
 
-	if (registry == NULL || plugin_id == 0u || state ==
-		EF800_PLUGIN_REGISTRY_READY) {
+	if (registry == NULL || plugin_id == 0u ||
+		state <= EF800_PLUGIN_REGISTRY_READY ||
+		state > EF800_PLUGIN_REGISTRY_TIMED_OUT) {
 		return -EINVAL;
 	}
 	if (ef800_plugin_registry_find(registry, plugin_id) != NULL) {
@@ -102,8 +103,9 @@ int ef800_plugin_registry_set_state(struct ef800_plugin_registry *registry,
 {
 	struct ef800_plugin_registry_entry *entry;
 
-	if (registry == NULL || plugin_id == 0u || state ==
-		EF800_PLUGIN_REGISTRY_READY) {
+	if (registry == NULL || plugin_id == 0u ||
+		state <= EF800_PLUGIN_REGISTRY_READY ||
+		state > EF800_PLUGIN_REGISTRY_TIMED_OUT) {
 		return -EINVAL;
 	}
 	entry = (struct ef800_plugin_registry_entry *)

@@ -1,0 +1,30 @@
+@startuml measurement_plugin
+title Measurement Through an External Package
+autonumber
+
+actor Operator as User
+participant "Main UI" as UI
+participant "Port assignment / transport registry" as Ports
+participant "Plugin host" as Host
+participant PluginManager as PM
+participant "External instrument" as Instrument
+participant "Workspace persistence" as Workspace
+
+User -> UI : select measurement and start
+UI -> Ports : resolve selected port and assigned plugin
+Ports --> UI : transport + plugin identity
+UI -> Host : activate measurement plugin
+Host -> PM : resolve package and create instance
+PM --> Host : validated descriptor / plugin API
+Host -> PM : invoke through EF800 contract
+PM -> Instrument : protocol request through host transport
+Instrument --> PM : response bytes
+PM --> Host : structured result
+Host -> Host : validate result bounds and fields
+Host --> UI : result or diagnostic
+UI -> Workspace : append accepted result when requested
+Workspace --> UI : persistence status
+UI --> User : render result / error
+UI -> Host : deactivate / release session
+Host -> PM : destroy instance and release resources
+@enduml

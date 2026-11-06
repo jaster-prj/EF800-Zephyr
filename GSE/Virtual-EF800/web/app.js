@@ -30,30 +30,45 @@
   const deviceResponse = document.querySelector('#device-response');
   const deviceAvailable = document.querySelector('#device-available');
   const deviceStatus = document.querySelector('#device-status');
+  const batterySocInput = document.querySelector('#battery-soc');
+  const batterySocApply = document.querySelector('#battery-soc-apply');
+  const batterySocStatus = document.querySelector('#battery-soc-status');
   let socket, controller = false, simulator = false, reconnectTimer;
   let mtpCurrentPath = '', mtpBusy = false, mtpAbortController = null;
   let mtpActiveRequestId = null;
   let compositionState = null, compositionBusy = false;
+  let batterySocBusy = false, batterySocSource = null;
   let compositionApplyButtons = [];
   let lcdContrastEnabled = false, lcdContrastDuty = 78, lastLcdPixels = null;
+  const LCD_BACKGROUND = [106, 119, 88];
+  const LCD_DARK_INK = [16, 22, 14];
+  const LCD_DEEP_INK = [4, 7, 4];
   const held = new Set();
   const MAX_LOG_RECORDS = 64;
   const logRecords = [];
   let logsPaused = false, lastLogSequence = null;
 
   function setStatus(message) { status.textContent = message; }
-  function lcdInkLevel() {
-    if (!lcdContrastEnabled) return 17;
-    if (lcdContrastDuty <= 78)
-      return Math.round(255 - (238 * lcdContrastDuty / 78));
-    return Math.round(17 * (100 - lcdContrastDuty) / 22);
+  function lcdInkColor() {
+    if (!lcdContrastEnabled) return LCD_DARK_INK;
+    let from, to, amount;
+    if (lcdContrastDuty <= 78) {
+      from = LCD_BACKGROUND;
+      to = LCD_DARK_INK;
+      amount = lcdContrastDuty / 78;
+    } else {
+      from = LCD_DARK_INK;
+      to = LCD_DEEP_INK;
+      amount = (lcdContrastDuty - 78) / 22;
+    }
+    return from.map((channel, index) =>
+      Math.round(channel + (to[index] - channel) * amount));
   }
   function applyLcdContrast(enabled, duty) {
     if (typeof enabled !== 'boolean' || !Number.isInteger(duty) || duty < 0 || duty > 100)
       return;
     lcdContrastEnabled = enabled;
     lcdContrastDuty = duty;
-    const level = lcdInkLevel();
     if (lastLcdPixels !== null) renderPixels(lastLcdPixels);
   }
   function send(message) {
@@ -67,11 +82,14 @@
     const pixels = new Uint8Array(FRAME_SIZE);
     for (let i = 0; i < FRAME_SIZE; i++) pixels[i] = parseInt(hex.slice(i * 2, i * 2 + 2), 16);
     const image = context.createImageData(WIDTH, HEIGHT);
-    const ink = lcdInkLevel();
+    const ink = lcdInkColor();
     for (let y = 0; y < HEIGHT; y++) for (let x = 0; x < WIDTH; x++) {
       const on = pixels[y * 30 + Math.floor(x / 8)] & (1 << (x % 8));
       const index = (y * WIDTH + x) * 4;
-      image.data[index] = image.data[index + 1] = image.data[index + 2] = on ? ink : 255;
+      const color = on ? ink : LCD_BACKGROUND;
+      image.data[index] = color[0];
+      image.data[index + 1] = color[1];
+      image.data[index + 2] = color[2];
       image.data[index + 3] = 255;
     }
     context.putImageData(image, 0, 0);
@@ -94,6 +112,10 @@
         !compositionState || !compositionState.available ||
         compositionState.restartRequired;
     });
+    const batteryDisabled = !controller || !simulator || batterySocBusy ||
+      batterySocSource === null || batterySocSource === 'BATSOC0';
+    batterySocInput.disabled = batteryDisabled;
+    batterySocApply.disabled = batteryDisabled;
   }
   function renderComposition(state) {
     compositionState = state;
@@ -144,6 +166,31 @@
       'Composition committed. Restart the simulator to activate the selected items.' :
       'Changes are committed through the profile service; they take effect after restart.';
     updateControls();
+  }
+  function renderBatterySoc(message) {
+    if (!Number.isInteger(message.socPercent) ||
+        message.socPercent < 0 || message.socPercent > 100) return;
+    batterySocInput.value = String(message.socPercent);
+    batterySocSource = typeof message.source === 'string' ? message.source : null;
+    batterySocStatus.textContent = batterySocSource && batterySocSource !== 'BATSOC0' ?
+      `Virtual battery input: ${message.socPercent}% (${batterySocSource}).` :
+      'No battery SOC source is active.';
+    updateControls();
+  }
+  function applyBatterySoc() {
+    const socPercent = batterySocInput.valueAsNumber;
+    if (!Number.isInteger(socPercent) || socPercent < 0 || socPercent > 100) {
+      batterySocStatus.textContent = 'Enter an integer from 0 to 100.';
+      return;
+    }
+    batterySocBusy = true;
+    batterySocStatus.textContent = `Applying virtual battery SOC ${socPercent}%...`;
+    updateControls();
+    if (!send({command: 'battery-soc-set', socPercent})) {
+      batterySocBusy = false;
+      batterySocStatus.textContent = 'Simulator is disconnected.';
+      updateControls();
+    }
   }
   function setMtpStatus(message) { mtpStatus.textContent = message; }
   function setMtpBusy(busy) {
@@ -330,6 +377,7 @@
       if (message.type === 'status') {
         const wasSimulator = simulator;
         simulator = !!message.simulatorConnected;
+        if (!simulator) batterySocBusy = false;
         if (!message.controller || !message.simulatorConnected) clearHeld();
         controller = !!message.controller && controller;
          setStatus(`${simulator ? 'Simulator connected' : 'Simulator disconnected'} - ${controller ? 'controller' : 'viewer'}${message.stale ? ' (display stale)' : ''}${message.capabilities ? ` - ${message.capabilities}` : ''}`);
@@ -341,6 +389,8 @@
           applyLcdContrast(message.enabled, message.duty);
         } else if (message.type === 'composition') {
           renderComposition(message);
+        } else if (message.type === 'battery-soc') {
+          renderBatterySoc(message);
         } else if (message.type === 'log') {
         appendLog(message);
       } else if (message.type === 'log-epoch') {
@@ -364,6 +414,12 @@
           'Composition committed. Restart the simulator to activate the selected items.' :
           `Composition change rejected: ${message.error || 'unknown error'}`;
         updateControls();
+      } else if (message.type === 'ack' && message.command === 'battery-soc-set') {
+        batterySocBusy = false;
+        batterySocStatus.textContent = message.accepted ?
+          `Virtual battery SOC set to ${message.socPercent}%.` :
+          `Battery SOC update rejected: ${message.error || 'unknown error'}`;
+        updateControls();
       } else if (message.type === 'error' && compositionBusy) {
         compositionBusy = false;
         compositionStatus.textContent = `Command rejected: ${message.error || 'unknown error'}`;
@@ -381,7 +437,8 @@
       }
     };
     socket.onclose = () => {
-      controller = false; simulator = false; compositionBusy = false; clearHeld(); updateControls();
+      controller = false; simulator = false; compositionBusy = false;
+      batterySocBusy = false; clearHeld(); updateControls();
       setStatus('Disconnected; retrying...'); clearTimeout(reconnectTimer); reconnectTimer = setTimeout(connect, 1000);
     };
   }
@@ -414,6 +471,7 @@
   deviceDockButtons.forEach(button => {
     button.onclick = () => dockDevice(Number(button.dataset.dockPort));
   });
+  batterySocApply.onclick = applyBatterySoc;
   logsPause.onclick = () => {
     logsPaused = !logsPaused;
     logsPause.textContent = logsPaused ? 'Resume' : 'Pause';

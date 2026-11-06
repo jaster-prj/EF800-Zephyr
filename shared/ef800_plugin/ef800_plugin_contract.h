@@ -5,15 +5,20 @@
 #include <stddef.h>
 #include <stdint.h>
 
-#define EF800_PLUGIN_CONTRACT_VERSION 3u
+#include "ef800_plugin_metadata.h"
+#include "ef800_plugin_worker_abi.h"
+
+#define EF800_PLUGIN_CONTRACT_VERSION 4u
+#define EF800_CALCULATION_API_VERSION 1u
 
 #define EF800_PLUGIN_MAX_NAME_LENGTH 31u
 #define EF800_PLUGIN_MAX_VERSION_LENGTH 15u
 #define EF800_PLUGIN_SCREEN_ROWS 6u
 #define EF800_PLUGIN_SCREEN_COLUMNS 40u
 #define EF800_PLUGIN_MAX_INPUT_LENGTH 32u
-#define EF800_PLUGIN_MAX_WORKSPACE_SNAPSHOT 4096u
-#define EF800_PLUGIN_MAX_RESULT 4096u
+#define EF800_PLUGIN_MAX_WORKSPACE_SNAPSHOT \
+	EF800_PLUGIN_WORKER_MAX_WORKSPACE_SNAPSHOT
+#define EF800_PLUGIN_MAX_RESULT EF800_PLUGIN_WORKER_MAX_RESULT
 
 #define EF800_PLUGIN_APPLICATION_UUID_BYTES \
 	0x65u, 0x66u, 0x38u, 0x30u, 0x30u, 0x2du, 0x61u, 0x70u, \
@@ -30,11 +35,6 @@
 #define EF800_PLUGIN_PORT_SERVICE_UUID_BYTES \
 	0x65u, 0x66u, 0x38u, 0x30u, 0x30u, 0x2du, 0x70u, 0x6fu, \
 	0x72u, 0x74u, 0x2du, 0x76u, 0x31u, 0x00u, 0x00u, 0x01u
-
-#define EF800_PLUGIN_METADATA_UUID_BYTES \
-	0x65u, 0x66u, 0x38u, 0x30u, 0x30u, 0x2du, 0x6du, 0x65u, \
-	0x74u, 0x61u, 0x2du, 0x76u, 0x31u, 0x00u, 0x00u, 0x01u
-#define EF800_PLUGIN_METADATA_VERSION 2u
 
 #define EF800_PLUGIN_UI_SERVICE_UUID_BYTES \
 	0x65u, 0x66u, 0x38u, 0x30u, 0x30u, 0x2du, 0x75u, 0x69u, \
@@ -76,21 +76,6 @@ struct ef800_plugin_uuid {
 	uint8_t bytes[16];
 };
 
-struct ef800_plugin_metadata {
-	uint8_t metadata_id[16];
-	uint16_t version;
-	uint16_t size;
-	uint32_t required_hardware;
-	uint32_t measurement_ui_version;
-	uint32_t measurement_ui_size;
-	uint32_t measurement_actions;
-	uint32_t serial_baudrate;
-	uint8_t serial_data_bits;
-	uint8_t serial_parity;
-	uint8_t serial_stop_bits;
-	uint8_t serial_flow_control;
-};
-
 struct ef800_calculation_api {
 	uint32_t abi_version;
 	uint32_t struct_size;
@@ -110,6 +95,7 @@ struct ef800_plugin_descriptor_info {
 	uint32_t interface_version;
 	uint32_t capabilities;
 	uint32_t required_hardware;
+	uint32_t worker_services;
 	uint32_t measurement_actions;
 	uint32_t serial_baudrate;
 	uint8_t serial_data_bits;

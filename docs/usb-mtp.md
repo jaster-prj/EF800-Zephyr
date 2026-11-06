@@ -40,8 +40,10 @@ cleanup must not report or leave a partial upload as a completed file.
 None, USB DebugConsole, and USB MTP are runtime-switchable. Port 4 selects MTP
 through the application assignment UI. Entering or leaving USB MSC persists the
 selection and requires a controlled restart so raw MSC and filesystem ownership
-cannot coexist in one boot. Native-sim uses `USBMSD0`, which omits Main MSC;
-physical EF800 uses the separate `USBMSD1` composition choice.
+cannot coexist in one boot. `USBMSD0` disables Main MSC; `USBMSD1` enables it.
+Physical EF800 defaults to `USBMSD1`; select `usbmsd mode USBMSD0` on the
+MainApplication shell and restart to disable Main MSC. Native-sim defaults to
+`USBMSD0` and does not compile Main MSC.
 
 MTP accesses approved roots through Zephyr FS/FatFS APIs. Configuration FAT and
 Shared Data FAT remain separately mounted. MainApplication and BackupApplication

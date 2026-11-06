@@ -97,9 +97,12 @@ class VirtualFrontPanelTests(unittest.TestCase):
     def test_composition_result_and_state_validation(self):
         result = decode_composition_result(COMPOSITION_RESULT.pack(4, 1, -114))
         self.assertEqual(result, {"requestId": 4, "accepted": False, "error": -114})
-        state = decode_composition_state(b'{"type":"composition","version":1,"available":true,"restartRequired":false,"groups":[{"id":"LCDCONTR","active":"LCDCONTR0","selected":"LCDCONTR1","options":[{"token":"LCDCONTR0","default":true},{"token":"LCDCONTR1","default":false}]}]}')
+        state = decode_composition_state(b'{"type":"composition","version":1,"available":true,"restartRequired":false,"groups":[{"id":"BATSOC","active":"BATSOC2","selected":"BATSOC1","options":[{"token":"BATSOC0","default":false},{"token":"BATSOC1","default":false},{"token":"BATSOC2","default":true}]},{"id":"LCDCONTR","active":"LCDCONTR0","selected":"LCDCONTR1","options":[{"token":"LCDCONTR0","default":true},{"token":"LCDCONTR1","default":false}]}]}')
         self.assertTrue(state["available"])
-        self.assertEqual(state["groups"][0]["selected"], "LCDCONTR1")
+        self.assertEqual(state["groups"][0]["id"], "BATSOC")
+        self.assertEqual(state["groups"][0]["active"], "BATSOC2")
+        self.assertEqual(state["groups"][0]["selected"], "BATSOC1")
+        self.assertEqual(state["groups"][1]["selected"], "LCDCONTR1")
         with self.assertRaises(ProtocolError):
             decode_composition_result(COMPOSITION_RESULT.pack(0, 0, 0))
         with self.assertRaises(ProtocolError):

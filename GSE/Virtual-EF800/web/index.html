@@ -24,46 +24,59 @@
 
     <div class="workbench-grid">
       <section class="notebook" aria-label="EF800 field notebook">
-        <div class="notebook-brand"><span>EF800</span><span>FIELD NOTEBOOK</span></div>
+        <div class="notebook-brand"><span>EF800</span><span>MICROPORT</span></div>
 
-        <div class="lcd-bezel">
-          <div class="lcd-caption"><span>LCD DISPLAY</span><span>240 × 64</span></div>
-          <div class="lcd-surface" aria-label="EF800 LCD screen">
-            <canvas id="lcd" width="240" height="64" aria-label="EF800 display pixels"></canvas>
+        <section class="hardware-face" aria-label="EF800 hardware face">
+          <div class="lcd-bezel">
+            <div class="lcd-surface" aria-label="EF800 LCD screen">
+              <canvas id="lcd" width="240" height="64" aria-label="EF800 display pixels"></canvas>
+            </div>
           </div>
-        </div>
 
-        <section id="keypad" class="physical-key-layout" aria-label="EF800 keyboard">
-          <aside class="key-bank key-bank-left" aria-label="left-side keys">
-            <span class="bank-label">LEFT SIDE</span>
-            <button data-key="on" aria-pressed="false">ON</button>
-            <button data-key="off" aria-pressed="false">OFF</button>
-            <button data-key="escape" aria-pressed="false">ESC</button>
-            <button data-key="tab" aria-pressed="false">TAB</button>
-            <button data-key="shift" aria-pressed="false">SHIFT</button>
-            <button data-key="ctrl" aria-pressed="false">CTRL</button>
-            <button data-key="alt" aria-pressed="false">ALT</button>
-            <button data-key="caps" aria-pressed="false">CAPS</button>
+          <aside class="key-bank key-bank-left" aria-label="left-side modifier keys">
+            <button class="modifier-key" data-key="on" aria-pressed="false">ON</button>
+            <button class="modifier-key" data-key="off" aria-pressed="false">OFF</button>
+            <button class="modifier-key" data-key="escape" aria-pressed="false">ESC</button>
+            <button class="modifier-key" data-key="insert" aria-pressed="false">INS</button>
+            <button class="modifier-key" data-key="alt" aria-pressed="false">ALT</button>
+            <button class="symbol-key" data-key="caret" aria-label="Caret" aria-pressed="false"><small>?</small><span>^</span></button>
+            <button class="modifier-key" data-key="tab" aria-pressed="false">TAB</button>
+            <button class="symbol-key" data-key="less" aria-label="Less than" aria-pressed="false"><small>&gt;</small><span>&lt;</span></button>
+            <button class="modifier-key" data-key="caps" aria-pressed="false">CAPS</button>
+            <span class="key-empty" aria-hidden="true"></span>
+            <button class="modifier-key modifier-wide" data-key="shift" aria-pressed="false">SHIFT</button>
+            <button class="modifier-key modifier-wide" data-key="ctrl" aria-pressed="false">CTRL</button>
           </aside>
 
-          <div class="bottom-key-matrix" aria-label="bottom keyboard keys">
-            <span class="bank-label">BOTTOM KEYBOARD</span>
-            <div class="key-row key-row-number">
-              <button data-key="1" aria-pressed="false">1</button>
-              <button data-key="2" aria-pressed="false">2</button>
-              <button data-key="3" aria-pressed="false">3</button>
-              <button data-key="4" aria-pressed="false">4</button>
-              <button data-key="5" aria-pressed="false">5</button>
-              <button data-key="6" aria-pressed="false">6</button>
-              <button data-key="7" aria-pressed="false">7</button>
-              <button data-key="8" aria-pressed="false">8</button>
-              <button data-key="9" aria-pressed="false">9</button>
-              <button data-key="0" aria-pressed="false">0</button>
-              <button data-key="minus" aria-pressed="false">−</button>
-              <button data-key="plus" aria-pressed="false">+</button>
-              <button data-key="less" aria-pressed="false">&lt;</button>
+          <aside class="key-bank key-bank-right" aria-label="function and numeric keys">
+            <div class="function-pad" aria-label="function navigation keys">
+              <button data-key="delete" aria-label="F1 Delete" aria-pressed="false"><small>F1</small><span>DEL</span></button>
+              <button data-key="up" aria-label="F2 Up" aria-pressed="false"><small>F2</small><span>▲</span></button>
+              <button data-key="backspace" aria-label="F3 Backspace" aria-pressed="false"><small>F3</small><span>⌫</span></button>
+              <button data-key="left" aria-label="F4 Left" aria-pressed="false"><small>F4</small><span>◀</span></button>
+              <button data-key="down" aria-label="F5 Down" aria-pressed="false"><small>F5</small><span>▼</span></button>
+              <button data-key="right" aria-label="F6 Right" aria-pressed="false"><small>F6</small><span>▶</span></button>
             </div>
-            <div class="key-row">
+            <div class="number-pad" aria-label="numeric keypad">
+              <button data-key="7" aria-pressed="false"><small>/</small><span>7</span></button>
+              <button data-key="8" aria-pressed="false"><small>(</small><span>8</span></button>
+              <button data-key="9" aria-pressed="false"><small>)</small><span>9</span></button>
+              <button data-key="4" aria-pressed="false"><small>$</small><span>4</span></button>
+              <button data-key="5" aria-pressed="false"><small>%</small><span>5</span></button>
+              <button data-key="6" aria-pressed="false"><small>!</small><span>6</span></button>
+              <button data-key="1" aria-pressed="false"><small>!</small><span>1</span></button>
+              <button data-key="2" aria-pressed="false"><small>&quot;</small><span>2</span></button>
+              <button data-key="3" aria-pressed="false"><small>#</small><span>3</span></button>
+              <button data-key="minus" aria-pressed="false"><small>−</small><span>−</span></button>
+              <button data-key="0" aria-pressed="false"><span>0</span></button>
+              <button data-key="period" aria-pressed="false"><small>:</small><span>.</span></button>
+              <button class="number-space" data-key="space" aria-pressed="false">Space</button>
+              <button class="number-plus" data-key="plus" aria-pressed="false"><small>*</small><span>+</span></button>
+            </div>
+          </aside>
+
+          <div id="keypad" class="bottom-key-matrix alpha-board" aria-label="EF800 letter keyboard">
+            <div class="key-row alpha-top">
               <button data-key="q" aria-pressed="false">Q</button>
               <button data-key="w" aria-pressed="false">W</button>
               <button data-key="e" aria-pressed="false">E</button>
@@ -75,7 +88,7 @@
               <button data-key="o" aria-pressed="false">O</button>
               <button data-key="p" aria-pressed="false">P</button>
             </div>
-            <div class="key-row key-row-home">
+            <div class="key-row alpha-home">
               <button data-key="a" aria-pressed="false">A</button>
               <button data-key="s" aria-pressed="false">S</button>
               <button data-key="d" aria-pressed="false">D</button>
@@ -86,7 +99,7 @@
               <button data-key="k" aria-pressed="false">K</button>
               <button data-key="l" aria-pressed="false">L</button>
             </div>
-            <div class="key-row">
+            <div class="key-row alpha-bottom">
               <button data-key="z" aria-pressed="false">Z</button>
               <button data-key="x" aria-pressed="false">X</button>
               <button data-key="c" aria-pressed="false">C</button>
@@ -95,27 +108,9 @@
               <button data-key="n" aria-pressed="false">N</button>
               <button data-key="m" aria-pressed="false">M</button>
               <button data-key="comma" aria-pressed="false">,</button>
-              <button data-key="period" aria-pressed="false">.</button>
-              <button data-key="caret" aria-pressed="false">^</button>
             </div>
-            <div class="key-row key-row-space">
-              <button class="key-space" data-key="space" aria-pressed="false">SPACE</button>
-            </div>
+            <button class="key-return" data-key="enter" aria-pressed="false">Return</button>
           </div>
-
-          <aside class="key-bank key-bank-right" aria-label="right-side keys">
-            <span class="bank-label">RIGHT SIDE</span>
-            <div class="arrow-pad">
-              <span></span><button data-key="up" aria-pressed="false">▲</button><span></span>
-              <button data-key="left" aria-pressed="false">◀</button>
-              <button data-key="down" aria-pressed="false">▼</button>
-              <button data-key="right" aria-pressed="false">▶</button>
-            </div>
-            <button data-key="enter" aria-pressed="false">ENTER</button>
-            <button data-key="backspace" aria-pressed="false">BACK</button>
-            <button data-key="delete" aria-pressed="false">DELETE</button>
-            <button data-key="insert" aria-pressed="false">INSERT</button>
-          </aside>
         </section>
 
         <section class="connector-edge" aria-label="bottom-side connectors">
@@ -203,6 +198,16 @@
             <label><input id="device-available" type="checkbox" checked> Available</label>
             <button id="device-dock">Dock device</button>
             <p id="device-status" class="status">No virtual device configured.</p>
+          </div>
+        </details>
+        <details class="service-card">
+          <summary>Virtual battery</summary>
+          <div class="service-card-body" aria-label="virtual battery SOC control">
+            <p>Set the transient native-sim battery SOC input. BATSOC2 feeds the MAX17048 model; BATSOC1 converts SOC through its configured PC1 lookup table.</p>
+            <label for="battery-soc">Battery SOC (%)</label>
+            <input id="battery-soc" type="number" min="0" max="100" step="1" value="80" aria-label="Virtual battery state of charge percentage">
+            <button id="battery-soc-apply" disabled>Apply SOC</button>
+            <p id="battery-soc-status" class="status" aria-live="polite">Waiting for the active BATSOC source.</p>
           </div>
         </details>
       </aside>

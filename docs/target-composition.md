@@ -80,9 +80,13 @@ Syntactically valid tokens absent from the current catalog are:
 - excluded from the effective composition;
 - never interpreted from their spelling or prefix.
 
-The `USBMSD` and `LCDCONTR` groups each define a target-supported default.
-LCDCONTR mode is resolved from the active profile at startup by MainApplication
-and BackupApplication; the contrast duty remains a separate runtime setting.
+The physical MainApplication supports `USBMSD0` (Main MSC disabled) and
+`USBMSD1` (Main MSC enabled), with `USBMSD1` as the default. Select the mode on
+the MainApplication shell with `usbmsd mode USBMSD0` or `usbmsd mode USBMSD1`;
+the selection requires restart. Native-sim defaults to `USBMSD0` and does not
+compile Main MSC. The `LCDCONTR` group defaults to `LCDCONTR0`; MainApplication
+and BackupApplication resolve its mode at startup, while contrast duty remains
+a separate runtime setting.
 
 ## Modification and Activation
 

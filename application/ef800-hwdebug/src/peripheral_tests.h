@@ -21,6 +21,8 @@ void hwdebug_lpuart_test(void);
 void hwdebug_lpuart_host_test(void);
 void hwdebug_lpuart_bitbang_test(void);
 void hwdebug_storage_test(void);
+void hwdebug_storage_format_layout(void);
+void hwdebug_storage_format_volumes(void);
 void hwdebug_usb_cdc_test(void);
 void hwdebug_keyboard_update(const char *path);
 void hwdebug_keyboard_receive(void);

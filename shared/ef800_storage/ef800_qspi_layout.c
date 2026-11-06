@@ -6,6 +6,7 @@
 
 #include <zephyr/device.h>
 #include <zephyr/drivers/flash.h>
+#include <zephyr/storage/flash_map.h>
 
 static uint16_t read_le16(const uint8_t *bytes)
 {
@@ -62,7 +63,8 @@ bool ef800_qspi_layout_is_legacy_fat(const uint8_t sector[EF800_QSPI_SECTOR_SIZE
 	return root_entries != 0U || fat_size_32 != 0U;
 }
 
-int ef800_qspi_layout_check_legacy(const struct device *flash, bool *legacy)
+static int qspi_layout_check_legacy_at(const struct device *flash, off_t offset,
+				       bool *legacy)
 {
 	uint8_t sector[EF800_QSPI_SECTOR_SIZE];
 	int ret;
@@ -74,10 +76,25 @@ int ef800_qspi_layout_check_legacy(const struct device *flash, bool *legacy)
 	if (!device_is_ready(flash)) {
 		return -ENODEV;
 	}
-	ret = flash_read(flash, 0, sector, sizeof(sector));
+	ret = flash_read(flash, offset, sector, sizeof(sector));
 	if (ret != 0) {
 		return ret;
 	}
 	*legacy = ef800_qspi_layout_is_legacy_fat(sector);
 	return 0;
+}
+
+int ef800_qspi_layout_check_legacy(const struct device *flash, bool *legacy)
+{
+	return qspi_layout_check_legacy_at(flash, 0, legacy);
+}
+
+int ef800_qspi_layout_check_legacy_area(const struct flash_area *base_area,
+						bool *legacy)
+{
+	if (base_area == NULL) {
+		return -EINVAL;
+	}
+	return qspi_layout_check_legacy_at(base_area->fa_dev, base_area->fa_off,
+		legacy);
 }

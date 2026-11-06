@@ -65,8 +65,17 @@ ZTEST(shared_virtual_profile, test_battery_values_are_bounded)
 	zassert_equal(ef800_virtual_profile_battery_soc(), 95U, NULL);
 	zassert_true(ef800_virtual_profile_battery_voltage_uv() != 3800000U, NULL);
 	control[2] = 101U;
-	zassert_ok(ef800_virtual_profile_apply(control, sizeof(control)), NULL);
-	zassert_equal(ef800_virtual_profile_battery_soc(), 100U, NULL);
+	zassert_equal(ef800_virtual_profile_apply(control, sizeof(control)), -ERANGE, NULL);
+	zassert_equal(ef800_virtual_profile_battery_soc(), 95U, NULL);
+	control[1] = 6U;
+	control[2] = 0U;
+	zassert_ok(ef800_virtual_profile_apply(control, 3U), NULL);
+	zassert_true(ef800_virtual_profile_battery_override_enabled(), NULL);
+	zassert_equal(ef800_virtual_profile_battery_soc(), 0U, NULL);
+	control[1] = 1U;
+	control[2] = 0U;
+	zassert_ok(ef800_virtual_profile_apply(control, 3U), NULL);
+	zassert_false(ef800_virtual_profile_available(4U), NULL);
 	ARG_UNUSED(last_delay);
 	ARG_UNUSED(last_error);
 }

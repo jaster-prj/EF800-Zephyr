@@ -9,6 +9,7 @@
 
 #include <zephyr/device.h>
 #include <zephyr/devicetree.h>
+#include <zephyr/drivers/flash.h>
 #include <zephyr/drivers/gpio.h>
 #include <zephyr/drivers/uart.h>
 #include <zephyr/kernel.h>
@@ -27,12 +28,18 @@
 #include "flash.h"
 #include "keyboard_protocol.h"
 #include "test_result.h"
+#include "ef800_composition.h"
 
 #define LCD_NODE DT_PATH(zephyr_user)
 #define TEST_UART_TIMEOUT_MS 1000U
 #define KEYBOARD_RESET_NODE DT_PATH(zephyr_user)
 #define STORAGE_DISK_NAME "DATA"
 #define STORAGE_MOUNT_POINT "/DATA:"
+#define CONFIGURATION_DISK_NAME "EF800"
+#define CONFIGURATION_MOUNT_POINT "/EF800:"
+#define CONFIGURATION_PROFILE_DIRECTORY CONFIGURATION_MOUNT_POINT "/.configuration"
+#define CONFIGURATION_PROFILE_A CONFIGURATION_PROFILE_DIRECTORY "/target_profile_a"
+#define CONFIGURATION_PROFILE_B CONFIGURATION_PROFILE_DIRECTORY "/target_profile_b"
 #define STORAGE_DIR STORAGE_MOUNT_POINT "/storage_test"
 #define STORAGE_FAT_FILE STORAGE_DIR "/created_by_fat.txt"
 #define STORAGE_DUMMY_FILE STORAGE_DIR "/dummy.txt"
@@ -40,6 +47,7 @@
 #define STORAGE_FAT_CONTENT "created by internal FAT\r\n"
 #define STORAGE_DUMMY_CONTENT "EF800 storage test dummy\r\n"
 #define STORAGE_MSC_CONTENT "created by USB MSC\r\n"
+#define QSPI_FS_SECTOR_SIZE 512U
 #define CDC_TEST_DURATION_MS 60000U
 
 #define STORAGE_USB_UDC_NODE DT_NODELABEL(usbotg_fs)
@@ -59,6 +67,11 @@ USBD_DEFINE_MSC_LUN(hwdebug_qspi_lun, STORAGE_DISK_NAME, "EF800",
 	"Storage Test", "1.00");
 
 static FATFS storage_fat_fs;
+static FATFS configuration_fat_fs;
+static struct ef800_composition_profile qspi_format_profile;
+static uint8_t qspi_format_record[EF800_COMPOSITION_RECORD_MAX];
+static uint8_t qspi_format_sector[QSPI_FS_SECTOR_SIZE];
+static uint8_t qspi_format_raw_sector[QSPI_FS_SECTOR_SIZE];
 static struct fs_mount_t storage_mount = {
 	.type = FS_FATFS,
 	.mnt_point = STORAGE_MOUNT_POINT,
@@ -66,7 +79,15 @@ static struct fs_mount_t storage_mount = {
 	.storage_dev = (void *)PARTITION_ID(qspi_storage_partition),
 	.flags = FS_MOUNT_FLAG_NO_FORMAT,
 };
+static struct fs_mount_t configuration_mount = {
+	.type = FS_FATFS,
+	.mnt_point = CONFIGURATION_MOUNT_POINT,
+	.fs_data = &configuration_fat_fs,
+	.storage_dev = (void *)PARTITION_ID(qspi_configuration_partition),
+	.flags = FS_MOUNT_FLAG_NO_FORMAT,
+};
 static bool storage_mounted;
+static bool configuration_mounted;
 static bool storage_msc_active;
 static int storage_msc_stop(void);
 static const char *const msc_only_blocklist[] = {
@@ -201,6 +222,8 @@ enum interactive_test {
 	INTERACTIVE_KEYBOARD,
 	INTERACTIVE_DISPLAY,
 	INTERACTIVE_STORAGE,
+	INTERACTIVE_QSPI_FORMAT,
+	INTERACTIVE_QSPI_VOLUMES,
 };
 
 static enum interactive_test interactive_waiting;
@@ -497,6 +520,337 @@ static int storage_prepare_volume(void)
 		hwdebug_console_printf("storage: dummy test file failed=%d\r\n", ret);
 	}
 	return ret;
+}
+
+static int format_qspi_partition(uint8_t partition_id, off_t expected_offset,
+	size_t expected_size, const char *name, bool erase)
+{
+	const struct flash_area *area;
+	size_t erased = 0U;
+	int ret = flash_area_open(partition_id, &area);
+
+	if (ret != 0) {
+		hwdebug_console_printf("format: open %s partition failed=%d\r\n",
+			name, ret);
+		return ret;
+	}
+	if (area->fa_off != expected_offset || area->fa_size != expected_size) {
+		hwdebug_console_printf(
+			"format: refusing unexpected %s map off=0x%08x size=0x%08x\r\n",
+			name, (unsigned int)area->fa_off, (unsigned int)area->fa_size);
+		flash_area_close(area);
+		return -EINVAL;
+	}
+	hwdebug_console_printf("format: %s %s offset=0x%08x size=0x%08x\r\n",
+		erase ? "erasing" : "checking", name,
+		(unsigned int)area->fa_off, (unsigned int)area->fa_size);
+	if (!erase) {
+		hwdebug_console_printf("format: skipped raw erase for %s\r\n", name);
+		flash_area_close(area);
+		return 0;
+	}
+	ret = 0;
+	while (erased < area->fa_size) {
+		struct flash_pages_info page;
+		off_t absolute_offset = area->fa_off + (off_t)erased;
+
+		ret = flash_get_page_info_by_offs(area->fa_dev, absolute_offset, &page);
+		if (ret != 0 || page.size == 0U || page.size > area->fa_size - erased ||
+		    page.start_offset != (uint32_t)absolute_offset) {
+			ret = ret != 0 ? ret : -EINVAL;
+			break;
+		}
+		hwdebug_flash_watchdog_feed();
+		ret = flash_area_erase(area, erased, page.size);
+		if (ret != 0) {
+			break;
+		}
+		erased += page.size;
+		if ((erased & 0xFFFFU) == 0U || erased == area->fa_size) {
+			hwdebug_console_printf("format: %s erased=%u/%u bytes\r\n",
+				name, (unsigned int)erased, (unsigned int)area->fa_size);
+		}
+		hwdebug_flash_watchdog_feed();
+	}
+	flash_area_close(area);
+	if (ret != 0) {
+		hwdebug_console_printf("format: erase %s failed=%d\r\n", name, ret);
+	}
+	return ret;
+}
+
+static int write_composition_slot(const char *path,
+	const uint8_t *record, size_t length)
+{
+	struct fs_file_t file;
+	ssize_t written;
+	int ret;
+
+	fs_file_t_init(&file);
+	ret = fs_open(&file, path, FS_O_CREATE | FS_O_WRITE | FS_O_TRUNC);
+	if (ret != 0) {
+		return ret;
+	}
+	written = fs_write(&file, record, length);
+	ret = written == (ssize_t)length ? fs_sync(&file) : -EIO;
+	if (fs_close(&file) != 0 && ret == 0) {
+		ret = -EIO;
+	}
+	return ret;
+}
+
+static int verify_composition_slot(const char *path,
+	const struct ef800_composition_profile *expected)
+{
+	static uint8_t record[EF800_COMPOSITION_RECORD_MAX];
+	static struct ef800_composition_profile decoded;
+	struct fs_file_t file;
+	ssize_t length;
+	int ret;
+
+	fs_file_t_init(&file);
+	ret = fs_open(&file, path, FS_O_READ);
+	if (ret != 0) {
+		return ret;
+	}
+	length = fs_read(&file, record, sizeof(record));
+	ret = length > 0 ? 0 : (length < 0 ? (int)length : -EIO);
+	if (fs_close(&file) != 0 && ret == 0) {
+		ret = -EIO;
+	}
+	if (ret != 0) {
+		return ret;
+	}
+	ret = ef800_composition_profile_decode(record, (size_t)length, &decoded);
+	if (ret != 0) {
+		return ret;
+	}
+	return ef800_composition_profile_equal(expected, &decoded) ? 0 : -EBADMSG;
+}
+
+static int verify_fat_volume_boot_sector(const char *disk_name, off_t offset,
+	const char *name)
+{
+	const struct device *flash = DEVICE_DT_GET(STORAGE_FLASH_NODE);
+	uint16_t bytes_per_sector;
+	int ret;
+
+	ret = disk_access_read(disk_name, qspi_format_sector, 0U, 1U);
+	if (ret != 0) {
+		hwdebug_console_printf("format: disk read %s sector failed=%d\r\n",
+			name, ret);
+		return ret;
+	}
+	hwdebug_console_printf("format: %s disk sector bytes=%02x %02x %02x; ",
+		name, qspi_format_sector[0], qspi_format_sector[1],
+		qspi_format_sector[2]);
+	ret = flash_read(flash, offset, qspi_format_raw_sector,
+		sizeof(qspi_format_raw_sector));
+	if (ret != 0) {
+		hwdebug_console_printf("format: read %s boot sector failed=%d\r\n",
+			name, ret);
+		return ret;
+	}
+	hwdebug_console_printf("raw sector bytes=%02x %02x %02x\r\n",
+		qspi_format_raw_sector[0], qspi_format_raw_sector[1],
+		qspi_format_raw_sector[2]);
+	bytes_per_sector = (uint16_t)qspi_format_raw_sector[11] |
+		((uint16_t)qspi_format_raw_sector[12] << 8U);
+	if (!((qspi_format_raw_sector[0] == 0xE9U) ||
+	      (qspi_format_raw_sector[0] == 0xEBU && qspi_format_raw_sector[2] == 0x90U)) ||
+	    bytes_per_sector != QSPI_FS_SECTOR_SIZE ||
+	    qspi_format_raw_sector[510] != 0x55U || qspi_format_raw_sector[511] != 0xAAU) {
+		hwdebug_console_printf("format: %s FAT boot signature/sector size invalid\r\n",
+			name);
+		return -EBADMSG;
+	}
+	hwdebug_console_printf("format: %s FAT boot sector verified at 0x%08x\r\n",
+		name, (unsigned int)offset);
+	return 0;
+}
+
+static int qspi_format_current_layout(bool erase)
+{
+	qspi_format_profile = (struct ef800_composition_profile){
+		.generation = 1U,
+		.token_count = 2U,
+	};
+	size_t record_length = 0U;
+	int ret;
+
+	strcpy(qspi_format_profile.tokens[0], "BATSOC0");
+	strcpy(qspi_format_profile.tokens[1], "LCDCONTR1");
+	ret = storage_msc_stop();
+	if (ret != 0) {
+		return ret;
+	}
+	if (storage_mounted) {
+		ret = storage_unmount_fat();
+		if (ret != 0) {
+			return ret;
+		}
+	}
+	if (configuration_mounted) {
+		ret = fs_unmount(&configuration_mount);
+		if (ret != 0) {
+			return ret;
+		}
+		configuration_mounted = false;
+	}
+	ret = disk_access_init(CONFIGURATION_DISK_NAME);
+	if (ret == 0) {
+		ret = disk_access_init(STORAGE_DISK_NAME);
+	}
+	if (ret == 0) {
+		ret = disk_access_ioctl(CONFIGURATION_DISK_NAME,
+			DISK_IOCTL_CTRL_SYNC, NULL);
+	}
+	if (ret == 0) {
+		ret = disk_access_ioctl(STORAGE_DISK_NAME, DISK_IOCTL_CTRL_SYNC, NULL);
+	}
+	if (ret != 0) {
+		hwdebug_console_printf("format: QSPI disk preparation failed=%d\r\n", ret);
+		return ret;
+	}
+
+	/* Guard the destructive operation against any change to the expected map. */
+	ret = format_qspi_partition(PARTITION_ID(qspi_bootstate_partition),
+		0x000000U, 0x008000U, "boot-state NVS", erase);
+	if (ret == 0) {
+		ret = format_qspi_partition(PARTITION_ID(qspi_configuration_partition),
+			0x008000U, 0x0F8000U, "Configuration FAT", erase);
+	}
+	if (ret == 0) {
+		ret = format_qspi_partition(PARTITION_ID(qspi_storage_partition),
+			0x100000U, 0x300000U, "Shared Data FAT", erase);
+	}
+	if (ret != 0) {
+		return ret;
+	}
+	ret = fs_mkfs(FS_FATFS,
+		(uintptr_t)(CONFIGURATION_DISK_NAME ":"), NULL, 0);
+	hwdebug_console_printf("format: fs_mkfs %s ret=%d\r\n",
+		CONFIGURATION_DISK_NAME, ret);
+	if (ret == 0) {
+		ret = disk_access_ioctl(CONFIGURATION_DISK_NAME,
+			DISK_IOCTL_CTRL_SYNC, NULL);
+	}
+	if (ret == 0) {
+		ret = fs_mkfs(FS_FATFS,
+			(uintptr_t)(STORAGE_DISK_NAME ":"), NULL, 0);
+		hwdebug_console_printf("format: fs_mkfs %s ret=%d\r\n",
+			STORAGE_DISK_NAME, ret);
+	}
+	if (ret == 0) {
+		ret = disk_access_ioctl(STORAGE_DISK_NAME, DISK_IOCTL_CTRL_SYNC, NULL);
+	}
+	if (ret == 0) {
+		ret = verify_fat_volume_boot_sector(CONFIGURATION_DISK_NAME,
+			0x00008000, "Configuration");
+	}
+	if (ret == 0) {
+		ret = verify_fat_volume_boot_sector(STORAGE_DISK_NAME,
+			0x00100000, "Shared Data");
+	}
+	if (ret != 0) {
+		hwdebug_console_printf("format: FAT creation/sync/verification failed=%d\r\n",
+			ret);
+		return ret;
+	}
+	ret = fs_mount(&configuration_mount);
+	if (ret != 0) {
+		hwdebug_console_printf("format: Configuration mount failed=%d\r\n", ret);
+		return ret;
+	}
+	configuration_mounted = true;
+	ret = fs_mount(&storage_mount);
+	if (ret != 0) {
+		hwdebug_console_printf("format: Shared Data mount failed=%d\r\n", ret);
+		goto unmount_configuration;
+	}
+	storage_mounted = true;
+	ret = fs_mkdir(CONFIGURATION_PROFILE_DIRECTORY);
+	if (ret != 0 && ret != -EEXIST) {
+		hwdebug_console_printf("format: profile directory failed=%d\r\n", ret);
+		goto unmount_volumes;
+	}
+	ret = ef800_composition_profile_encode(&qspi_format_profile,
+		(char *)qspi_format_record, sizeof(qspi_format_record), &record_length);
+	if (ret == 0) {
+		ret = write_composition_slot(CONFIGURATION_PROFILE_A, qspi_format_record,
+			record_length);
+	}
+	if (ret == 0) {
+		ret = verify_composition_slot(CONFIGURATION_PROFILE_A,
+			&qspi_format_profile);
+	}
+	if (ret == 0) {
+		qspi_format_profile.generation = 2U;
+		ret = ef800_composition_profile_encode(&qspi_format_profile,
+			(char *)qspi_format_record, sizeof(qspi_format_record),
+			&record_length);
+	}
+	if (ret == 0) {
+		ret = write_composition_slot(CONFIGURATION_PROFILE_B,
+			qspi_format_record,
+			record_length);
+	}
+	if (ret == 0) {
+		ret = verify_composition_slot(CONFIGURATION_PROFILE_B,
+			&qspi_format_profile);
+	}
+	if (ret != 0) {
+		hwdebug_console_printf("format: COMPOSITION initialization failed=%d\r\n",
+			ret);
+		goto unmount_volumes;
+	}
+	ret = disk_access_ioctl(CONFIGURATION_DISK_NAME, DISK_IOCTL_CTRL_SYNC, NULL);
+	if (ret == 0) {
+		ret = disk_access_ioctl(STORAGE_DISK_NAME, DISK_IOCTL_CTRL_SYNC, NULL);
+	}
+	if (ret != 0) {
+		hwdebug_console_printf("format: final QSPI sync failed=%d\r\n", ret);
+	}
+
+unmount_volumes:
+	if (storage_mounted) {
+		int unmount_ret = fs_unmount(&storage_mount);
+
+		if (ret == 0 && unmount_ret != 0) {
+			ret = unmount_ret;
+		} else if (unmount_ret == 0) {
+			storage_mounted = false;
+		}
+	}
+unmount_configuration:
+	if (configuration_mounted) {
+		int unmount_ret = fs_unmount(&configuration_mount);
+
+		if (ret == 0 && unmount_ret != 0) {
+			ret = unmount_ret;
+		} else if (unmount_ret == 0) {
+			configuration_mounted = false;
+		}
+	}
+	return ret;
+}
+
+void hwdebug_storage_format_layout(void)
+{
+	storage_step = 0U;
+	interactive_waiting = INTERACTIVE_QSPI_FORMAT;
+	hwdebug_console_puts("WARNING: this erases all 4 MiB QSPI contents, including boot-state NVS and both FAT volumes.\r\n"
+		"It then formats Configuration/Data and installs BATSOC0 + LCDCONTR1 in COMPOSITION.\r\n"
+		"Type 'format-confirm' to continue, or 'cancel' to abort.\r\n");
+}
+
+void hwdebug_storage_format_volumes(void)
+{
+	storage_step = 0U;
+	interactive_waiting = INTERACTIVE_QSPI_VOLUMES;
+	hwdebug_console_puts("WARNING: this formats only the Configuration and Shared Data FAT volumes; it preserves boot-state NVS and does not erase the QSPI partitions.\r\n"
+		"It installs BATSOC0 + LCDCONTR1 in COMPOSITION.\r\n"
+		"Type 'format-confirm' to continue, or 'cancel' to abort.\r\n");
 }
 
 static int storage_internal_test(void)
@@ -1334,6 +1688,29 @@ bool hwdebug_interactive_pending(void)
 void hwdebug_interactive_reply(const char *reply)
 {
 	if (interactive_waiting == INTERACTIVE_NONE) {
+		return;
+	}
+	if (interactive_waiting == INTERACTIVE_QSPI_FORMAT ||
+	    interactive_waiting == INTERACTIVE_QSPI_VOLUMES) {
+		if (strcmp(reply, "format-confirm") == 0) {
+			bool erase = interactive_waiting == INTERACTIVE_QSPI_FORMAT;
+			int ret = qspi_format_current_layout(erase);
+
+			if (ret == 0) {
+				hwdebug_console_puts("QSPI FORMAT PASS; Configuration/Data FAT and BATSOC0/LCDCONTR1 profile verified.\r\n");
+			} else {
+				hwdebug_console_printf("QSPI FORMAT FAIL: %d; do not power-cycle until media state is reviewed.\r\n",
+					ret);
+			}
+			interactive_waiting = INTERACTIVE_NONE;
+			return;
+		}
+		if (strcmp(reply, "cancel") == 0 || strcmp(reply, "exit") == 0) {
+			hwdebug_console_puts("QSPI format cancelled; no media changes made.\r\n");
+			interactive_waiting = INTERACTIVE_NONE;
+			return;
+		}
+		hwdebug_console_puts("reply 'format-confirm' to proceed, or 'cancel' to abort\r\n");
 		return;
 	}
 	if (interactive_waiting == INTERACTIVE_STORAGE && storage_step == 1U &&

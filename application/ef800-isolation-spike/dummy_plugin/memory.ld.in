@@ -1,0 +1,11 @@
+/* SPDX-License-Identifier: Apache-2.0 */
+MEMORY
+{
+	PM_PLUGIN_TEXT (rx) : ORIGIN = 0x00000000, LENGTH = 0x00001000
+	PM_PLUGIN_RODATA (r) : ORIGIN = 0x00001000, LENGTH = 0x00001000
+	PM_PLUGIN_DATA (rw) : ORIGIN = 0x20000000, LENGTH = 0x00001000
+}
+
+INCLUDE "@PM_PLUGIN_MANAGER_ROOT@/cmake/plugin_manager_plugin.ld"
+
+ENTRY(pm_plugin_get_descriptor)

@@ -24,6 +24,11 @@ __weak uint32_t ef800_battery_profile_voltage_uv(void)
 	return 0U;
 }
 
+__weak bool ef800_battery_profile_override_enabled(void)
+{
+	return false;
+}
+
 #define MAX17043_REG_VCELL   0x02U
 #define MAX17043_REG_SOC     0x04U
 #define MAX17043_REG_VERSION 0x08U
@@ -97,6 +102,9 @@ int ef800_max17043_read(struct ef800_max17043 *gauge,
 	if (gauge == NULL || status == NULL || !gauge->ready) {
 		return -ENODEV;
 	}
+	if (!ef800_virtual_battery_available()) {
+		return -ENODEV;
+	}
 
 	k_mutex_lock(&gauge->lock, K_FOREVER);
 	ret = read_register(gauge, MAX17043_REG_SOC, &raw_soc);
@@ -106,7 +114,7 @@ int ef800_max17043_read(struct ef800_max17043 *gauge,
 	if (ret == 0) {
 		status->soc_percent = ef800_max17043_soc_percent(raw_soc);
 		status->voltage_uv = ef800_max17043_voltage_uv(raw_vcell);
-		if (ef800_battery_profile_soc() != 0U) {
+		if (ef800_battery_profile_override_enabled()) {
 			status->soc_percent = ef800_battery_profile_soc();
 			status->voltage_uv = ef800_battery_profile_voltage_uv();
 		}

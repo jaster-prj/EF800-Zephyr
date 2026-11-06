@@ -37,6 +37,7 @@ from protocol import (FRAME_SIZE, MSG_ACK, MSG_CAPABILITIES, MSG_KEY_DOWN,
                         decode_composition_state, encode_composition_control)
 
 MAX_BROWSER_MESSAGE = 1024
+DEFAULT_BATTERY_SOC_PERCENT = 80
 MAX_PLUGIN_PACKAGE = 32 * 1024
 MAX_MTP_REQUEST_TIMEOUT = 30
 MAX_HTTP_BODY = MTP_MAX_FILE_SIZE + 64 * 1024
@@ -157,6 +158,7 @@ class Gateway:
         self.simulator_connected = False
         self.display = None
         self.lcd_contrast = {"enabled": False, "duty": 78}
+        self.battery_soc_percent = DEFAULT_BATTERY_SOC_PERCENT
         self.composition = {"available": False, "restartRequired": False,
                             "groups": []}
         self.capabilities = ""
@@ -216,6 +218,29 @@ class Gateway:
         self.lcd_contrast = {"enabled": False, "duty": 78}
         return self.lcd_contrast_message()
 
+    def battery_soc_message(self):
+        group = next((entry for entry in self.composition.get("groups", [])
+                      if entry["id"] == "BATSOC"), None)
+        source = group["active"] if group is not None else None
+        return {"type": "battery-soc", "version": 1,
+                "socPercent": self.battery_soc_percent, "source": source}
+
+    async def sync_battery_soc_input(self, soc_percent=None):
+        group = next((entry for entry in self.composition.get("groups", [])
+                      if entry["id"] == "BATSOC"), None)
+        if group is None or group["active"] == "BATSOC0":
+            return False
+        value = self.battery_soc_percent if soc_percent is None else soc_percent
+        accepted = await self.send_simulator(MSG_PROFILE_CONTROL,
+                                             bytes((4, 6, value)))
+        if accepted and soc_percent is not None:
+            self.battery_soc_percent = soc_percent
+        return accepted
+
+    def reset_battery_soc_for_simulator_start(self):
+        self.battery_soc_percent = DEFAULT_BATTERY_SOC_PERCENT
+        return self.battery_soc_message()
+
     @staticmethod
     def composition_message(state=None):
         if state is None:
@@ -270,6 +295,7 @@ class Gateway:
                 self.writer = writer
                 self.simulator_connected = True
                 contrast_message = self.reset_lcd_contrast()
+                battery_message = self.reset_battery_soc_for_simulator_start()
                 self.composition = {"available": False,
                                     "restartRequired": False, "groups": []}
                 self.log_epoch += 1
@@ -280,6 +306,7 @@ class Gateway:
                                       "epoch": self.log_epoch})
                 await self.broadcast_status()
                 await self.broadcast(contrast_message)
+                await self.broadcast(battery_message)
                 await self.broadcast(self.composition_message())
                 parser = FrameParser()
                 while self.running:
@@ -308,7 +335,9 @@ class Gateway:
                                 self.composition = decode_composition_state(payload)
                             except ProtocolError:
                                 continue
+                            await self.sync_battery_soc_input()
                             await self.broadcast(self.composition_message())
+                            await self.broadcast(self.battery_soc_message())
                         elif message_type == MSG_COMPOSITION_RESULT:
                             try:
                                 result = decode_composition_result(payload)
@@ -863,6 +892,7 @@ class Gateway:
 
     async def initial_messages(self):
         messages = [self.status(), self.lcd_contrast_message(),
+                    self.battery_soc_message(),
                     self.composition_message(self.composition)]
         if self.display is not None:
             frame = self.display
@@ -913,6 +943,29 @@ class Gateway:
                 await self.release_all()
                 await self.broadcast_status()
             return {"type": "ack", "command": command, "accepted": True}
+        if command == "battery-soc-set":
+            if self.controller is not ws:
+                return {"type": "ack", "command": command, "accepted": False,
+                        "error": "controller required"}
+            if not self.simulator_connected or self.writer is None:
+                return {"type": "ack", "command": command, "accepted": False,
+                        "error": "simulator disconnected"}
+            soc_percent = message.get("socPercent")
+            if (type(soc_percent) is not int or
+                    not 0 <= soc_percent <= 100):
+                return {"type": "ack", "command": command, "accepted": False,
+                        "error": "SOC must be an integer from 0 to 100"}
+            group = next((entry for entry in self.composition.get("groups", [])
+                          if entry["id"] == "BATSOC"), None)
+            if group is None or group["active"] == "BATSOC0":
+                return {"type": "ack", "command": command, "accepted": False,
+                        "error": "no battery SOC source is active"}
+            if not await self.sync_battery_soc_input(soc_percent):
+                return {"type": "ack", "command": command, "accepted": False,
+                        "error": "simulator disconnected"}
+            await self.broadcast(self.battery_soc_message())
+            return {"type": "ack", "command": command, "accepted": True,
+                    "socPercent": soc_percent}
         if command == "composition-set":
             if self.controller is not ws:
                 return {"type": "error", "error": "controller required"}

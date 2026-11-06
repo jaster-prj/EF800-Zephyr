@@ -17,8 +17,9 @@ from protocol import (LOG_GAP, encode_log_record, FrameParser, encode_message,
                         MSG_LCD_CONTRAST, decode_lcd_contrast,
                         encode_lcd_contrast, ProtocolError,
                         decode_composition_state, decode_composition_control,
-                        MSG_COMPOSITION_CONTROL,
-                        MTP_RESULT, MTP_PROGRESS, MTP_LIST_RESULT,
+                         MSG_COMPOSITION_CONTROL,
+                         MSG_PROFILE_CONTROL,
+                         MTP_RESULT, MTP_PROGRESS, MTP_LIST_RESULT,
                       MTP_LIST_ENTRY, MTP_DOWNLOAD_CHUNK)
 
 try:
@@ -122,6 +123,104 @@ class GatewayStateTests(unittest.IsolatedAsyncioTestCase):
         self.assertTrue(accepted["accepted"])
         self.assertTrue(accepted["restartRequired"])
         gateway.composition_request.assert_awaited_once_with("LCDCONTR", "LCDCONTR1")
+
+    async def test_battery_soc_control_is_bounded_and_controller_only(self):
+        gateway = Gateway()
+        gateway.writer = self.Writer()
+        gateway.simulator_connected = True
+        gateway.composition = {
+            "available": True, "restartRequired": False,
+            "groups": [{"id": "BATSOC", "active": "BATSOC2",
+                        "selected": "BATSOC2", "options": []}],
+        }
+        browser = object()
+
+        denied = await gateway.handle_browser_message(browser, {
+            "version": 1, "command": "battery-soc-set", "socPercent": 45})
+        self.assertFalse(denied["accepted"])
+        self.assertEqual(denied["error"], "controller required")
+        self.assertFalse(gateway.writer.messages)
+
+        gateway.controller = browser
+        for invalid in (-1, 101, 2.5, True, "50", None):
+            result = await gateway.handle_browser_message(browser, {
+                "version": 1, "command": "battery-soc-set", "socPercent": invalid})
+            self.assertFalse(result["accepted"], invalid)
+        self.assertFalse(gateway.writer.messages)
+
+        for soc_percent in (0, 100):
+            result = await gateway.handle_browser_message(browser, {
+                "version": 1, "command": "battery-soc-set",
+                "socPercent": soc_percent})
+            self.assertTrue(result["accepted"])
+            self.assertEqual(result["socPercent"], soc_percent)
+        decoded = [FrameParser().feed(frame)[0]
+                   for frame in gateway.writer.messages]
+        self.assertEqual([message_type for message_type, _ in decoded],
+                         [MSG_PROFILE_CONTROL, MSG_PROFILE_CONTROL])
+        self.assertEqual([payload for _, payload in decoded],
+                         [bytes((4, 6, 0)), bytes((4, 6, 100))])
+        self.assertEqual(gateway.battery_soc_percent, 100)
+
+    async def test_battery_soc_control_rejects_no_source_and_disconnect(self):
+        gateway = Gateway()
+        browser = object()
+        gateway.controller = browser
+        gateway.simulator_connected = True
+        gateway.writer = self.Writer()
+        gateway.composition = {"available": True, "groups": [
+            {"id": "BATSOC", "active": "BATSOC0"}]}
+        no_source = await gateway.handle_browser_message(browser, {
+            "version": 1, "command": "battery-soc-set", "socPercent": 0})
+        self.assertFalse(no_source["accepted"])
+        self.assertEqual(no_source["error"], "no battery SOC source is active")
+        self.assertFalse(gateway.writer.messages)
+
+        gateway.composition["groups"][0]["active"] = "BATSOC2"
+        gateway.simulator_connected = False
+        disconnected = await gateway.handle_browser_message(browser, {
+            "version": 1, "command": "battery-soc-set", "socPercent": 0})
+        self.assertFalse(disconnected["accepted"])
+        self.assertEqual(disconnected["error"], "simulator disconnected")
+
+    async def test_battery_soc_state_is_replayed_to_browser(self):
+        gateway = Gateway()
+        gateway.battery_soc_percent = 0
+        gateway.composition = {"available": True, "restartRequired": False,
+                               "groups": [{"id": "BATSOC",
+                                           "active": "BATSOC1"}]}
+        message = next(item for item in await gateway.initial_messages()
+                       if item["type"] == "battery-soc")
+        self.assertEqual(message["socPercent"], 0)
+        self.assertEqual(message["source"], "BATSOC1")
+
+    async def test_battery_soc_input_is_reapplied_after_simulator_reconnect(self):
+        gateway = Gateway()
+        gateway.writer = self.Writer()
+        gateway.battery_soc_percent = 0
+        gateway.composition = {"available": True, "groups": [
+            {"id": "BATSOC", "active": "BATSOC2"}]}
+
+        self.assertTrue(await gateway.sync_battery_soc_input())
+        message_type, payload = FrameParser().feed(
+            gateway.writer.messages[0])[0]
+        self.assertEqual(message_type, MSG_PROFILE_CONTROL)
+        self.assertEqual(payload, bytes((4, 6, 0)))
+
+        gateway.writer = self.Writer()
+        gateway.reset_battery_soc_for_simulator_start()
+        self.assertTrue(await gateway.sync_battery_soc_input())
+        self.assertEqual(len(gateway.writer.messages), 1)
+        self.assertEqual(FrameParser().feed(gateway.writer.messages[0])[0][1],
+                         bytes((4, 6, 80)))
+
+    async def test_simulator_restart_resets_transient_battery_input(self):
+        gateway = Gateway()
+        gateway.battery_soc_percent = 0
+        gateway.composition = {"available": False, "groups": []}
+        reset_message = gateway.reset_battery_soc_for_simulator_start()
+        self.assertEqual(gateway.battery_soc_percent, 80)
+        self.assertEqual(reset_message["socPercent"], 80)
 
     async def test_composition_changes_are_blocked_after_commit_until_restart(self):
         gateway = Gateway()

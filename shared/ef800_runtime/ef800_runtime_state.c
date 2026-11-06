@@ -28,8 +28,8 @@ static void sample_rtc(struct ef800_runtime_state *state, uint32_t now)
 static void sample_battery(struct ef800_runtime_state *state, uint32_t now)
 {
 	struct ef800_max17043_status battery;
-	int ret = state->fuel_gauge_ready ?
-		ef800_max17043_read(state->fuel_gauge, &battery) : -ENODEV;
+	int ret = state->battery_reader == NULL ? -ENODEV :
+		state->battery_reader(state->battery_reader_context, &battery);
 
 	k_mutex_lock(&state->lock, K_FOREVER);
 	state->snapshot.battery_error = ret;
@@ -39,8 +39,21 @@ static void sample_battery(struct ef800_runtime_state *state, uint32_t now)
 		state->snapshot.battery_voltage_uv = battery.voltage_uv;
 		state->snapshot.battery_status = EF800_RUNTIME_SAMPLE_VALID;
 		state->snapshot.battery_has_value = true;
+		state->battery_consecutive_failures = 0U;
 	} else {
-		state->snapshot.battery_status = EF800_RUNTIME_SAMPLE_ERROR;
+		if (state->snapshot.battery_has_value) {
+			if (state->battery_consecutive_failures < UINT8_MAX) {
+				++state->battery_consecutive_failures;
+			}
+			state->snapshot.battery_status =
+				state->battery_consecutive_failures >= 3U ?
+				EF800_RUNTIME_SAMPLE_UNAVAILABLE : EF800_RUNTIME_SAMPLE_ERROR;
+			if (state->battery_consecutive_failures >= 3U) {
+				state->snapshot.battery_has_value = false;
+			}
+		} else {
+			state->snapshot.battery_status = EF800_RUNTIME_SAMPLE_UNAVAILABLE;
+		}
 	}
 	++state->snapshot.sequence;
 	k_mutex_unlock(&state->lock);
@@ -54,7 +67,7 @@ static void sample_work_handler(struct k_work *work)
 
 	sample_rtc(state, now);
 	if ((int32_t)(now - state->next_battery_sample_ms) >= 0) {
-		sample_battery(state, now);
+		ef800_runtime_state_refresh_battery(state);
 		state->next_battery_sample_ms =
 			now + CONFIG_EF800_MAIN_RUNTIME_BATTERY_PERIOD_MS;
 	}
@@ -65,16 +78,16 @@ static void sample_work_handler(struct k_work *work)
 }
 
 void ef800_runtime_state_init(struct ef800_runtime_state *state,
-			      struct ef800_max17043 *fuel_gauge,
-			      bool fuel_gauge_ready)
+			      ef800_runtime_battery_reader_t battery_reader,
+			      void *battery_reader_context)
 {
 	if (state == NULL) {
 		return;
 	}
 
 	*state = (struct ef800_runtime_state){
-		.fuel_gauge = fuel_gauge,
-		.fuel_gauge_ready = fuel_gauge_ready,
+		.battery_reader = battery_reader,
+		.battery_reader_context = battery_reader_context,
 	};
 	k_mutex_init(&state->lock);
 	k_work_init_delayable(&state->sample_work, sample_work_handler);
@@ -105,6 +118,14 @@ void ef800_runtime_state_refresh_rtc(struct ef800_runtime_state *state)
 		return;
 	}
 	sample_rtc(state, k_uptime_get_32());
+}
+
+void ef800_runtime_state_refresh_battery(struct ef800_runtime_state *state)
+{
+	if (state == NULL) {
+		return;
+	}
+	sample_battery(state, k_uptime_get_32());
 }
 
 int ef800_runtime_state_snapshot(struct ef800_runtime_state *state,

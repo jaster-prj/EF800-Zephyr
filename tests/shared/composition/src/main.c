@@ -221,14 +221,14 @@ ZTEST(composition_catalog, test_catalog_and_selection_conflicts_are_rejected)
 		-EEXIST, NULL);
 }
 
-ZTEST(composition_catalog, test_target_unsupported_usb_msd_token_uses_default)
+ZTEST(composition_catalog, test_usb_msd_selection_is_target_specific)
 {
 	static const struct ef800_composition_catalog_entry native_entries[] = {
 		{ "USBMSD0", "USBMSD", 0U, true, true },
 		{ "USBMSD1", "USBMSD", 1U, false, false },
 	};
 	static const struct ef800_composition_catalog_entry physical_entries[] = {
-		{ "USBMSD0", "USBMSD", 0U, false, false },
+		{ "USBMSD0", "USBMSD", 0U, false, true },
 		{ "USBMSD1", "USBMSD", 1U, true, true },
 	};
 	static const char *const native_stored_tokens[] = { "USBMSD1" };
@@ -258,11 +258,10 @@ ZTEST(composition_catalog, test_target_unsupported_usb_msd_token_uses_default)
 			.entry_count = ARRAY_SIZE(physical_entries),
 		}, &snapshot), NULL);
 	zassert_equal(snapshot.effective_count, 1U, NULL);
-	zassert_equal(strcmp(snapshot.effective[0].catalog_entry->token, "USBMSD1"),
+	zassert_equal(strcmp(snapshot.effective[0].catalog_entry->token, "USBMSD0"),
 		       0, NULL);
-	zassert_true(snapshot.effective[0].defaulted, NULL);
-	zassert_equal(snapshot.unknown_count, 1U, NULL);
-	zassert_equal(strcmp(snapshot.unknown[0], "USBMSD0"), 0, NULL);
+	zassert_false(snapshot.effective[0].defaulted, NULL);
+	zassert_equal(snapshot.unknown_count, 0U, NULL);
 }
 
 ZTEST(composition_catalog, test_lcd_contrast_catalog_defaults_and_resolves_token)
@@ -291,6 +290,55 @@ ZTEST(composition_catalog, test_lcd_contrast_catalog_defaults_and_resolves_token
 	zassert_equal(strcmp(snapshot.effective[0].catalog_entry->token,
 		"LCDCONTR1"), 0, NULL);
 	zassert_false(snapshot.effective[0].defaulted, NULL);
+}
+
+ZTEST(composition_service, test_battery_soc_defaults_and_restart_activation)
+{
+	static const struct ef800_composition_catalog_entry entries[] = {
+		{ "BATSOC0", "BATSOC", 0U, false, true },
+		{ "BATSOC1", "BATSOC", 1U, false, true },
+		{ "BATSOC2", "BATSOC", 2U, true, true },
+	};
+	static const struct ef800_composition_catalog catalog = {
+		.entries = entries,
+		.entry_count = ARRAY_SIZE(entries),
+	};
+	struct ef800_persistence_fake fake;
+	struct ef800_persistence persistence;
+	struct ef800_composition_service service;
+	struct ef800_composition_service restarted;
+	const struct ef800_composition_snapshot *active;
+	const char *active_battery_token = NULL;
+
+	ef800_persistence_fake_init(&fake);
+	zassert_ok(ef800_persistence_init(&persistence, &fake.backend), NULL);
+	zassert_ok(ef800_composition_service_init(&service, &persistence, &catalog), NULL);
+	active = ef800_composition_service_active(&service);
+	zassert_equal(active->effective_count, 1U, NULL);
+	zassert_equal(strcmp(active->effective[0].catalog_entry->token, "BATSOC2"), 0,
+		NULL);
+	zassert_true(active->effective[0].defaulted, NULL);
+
+	zassert_ok(ef800_composition_service_stage_group_selection(&service,
+		"BATSOC", "BATSOC1"), NULL);
+	zassert_ok(ef800_composition_service_commit(&service), NULL);
+	zassert_true(ef800_composition_service_restart_required(&service), NULL);
+	active = ef800_composition_service_active(&service);
+	zassert_equal(strcmp(active->effective[0].catalog_entry->token, "BATSOC2"), 0,
+		NULL);
+
+	zassert_ok(ef800_composition_service_init(&restarted, &persistence, &catalog), NULL);
+	active = ef800_composition_service_active(&restarted);
+	for (size_t index = 0U; index < active->effective_count; ++index) {
+		const struct ef800_composition_catalog_entry *entry =
+			active->effective[index].catalog_entry;
+
+		if (entry != NULL && strcmp(entry->group, "BATSOC") == 0) {
+			active_battery_token = entry->token;
+		}
+	}
+	zassert_not_null(active_battery_token, NULL);
+	zassert_equal(strcmp(active_battery_token, "BATSOC1"), 0, NULL);
 }
 
 struct controlled_backend {

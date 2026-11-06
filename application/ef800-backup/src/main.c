@@ -127,7 +127,7 @@ static int create_recovery_roots(void)
 int main(void)
 {
 	const struct device *const udc = DEVICE_DT_GET(EF800_USB_UDC_NODE);
-	const struct flash_area *data_area;
+	const struct flash_area *boot_state_area;
 	bool legacy_layout;
 	bool configuration_mounted = false;
 	bool data_mounted = false;
@@ -142,12 +142,14 @@ int main(void)
 		LOG_ERR("USB device controller unavailable; recovery MTP not started");
 		goto wait;
 	}
-	ret = flash_area_open(PARTITION_ID(qspi_storage_partition), &data_area);
+	ret = flash_area_open(PARTITION_ID(qspi_bootstate_partition),
+		&boot_state_area);
 	if (ret != 0) {
-		LOG_ERR("Shared-data QSPI partition unavailable: %d", ret);
+		LOG_ERR("Boot-state QSPI partition unavailable: %d", ret);
 		goto wait;
 	}
-	ret = ef800_qspi_layout_check_legacy(data_area->fa_dev, &legacy_layout);
+	ret = ef800_qspi_layout_check_legacy_area(boot_state_area, &legacy_layout);
+	flash_area_close(boot_state_area);
 	if (ret != 0 || legacy_layout) {
 		LOG_ERR("Legacy or unavailable QSPI layout; recovery MTP not started: %d",
 			ret != 0 ? ret : -ENOTSUP);

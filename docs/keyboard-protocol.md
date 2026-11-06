@@ -102,10 +102,12 @@ See `docs/hardware-debug-keyboard.md` for the physical target procedure.
 ## RTC entry workflow
 
 The MainApplication keyboard editor is opened with `z`. It collects these
-fields in order and commits them on the final Enter:
+fields in order and commits them on the final Enter. The weekday is shown as
+`Mon`, `Tue`, `Wed`, `Thu`, `Fri`, `Sat`, or `Sun`; use Up/Down to change it,
+then Enter to continue.
 
 ```text
-weekday 1..7
+weekday name (Up/Down)
 date 1..31
 month 1..12
 year 2000..2099

@@ -50,8 +50,9 @@ The software partition contract covers the device address space exactly:
 
 These are firmware offsets, not evidence that the fitted QSPI geometry, erase
 behavior, existing media, or power-loss behavior has been production-qualified.
-The legacy monolithic FAT volume is never automatically repartitioned or
-formatted; see `docs/qspi-migration.md`.
+The development MainApplication can format a recognized legacy monolithic FAT
+volume into this layout; this is destructive and remains disabled for production
+firmware. See `docs/qspi-migration.md`.
 
 The hardware-debug image provides explicit raw-flash probes and a destructive
 FAT/MSC ownership test. The storage test is enabled only in the temporary

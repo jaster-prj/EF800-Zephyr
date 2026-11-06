@@ -1,0 +1,52 @@
+@startuml 2_main_components
+title EF800 — MainApplication Components
+left to right direction
+
+rectangle "Composition root\napplication/ef800-main/src/main.c" as root
+package "User interaction" {
+  rectangle "UI / navigation" as ui
+  rectangle "T6963 display" as display
+  rectangle "Keyboard host\nUART + translation" as keyboard
+}
+package "Instrument services" {
+  rectangle "Port assignments\nUART registry" as ports
+  rectangle "Measurement\nprotocols" as measurement
+  rectangle "Workspace service" as workspace
+  rectangle "Plugin host / registry\nPluginManager adapter" as plugins
+}
+package "Configuration and storage" {
+  rectangle "Persistence / composition\nlegacy readers" as persistence
+  rectangle "QSPI layout + owner\nNVS / FAT / MSC" as storage
+}
+package "Platform interfaces" {
+  rectangle "USB manager\nMTP / MSC / MCUmgr" as usb
+  rectangle "MCP23017 / RTC /\nMAX17043 / contrast" as devices
+  rectangle "Native-sim emulators\nfront panel / peers / USB" as native
+  rectangle "Zephyr kernel +\ndevicetree drivers" as zephyr
+}
+
+root --> ui
+root --> keyboard
+root --> ports
+root --> measurement
+root --> persistence
+root --> devices
+measurement <--> plugins
+measurement --> workspace
+plugins --> storage
+persistence --> storage
+ports --> usb
+usb --> storage
+ui --> display
+ui --> zephyr
+keyboard --> zephyr
+ports --> zephyr
+devices --> zephyr
+root ..> native : native_sim only
+native --> zephyr
+
+note bottom of plugins
+  Host retains ownership of hardware,
+  persistence, navigation, and lifecycle.
+end note
+@enduml

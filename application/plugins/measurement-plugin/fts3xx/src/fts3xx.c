@@ -62,9 +62,9 @@ static int32_t measure(void *instance, struct ef800_measurement_result *result)
     int32_t status;
 
     if (instance != &ef800_runtime.public_instance || result == 0) return PM_EINVAL;
-    status = ef800_protocol_write(ef800_runtime.port, command, sizeof(command));
+    status = ef800_protocol_write(&ef800_runtime.binding, command, sizeof(command));
     if (status != PM_OK) return status;
-    status = ef800_protocol_read_line(ef800_runtime.port, response, sizeof(response));
+    status = ef800_protocol_read_line(&ef800_runtime.binding, response, sizeof(response));
     if (status < 0) return status;
     result->struct_size = sizeof(*result);
     result->distance_mm = 0;

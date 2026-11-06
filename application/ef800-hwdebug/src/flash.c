@@ -12,6 +12,7 @@
 #include <zephyr/devicetree.h>
 #include <zephyr/drivers/clock_control.h>
 #include <zephyr/drivers/clock_control/stm32_clock_control.h>
+#include <zephyr/drivers/flash.h>
 #include <zephyr/drivers/gpio.h>
 #include <zephyr/drivers/pinctrl.h>
 #include <zephyr/drivers/uart.h>
@@ -54,6 +55,13 @@
 #define QSPI_CMD_RELEASE_POWER_DOWN 0xabU
 #define QSPI_CMD_RESET_ENABLE 0x66U
 #define QSPI_CMD_RESET_MEMORY 0x99U
+#define QSPI_CMD_WRITE_ENABLE 0x06U
+#define QSPI_CMD_PAGE_PROGRAM 0x02U
+#define QSPI_CMD_QUAD_PAGE_PROGRAM 0x32U
+#define QSPI_CMD_SECTOR_ERASE_4K 0x20U
+#define QSPI_PROGRAM_TEST_OFFSET 0x00008000U
+#define QSPI_PROGRAM_TEST_SECTOR_SIZE 0x00001000U
+#define QSPI_PROGRAM_TEST_LENGTH 32U
 
 #define QSPI_STATUS_QE BIT(6)
 
@@ -87,6 +95,8 @@ static int debug_watchdog_channel = -1;
 static bool test_quiet;
 static bool backend_test_failed;
 static bool watchdog_test_pending;
+static uint8_t qspi_program_test_pattern[QSPI_PROGRAM_TEST_LENGTH] __aligned(4);
+static uint8_t qspi_program_test_raw_readback[QSPI_PROGRAM_TEST_LENGTH] __aligned(4);
 
 struct qspi_transaction {
 	const char *name;
@@ -328,6 +338,34 @@ static int qspi_bitbang_spi_jedec(uint8_t id[3])
 	return 0;
 }
 
+static int qspi_bitbang_spi_read_memory(uint32_t address, uint8_t *data,
+	size_t length)
+{
+	int ret = qspi_bitbang_prepare();
+
+	if (ret != 0 || data == NULL || length == 0U ||
+	    (uint64_t)address + length > QSPI_SIZE_BYTES) {
+		return ret != 0 ? ret : -EINVAL;
+	}
+	ret = gpio_pin_configure(gpiof, QSPI_GPIO_IO1, GPIO_INPUT);
+	if (ret != 0) {
+		return ret;
+	}
+	(void)gpio_pin_set(gpioe, QSPI_GPIO_NCS, 0);
+	k_busy_wait(QSPI_BITBANG_HALF_PERIOD_US);
+	qspi_bitbang_spi_write_byte(QSPI_CMD_READ_DATA);
+	qspi_bitbang_spi_write_byte((uint8_t)(address >> 16));
+	qspi_bitbang_spi_write_byte((uint8_t)(address >> 8));
+	qspi_bitbang_spi_write_byte((uint8_t)address);
+	for (size_t index = 0U; index < length; ++index) {
+		data[index] = qspi_bitbang_spi_read_byte();
+	}
+	(void)gpio_pin_set(gpioe, QSPI_GPIO_NCS, 1);
+	(void)gpio_pin_configure(gpiof, QSPI_GPIO_IO1, GPIO_OUTPUT_HIGH);
+	(void)gpio_pin_set(gpiof, QSPI_GPIO_CLK, 1);
+	return 0;
+}
+
 static void qspi_bitbang_qpi_write_nibble(uint8_t value)
 {
 	(void)gpio_pin_set(gpiof, QSPI_GPIO_IO0, value & BIT(0));
@@ -467,6 +505,44 @@ static int qspi_run_transaction(const struct qspi_transaction *transaction,
 	}
 	if (qspi_hal_result(HAL_QSPI_Receive(&qspi_handle, data,
 					    HAL_QSPI_TIMEOUT_DEFAULT_VALUE)) != 0) {
+		qspi_abort();
+		return -EIO;
+	}
+	debug_watchdog_feed();
+	return 0;
+}
+
+static int qspi_run_write_transaction(const struct qspi_transaction *transaction,
+	uint32_t address, const uint8_t *data, size_t length)
+{
+	QSPI_CommandTypeDef command = {
+		.Instruction = transaction->instruction,
+		.Address = address,
+		.AlternateBytes = transaction->alternate_bytes,
+		.AddressSize = QSPI_ADDRESS_24_BITS,
+		.AlternateBytesSize = QSPI_ALTERNATE_BYTES_8_BITS,
+		.DummyCycles = transaction->dummy_cycles,
+		.InstructionMode = transaction->instruction_mode,
+		.AddressMode = transaction->address_mode,
+		.AlternateByteMode = transaction->alternate_byte_mode,
+		.DataMode = transaction->data_mode,
+		.NbData = length,
+		.DdrMode = QSPI_DDR_MODE_DISABLE,
+		.DdrHoldHalfCycle = QSPI_DDR_HHC_ANALOG_DELAY,
+		.SIOOMode = QSPI_SIOO_INST_EVERY_CMD,
+	};
+
+	if (!qspi_initialized || data == NULL || length == 0U || length > UINT32_MAX) {
+		return -EINVAL;
+	}
+	debug_watchdog_feed();
+	if (HAL_QSPI_Command(&qspi_handle, &command,
+		HAL_QSPI_TIMEOUT_DEFAULT_VALUE) != HAL_OK) {
+		qspi_abort();
+		return -EIO;
+	}
+	if (HAL_QSPI_Transmit(&qspi_handle, (uint8_t *)data,
+		HAL_QSPI_TIMEOUT_DEFAULT_VALUE) != HAL_OK) {
 		qspi_abort();
 		return -EIO;
 	}
@@ -668,6 +744,46 @@ static const struct qspi_transaction spi_status = {
 	.address_mode = QSPI_ADDRESS_NONE,
 	.alternate_byte_mode = QSPI_ALTERNATE_BYTES_NONE,
 	.data_mode = QSPI_DATA_1_LINE,
+};
+
+static const struct qspi_transaction spi_write_enable = {
+	.name = "spi-write-enable",
+	.format = "1-0-0",
+	.instruction = QSPI_CMD_WRITE_ENABLE,
+	.instruction_mode = QSPI_INSTRUCTION_1_LINE,
+	.address_mode = QSPI_ADDRESS_NONE,
+	.alternate_byte_mode = QSPI_ALTERNATE_BYTES_NONE,
+	.data_mode = QSPI_DATA_NONE,
+};
+
+static const struct qspi_transaction spi_page_program = {
+	.name = "spi-page-program",
+	.format = "1-1-1",
+	.instruction = QSPI_CMD_PAGE_PROGRAM,
+	.instruction_mode = QSPI_INSTRUCTION_1_LINE,
+	.address_mode = QSPI_ADDRESS_1_LINE,
+	.alternate_byte_mode = QSPI_ALTERNATE_BYTES_NONE,
+	.data_mode = QSPI_DATA_1_LINE,
+};
+
+static const struct qspi_transaction spi_quad_page_program = {
+	.name = "spi-quad-page-program",
+	.format = "1-1-4",
+	.instruction = QSPI_CMD_QUAD_PAGE_PROGRAM,
+	.instruction_mode = QSPI_INSTRUCTION_1_LINE,
+	.address_mode = QSPI_ADDRESS_1_LINE,
+	.alternate_byte_mode = QSPI_ALTERNATE_BYTES_NONE,
+	.data_mode = QSPI_DATA_4_LINES,
+};
+
+static const struct qspi_transaction spi_sector_erase_4k = {
+	.name = "spi-sector-erase-4k",
+	.format = "1-1-0",
+	.instruction = QSPI_CMD_SECTOR_ERASE_4K,
+	.instruction_mode = QSPI_INSTRUCTION_1_LINE,
+	.address_mode = QSPI_ADDRESS_1_LINE,
+	.alternate_byte_mode = QSPI_ALTERNATE_BYTES_NONE,
+	.data_mode = QSPI_DATA_NONE,
 };
 
 static const struct qspi_transaction spi_sfdp = {
@@ -919,6 +1035,31 @@ static void cmd_flash_read(uint32_t offset, uint32_t length)
 	}
 }
 
+void hwdebug_flash_api_read(uint32_t offset, uint32_t length)
+{
+	const struct device *flash = DEVICE_DT_GET(DT_NODELABEL(qspi_nor));
+	uint8_t data[QSPI_MAX_DUMP];
+	int ret;
+
+	if (length == 0U || length > sizeof(data) ||
+	    (uint64_t)offset + length > QSPI_SIZE_BYTES) {
+		console_puts("error: API read range is outside 4 MiB or exceeds 256 bytes\r\n");
+		return;
+	}
+	if (!device_is_ready(flash)) {
+		console_puts("API read: Zephyr QSPI flash device is not ready\r\n");
+		return;
+	}
+	ret = flash_read(flash, (off_t)offset, data, length);
+	if (ret != 0) {
+		console_printf("API read failed: %d\r\n", ret);
+		return;
+	}
+	console_printf("API read succeeded: offset=0x%08x length=%u\r\n",
+		       offset, length);
+	console_hexdump(offset, data, length);
+}
+
 static void print_status(uint8_t status)
 {
 	console_printf("status: %02x WIP=%u WEL=%u QE=%u\r\n", status,
@@ -936,6 +1077,200 @@ static void compare_read(const char *name, const uint8_t *reference,
 	if (!test_quiet) {
 		console_printf("compare: %s=%s\r\n", name, match ? "match" : "different");
 	}
+}
+
+static int qspi_read_status_direct(uint8_t *status)
+{
+	if (status == NULL) {
+		return -EINVAL;
+	}
+	return qspi_run_transaction(&spi_status, 0U, status, sizeof(*status));
+}
+
+static int qspi_wait_ready_direct(uint8_t *status)
+{
+	int ret;
+
+	for (uint32_t elapsed = 0U; elapsed < 2000U; ++elapsed) {
+		ret = qspi_read_status_direct(status);
+		if (ret != 0) {
+			return ret;
+		}
+		if ((*status & BIT(0)) == 0U) {
+			return 0;
+		}
+		debug_watchdog_feed();
+		k_msleep(1U);
+	}
+	return -ETIMEDOUT;
+}
+
+static int qspi_write_enable_direct(void)
+{
+	uint8_t status = 0U;
+	int ret = qspi_run_transaction(&spi_write_enable, 0U, NULL, 0U);
+
+	if (ret == 0) {
+		ret = qspi_read_status_direct(&status);
+	}
+	console_printf("WREN: ret=%d status=%02x WEL=%u\r\n", ret, status,
+		(status & BIT(1)) != 0U ? 1U : 0U);
+	if (ret != 0) {
+		return ret;
+	}
+	return (status & BIT(1)) != 0U ? 0 : -EACCES;
+}
+
+static int qspi_erase_test_sector_direct(void)
+{
+	uint8_t status = 0U;
+	int ret = qspi_write_enable_direct();
+
+	if (ret == 0) {
+		ret = qspi_run_transaction(&spi_sector_erase_4k,
+			QSPI_PROGRAM_TEST_OFFSET, NULL, 0U);
+	}
+	if (ret == 0) {
+		ret = qspi_wait_ready_direct(&status);
+	}
+	console_printf("SPI 4-KiB erase: ret=%d final-status=%02x\r\n", ret,
+		status);
+	return ret;
+}
+
+static int qspi_program_direct(const struct qspi_transaction *program,
+	const uint8_t *pattern, size_t length)
+{
+	uint8_t status = 0U;
+	int ret = qspi_write_enable_direct();
+
+	if (ret == 0) {
+		ret = qspi_run_write_transaction(program, QSPI_PROGRAM_TEST_OFFSET,
+			pattern, length);
+	}
+	if (ret == 0) {
+		ret = qspi_wait_ready_direct(&status);
+	}
+	console_printf("%s: ret=%d final-status=%02x\r\n",
+		program->name, ret, status);
+	return ret;
+}
+
+static int qspi_verify_raw_pattern(const char *name,
+	const struct qspi_transaction *read_transaction,
+	const uint8_t *expected, size_t length)
+{
+	int ret = run_read(read_transaction, QSPI_PROGRAM_TEST_OFFSET,
+		qspi_program_test_raw_readback, length, true);
+	bool match = ret == 0 && memcmp(expected, qspi_program_test_raw_readback,
+		length) == 0;
+
+	console_printf("program-test: %s readback=%s ret=%d\r\n", name,
+		match ? "PASS" : "FAIL", ret);
+	return match ? 0 : (ret != 0 ? ret : -EIO);
+}
+
+void hwdebug_flash_program_test(void)
+{
+	const struct device *flash = DEVICE_DT_GET(DT_NODELABEL(qspi_nor));
+	uint8_t api_readback[QSPI_PROGRAM_TEST_LENGTH];
+	uint8_t quad_readback[QSPI_PROGRAM_TEST_LENGTH];
+	bool api_match;
+	int api_ret;
+	int api_read_ret = -EIO;
+	int raw_ret = -EIO;
+	int std_ret = -EIO;
+	int quad_ret = -EIO;
+	int cleanup_ret = -EIO;
+
+	console_puts("program-test: only Configuration's first 4-KiB sector at 0x8000 is used; final step erases it again\r\n");
+	if (!device_is_ready(flash)) {
+		console_puts("program-test: Zephyr QSPI flash device is not ready\r\n");
+		return;
+	}
+	for (size_t i = 0U; i < sizeof(qspi_program_test_pattern); ++i) {
+		qspi_program_test_pattern[i] = (uint8_t)(0x13U + (uint8_t)(i * 37U));
+	}
+	api_ret = flash_erase(flash, QSPI_PROGRAM_TEST_OFFSET,
+		QSPI_PROGRAM_TEST_SECTOR_SIZE);
+	if (api_ret == 0) {
+		api_ret = flash_write(flash, QSPI_PROGRAM_TEST_OFFSET,
+			qspi_program_test_pattern, sizeof(qspi_program_test_pattern));
+	}
+	if (api_ret == 0) {
+		api_read_ret = flash_read(flash, QSPI_PROGRAM_TEST_OFFSET, api_readback,
+			sizeof(api_readback));
+	}
+	api_match = api_ret == 0 && api_read_ret == 0 &&
+		memcmp(qspi_program_test_pattern, api_readback,
+			sizeof(api_readback)) == 0;
+	console_printf("program-test: Zephyr flash_write ret=%d flash_read ret=%d compare=%s\r\n",
+		api_ret, api_read_ret, api_match ? "PASS" : "FAIL");
+	if (api_read_ret == 0) {
+		console_hexdump(QSPI_PROGRAM_TEST_OFFSET, api_readback,
+			sizeof(api_readback));
+	}
+
+	if (qspi_direct_init(QSPI_FLASH_ID_1) != 0) {
+		console_puts("program-test: direct QSPI initialization failed; reconnect under reset before reuse\r\n");
+		return;
+	}
+	raw_ret = qspi_verify_raw_pattern("API write via 1-1-1",
+		&spi_read, qspi_program_test_pattern,
+		sizeof(qspi_program_test_pattern));
+
+	if (qspi_erase_test_sector_direct() == 0) {
+		for (size_t i = 0U; i < sizeof(qspi_program_test_pattern); ++i) {
+			qspi_program_test_pattern[i] ^= 0xA5U;
+		}
+		if (qspi_program_direct(&spi_page_program, qspi_program_test_pattern,
+			sizeof(qspi_program_test_pattern)) == 0) {
+			std_ret = qspi_verify_raw_pattern("standard PP 0x02 via 1-1-1",
+				&spi_read, qspi_program_test_pattern,
+				sizeof(qspi_program_test_pattern));
+			if (run_read(&qspi_quad_io_read, QSPI_PROGRAM_TEST_OFFSET,
+				quad_readback, sizeof(quad_readback), true) == 0) {
+				console_printf("program-test: standard PP via 1-4-4 readback=%s\r\n",
+					memcmp(qspi_program_test_pattern, quad_readback,
+						sizeof(quad_readback)) == 0 ? "PASS" : "FAIL");
+			}
+		}
+	}
+
+	if (qspi_erase_test_sector_direct() == 0) {
+		for (size_t i = 0U; i < sizeof(qspi_program_test_pattern); ++i) {
+			qspi_program_test_pattern[i] = (uint8_t)(0x13U + (uint8_t)(i * 37U));
+		}
+		if (qspi_program_direct(&spi_quad_page_program,
+			qspi_program_test_pattern,
+			sizeof(qspi_program_test_pattern)) == 0) {
+			quad_ret = qspi_verify_raw_pattern("quad PPQ 0x32 via 1-1-1",
+				&spi_read, qspi_program_test_pattern,
+				sizeof(qspi_program_test_pattern));
+			if (run_read(&qspi_quad_io_read, QSPI_PROGRAM_TEST_OFFSET,
+				quad_readback, sizeof(quad_readback), true) == 0) {
+				console_printf("program-test: quad PPQ via 1-4-4 readback=%s\r\n",
+					memcmp(qspi_program_test_pattern, quad_readback,
+						sizeof(quad_readback)) == 0 ? "PASS" : "FAIL");
+			}
+		}
+	}
+
+	cleanup_ret = qspi_erase_test_sector_direct();
+	if (cleanup_ret == 0) {
+		cleanup_ret = run_read(&spi_read, QSPI_PROGRAM_TEST_OFFSET,
+			qspi_program_test_raw_readback,
+			sizeof(qspi_program_test_raw_readback), true);
+		if (cleanup_ret == 0 && !buffer_is_value(qspi_program_test_raw_readback,
+			sizeof(qspi_program_test_raw_readback), 0xFFU)) {
+			cleanup_ret = -EIO;
+		}
+	}
+	console_printf("program-test summary: API=%s raw-after-API=%s PP02=%s PPQ32=%s final-erase=%s\r\n",
+		api_match ? "PASS" : "FAIL", raw_ret == 0 ? "PASS" : "FAIL",
+		std_ret == 0 ? "PASS" : "FAIL", quad_ret == 0 ? "PASS" : "FAIL",
+		cleanup_ret == 0 ? "PASS" : "FAIL");
+	console_puts("program-test complete; reset/restore normal firmware before further QSPI use\r\n");
 }
 
 static bool test_begin(const char *name)
@@ -1154,6 +1489,26 @@ void hwdebug_flash_sfdp(uint32_t offset, uint32_t length)
 void hwdebug_flash_read(uint32_t offset, uint32_t length)
 {
 	cmd_flash_read(offset, length);
+}
+
+void hwdebug_flash_bitbang_read(uint32_t offset, uint32_t length)
+{
+	uint8_t data[QSPI_MAX_DUMP];
+	int ret;
+
+	if (length == 0U || length > sizeof(data) ||
+	    (uint64_t)offset + length > QSPI_SIZE_BYTES) {
+		console_puts("error: bitbang read range is outside 4 MiB or exceeds 256 bytes\r\n");
+		return;
+	}
+	ret = qspi_bitbang_spi_read_memory(offset, data, length);
+	if (ret != 0) {
+		console_printf("GPIO bitbang SPI read failed: %d\r\n", ret);
+		return;
+	}
+	console_printf("GPIO bitbang SPI read succeeded: offset=0x%08x length=%u\r\n",
+		offset, length);
+	console_hexdump(offset, data, length);
 }
 
 int hwdebug_flash_recover(bool verbose)

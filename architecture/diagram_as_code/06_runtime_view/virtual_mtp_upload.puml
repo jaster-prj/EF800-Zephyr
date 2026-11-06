@@ -1,0 +1,32 @@
+@startuml virtual_mtp_upload
+title Browser Upload Through Virtual EF800 MTP
+autonumber
+
+actor Browser
+participant "HTTP / WebSocket gateway" as Gateway
+participant "MainApplication native_sim" as Sim
+participant "In-process USB host peer" as Peer
+participant "Virtual UHC <-> UDC bus" as Bus
+participant "Production MTP class" as MTP
+database "Zephyr FS / FatFS" as FS
+
+Browser -> Gateway : upload(storage, relative path, file)
+Gateway -> Gateway : validate storage, path and transfer bound
+Gateway -> Sim : bounded request and chunks
+Sim -> Peer : enqueue request to USB worker context
+Peer -> Bus : enumerate device and open MTP session
+Bus -> MTP : object-info and object-data operations
+MTP -> FS : stage private upload file
+MTP -> FS : sync, close, publish final name
+FS --> MTP : result
+MTP --> Bus : MTP response
+Bus --> Peer : transaction result
+Peer --> Sim : completion + byte/checksum status
+Sim --> Gateway : transfer completion/failure
+Gateway --> Browser : final status
+
+note over Peer, MTP
+  Current native-sim enumeration may time out;
+  this sequence describes intended behavior.
+end note
+@enduml

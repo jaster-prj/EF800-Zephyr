@@ -1,0 +1,33 @@
+@startuml virtual_ef800
+title Virtual EF800 — Runtime Deployment
+left to right direction
+
+node "Developer workstation" {
+  actor Browser
+  node "Docker Compose" {
+    node "Virtual EF800 container" as sim {
+      artifact "Zephyr native_sim\nMainApplication" as firmware
+      component "Emulated GPIO / I2C / RTC\nUART / QSPI / LCD" as emulators
+      component "Virtual USB UDC + host peer" as usb
+    }
+    node "Web gateway container" as web {
+      component "HTTP + WebSocket API" as api
+      component "Bounded simulator client" as client
+    }
+  }
+  node "EF800_Devcontainer" as dev {
+    artifact "west / toolchain / Twister" as tools
+  }
+}
+
+Browser <--> api : 127.0.0.1:8080
+api --> client
+client <--> firmware : private TCP :8800
+firmware --> emulators
+firmware --> usb
+tools ..> firmware : builds
+note bottom of client
+  Gateway owns the private simulator connection.
+  Browser does not access simulator storage directly.
+end note
+@enduml

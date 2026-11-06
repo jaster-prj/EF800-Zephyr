@@ -111,7 +111,6 @@ ZTEST(ef800_shared_metadata, test_missing_record_recovers_defaults_only)
 	zassert_ok(flash_area_open(PARTITION_ID(qspi_storage_partition), &shared_data),
 		   NULL);
 	prepare_fat_markers(configuration, shared_data);
-	zassert_ok(flash_erase(boot_state->fa_dev, 0, 4096), NULL);
 	zassert_ok(flash_area_erase(boot_state, 0, boot_state->fa_size), NULL);
 	ef800_metadata_test_forget_state();
 
@@ -203,6 +202,7 @@ ZTEST(ef800_shared_metadata, test_legacy_volume_is_detected_without_modification
 	uint8_t readback[EF800_QSPI_SECTOR_SIZE];
 	uint8_t legacy_region[EF800_QSPI_SECTOR_SIZE];
 	uint8_t region_readback[EF800_QSPI_SECTOR_SIZE];
+	uint8_t expected_region[EF800_QSPI_SECTOR_SIZE];
 	struct ef800_boot_metadata metadata;
 	bool valid;
 
@@ -227,21 +227,31 @@ ZTEST(ef800_shared_metadata, test_legacy_volume_is_detected_without_modification
 		zassert_ok(flash_area_write(boot_state, offset, legacy_region,
 					    sizeof(legacy_region)), NULL);
 	}
-	/* Install the synthetic boot sector after initializing test contents. */
-	zassert_ok(flash_write(boot_state->fa_dev, 0, boot_sector,
+	/* Erase its physical page before programming the synthetic boot sector. */
+	zassert_ok(flash_area_erase(boot_state, 0U, 4096U), NULL);
+	zassert_ok(flash_area_write(boot_state, 0U, boot_sector,
 				EF800_QSPI_SECTOR_SIZE), NULL);
+	memset(expected_region, 0xFF, sizeof(expected_region));
 	ef800_metadata_test_forget_state();
 
 	zassert_equal(ef800_metadata_read_current(&metadata, &valid), -ENOTSUP, NULL);
 	zassert_false(valid, NULL);
-	zassert_ok(flash_read(boot_state->fa_dev, 0, readback, sizeof(readback)), NULL);
+	zassert_ok(flash_area_read(boot_state, 0U, readback, sizeof(readback)), NULL);
 	zassert_mem_equal(readback, boot_sector, sizeof(boot_sector), NULL);
 	for (size_t offset = 0; offset < boot_state->fa_size;
 	     offset += sizeof(region_readback)) {
 		zassert_ok(flash_area_read(boot_state, offset, region_readback,
 					   sizeof(region_readback)), NULL);
-		zassert_mem_equal(region_readback, legacy_region,
-				  sizeof(region_readback), NULL);
+		if (offset == 0U) {
+			zassert_mem_equal(region_readback, boot_sector,
+					  sizeof(region_readback), NULL);
+		} else if (offset < 4096U) {
+			zassert_mem_equal(region_readback, expected_region,
+					  sizeof(region_readback), NULL);
+		} else {
+			zassert_mem_equal(region_readback, legacy_region,
+					  sizeof(region_readback), NULL);
+		}
 	}
 	assert_fat_markers_unchanged(configuration, shared_data);
 

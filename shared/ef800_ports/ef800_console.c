@@ -9,12 +9,18 @@
 #include <zephyr/devicetree.h>
 #include <zephyr/drivers/uart.h>
 #include <zephyr/sys/printk-hooks.h>
+#include <zephyr/sys/ring_buffer.h>
 #include <zephyr/kernel.h>
 #include "ef800_update.h"
 
 #define EF800_CONSOLE_DEFAULT_BAUDRATE 9600U
 #define EF800_CONSOLE_BOARD_BAUDRATE 115200U
 #define EF800_CONSOLE_PENDING_SIZE 512U
+#ifndef CONFIG_BOARD_NATIVE_SIM
+#define EF800_CONSOLE_RX_SIZE 512U
+
+RING_BUF_DECLARE(console_rx_ring, EF800_CONSOLE_RX_SIZE);
+#endif
 
 static const struct device *console_uart;
 static uint8_t console_port;
@@ -27,6 +33,26 @@ static size_t pending_length;
 static uint32_t pending_dropped;
 
 static int console_putchar(int character);
+
+#ifndef CONFIG_BOARD_NATIVE_SIM
+static void console_uart_isr(const struct device *dev, void *user_data)
+{
+	uint8_t data[32];
+
+	ARG_UNUSED(user_data);
+	if (uart_irq_update(dev) <= 0) {
+		return;
+	}
+	while (uart_irq_rx_ready(dev)) {
+		int count = uart_fifo_read(dev, data, sizeof(data));
+
+		if (count <= 0) {
+			break;
+		}
+		(void)ring_buf_put(&console_rx_ring, data, (uint32_t)count);
+	}
+}
+#endif
 
 static void pending_put_locked(uint8_t value)
 {
@@ -69,7 +95,11 @@ static int console_read_locked(uint8_t *data)
 	if (data == NULL || console_uart == NULL || !device_is_ready(console_uart)) {
 		return -ENODEV;
 	}
+#ifdef CONFIG_BOARD_NATIVE_SIM
 	return uart_poll_in(console_uart, data);
+#else
+	return ring_buf_get(&console_rx_ring, data, 1U) == 1U ? 0 : -EAGAIN;
+#endif
 }
 
 static const struct device *uart_for_port(uint8_t port_id)
@@ -165,6 +195,12 @@ int ef800_console_prepare(void)
 {
 	k_spinlock_key_t key;
 
+	#ifndef CONFIG_BOARD_NATIVE_SIM
+	if (console_uart != NULL) {
+		uart_irq_rx_disable(console_uart);
+	}
+	ring_buf_reset(&console_rx_ring);
+	#endif
 	__printk_hook_install(console_putchar);
 	key = k_spin_lock(&console_lock);
 	console_uart = NULL;
@@ -177,6 +213,12 @@ int ef800_console_prepare(void)
 
 void ef800_console_clear_target(void)
 {
+	#ifndef CONFIG_BOARD_NATIVE_SIM
+	if (console_uart != NULL) {
+		uart_irq_rx_disable(console_uart);
+	}
+	ring_buf_reset(&console_rx_ring);
+	#endif
 	k_spinlock_key_t key = k_spin_lock(&console_lock);
 
 	console_uart = NULL;
@@ -195,6 +237,7 @@ int ef800_console_set_target_with_config(
 	uint8_t port_id, const struct ef800_measurement_serial_config *config)
 {
 	const struct device *uart;
+	const struct device *old_uart;
 	int ret;
 
 	if (port_id > 4U) {
@@ -210,6 +253,24 @@ int ef800_console_set_target_with_config(
 	if (ret != 0) {
 		return ret;
 	}
+	old_uart = console_uart;
+#ifndef CONFIG_BOARD_NATIVE_SIM
+	if (old_uart != NULL) {
+		uart_irq_rx_disable(old_uart);
+	}
+	if (port_id != 4U) {
+		ret = uart_irq_callback_user_data_set(uart, console_uart_isr, NULL);
+		if (ret != 0) {
+			if (old_uart != NULL) {
+				uart_irq_rx_enable(old_uart);
+			}
+			return ret;
+		}
+	}
+	ring_buf_reset(&console_rx_ring);
+#else
+	ARG_UNUSED(old_uart);
+#endif
 	k_spinlock_key_t key = k_spin_lock(&console_lock);
 
 	console_uart = uart;
@@ -221,6 +282,11 @@ int ef800_console_set_target_with_config(
 	}
 	(void)pending_flush_locked();
 	k_spin_unlock(&console_lock, key);
+	#ifndef CONFIG_BOARD_NATIVE_SIM
+	if (port_id != 4U) {
+		uart_irq_rx_enable(uart);
+	}
+	#endif
 	return 0;
 }
 

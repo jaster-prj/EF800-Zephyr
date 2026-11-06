@@ -206,20 +206,21 @@ controller owns the name, matrix, and scancode mappings.
 ## Application workflow test
 
 The RTC editor is opened with `z`. Once open, enter values using explicit
-press/release pairs. The fields are:
+press/release pairs. The weekday is displayed as a three-letter name; use the
+Up/Down keys to select it and Enter to continue. The remaining fields are:
 
 ```text
-weekday, date, month, year, hour, minute, second, UTC offset, DST
+date, month, year, hour, minute, second, UTC offset, DST
 ```
 
-For example, a single field can be entered as:
+For example, the weekday can be advanced once with:
 
 ```text
 keyboard debug start
 keyboard debug press z
 keyboard debug release z
-keyboard debug press 1
-keyboard debug release 1
+keyboard debug press down
+keyboard debug release down
 keyboard debug press enter
 keyboard debug release enter
 keyboard debug stop
@@ -298,6 +299,9 @@ silent, debug stop releases every virtual key, and physical input resumes.
 When USB MSD is unavailable, use the MCUmgr filesystem transport on the
 selected DebugConsole. MCUmgr owns the DebugConsole binary stream while the
 transport is active; the interactive shell is paused during this operation.
+The shell is available by default. Enter `mcumgr start` on the MainApplication
+shell before starting the raw serial SMP host; reset MainApplication after the
+transfer to restore shell access.
 
 The package is uploaded to:
 

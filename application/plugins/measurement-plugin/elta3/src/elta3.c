@@ -137,7 +137,7 @@ static int32_t defaults(void *instance, struct ef800_serial_defaults *value)
 
 static int32_t send(const char *text)
 {
-    return ef800_protocol_write(ef800_runtime.port, (const uint8_t *)text,
+    return ef800_protocol_write(&ef800_runtime.binding, (const uint8_t *)text,
                                 ef800_protocol_length(text));
 }
 
@@ -149,12 +149,12 @@ static int32_t measure(void *instance, struct ef800_measurement_result *result)
     if (instance != &ef800_runtime.public_instance || result == 0) return PM_EINVAL;
     status = send("S14\r\n");
     if (status != PM_OK) return status;
-    status = ef800_protocol_read_line(ef800_runtime.port, response, sizeof(response));
+    status = ef800_protocol_read_line(&ef800_runtime.binding, response, sizeof(response));
     if (status < 0 || response[0] != 'A' || response[1] != '\r' ||
         response[2] != '\n' || response[3] != '\0') return status < 0 ? status : PM_EIO;
     status = send("B\r\n");
     if (status != PM_OK) return status;
-    status = ef800_protocol_read_line(ef800_runtime.port, response, sizeof(response));
+    status = ef800_protocol_read_line(&ef800_runtime.binding, response, sizeof(response));
     if (status < 0) return status;
     status = send("Q\r\n");
     if (status != PM_OK) return status;

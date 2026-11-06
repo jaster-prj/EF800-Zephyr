@@ -1,0 +1,38 @@
+@startuml 1_level
+title EF800 — System Context and Level 1 Blocks
+left to right direction
+
+actor Operator
+actor Developer
+rectangle "Service PC / USB host" as pc
+rectangle "External instruments\nUART / serial" as instruments
+rectangle "Browser" as browser
+rectangle "Virtual EF800 gateway\nHTTP + WebSocket" as gateway
+
+package "EF800 measurement instrument" {
+  rectangle "Second-level\nBootloader" as boot
+  rectangle "MainApplication\nmeasurement + UI" as main
+  rectangle "BackupApplication\nrecovery MTP" as backup
+  rectangle "STM32L431 keyboard\ncontroller" as keyboard
+  database "L496 internal flash\nBoot / Backup / Main" as iflash
+  database "External QSPI\nNVS / Configuration / Data" as qspi
+  rectangle "Front panel\nLCD + controls" as frontpanel
+}
+
+Operator --> frontpanel : keypad input
+main --> frontpanel : render display
+main <--> keyboard : keyboard UART
+main <--> instruments : measurement protocols
+pc <--> main : named-root MTP\noptional exclusive MSC
+pc <--> backup : recovery MTP
+boot --> iflash : validate / update / select
+boot --> qspi : boot state + update file
+main <--> qspi : settings / workspaces / plugins
+backup <--> qspi : recovery files
+boot --> main : normal handoff
+boot --> backup : recovery handoff
+Developer --> gateway : development UI
+browser <--> gateway : HTTP / WebSocket
+gateway <--> main : bounded private simulator protocol
+
+@enduml

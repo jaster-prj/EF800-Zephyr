@@ -2,18 +2,13 @@
 #ifndef EF800_PORT_SERVICE_H
 #define EF800_PORT_SERVICE_H
 
-#include <stdint.h>
+/*
+ * Isolated Port SDK surface. Bindings contain only a mailbox address in the
+ * worker's own user mapping and scalar generation/capability values. There is
+ * no host context pointer or host operation callback in this interface.
+ */
+#include "ef800_plugin_worker_sdk.h"
 
-#define EF800_PORT_API_VERSION 1u
+typedef struct ef800_plugin_worker_binding ef800_port_binding;
 
-struct ef800_port_api {
-    uint32_t abi_version;
-    uint32_t struct_size;
-    void *context;
-    int32_t (*write)(void *context, const uint8_t *data, uint32_t length);
-    int32_t (*read)(void *context, uint8_t *data, uint32_t capacity,
-                    int32_t timeout_ms);
-    uint32_t reserved[4];
-};
-
-#endif
+#endif /* EF800_PORT_SERVICE_H */

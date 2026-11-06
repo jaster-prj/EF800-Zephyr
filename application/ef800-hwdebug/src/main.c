@@ -52,6 +52,8 @@ static void print_help(void)
 		"  lpuart host-test\r\n"
 		"  lpuart bitbang-test\r\n"
 		"  storage test\r\n"
+		"  storage format-layout\r\n"
+		"  storage format-volumes\r\n"
 		"  watchdog test\r\n"
 		"  usb cdc test\r\n"
 		"  next (storage step)\r\n"
@@ -64,6 +66,9 @@ static void print_help(void)
 		"  flash jedec\r\n"
 		"  flash sfdp [offset] [length]\r\n"
 		"  flash read <offset> <length>\r\n"
+		"  flash bitbang-read <offset> <length>\r\n"
+		"  flash api-read <offset> <length>\r\n"
+		"  flash program-test confirm (tests 0x8000, erases sector afterward)\r\n"
 		"  flash test spi|qspi-1line|qspi-4line|qpi|all\r\n"
 		"  qspi bitbang spi|qpi\r\n"
 		"\r\n"
@@ -207,8 +212,14 @@ static void handle_command(char *line)
 		if (subcommand != NULL && strcmp(subcommand, "test") == 0 &&
 		    strtok(NULL, " \t") == NULL) {
 			hwdebug_storage_test();
+		} else if (subcommand != NULL && strcmp(subcommand, "format-layout") == 0 &&
+			   strtok(NULL, " \t") == NULL) {
+			hwdebug_storage_format_layout();
+		} else if (subcommand != NULL && strcmp(subcommand, "format-volumes") == 0 &&
+			   strtok(NULL, " \t") == NULL) {
+			hwdebug_storage_format_volumes();
 		} else {
-			hwdebug_console_puts("error: usage: storage test\r\n");
+			hwdebug_console_puts("error: usage: storage test|format-layout|format-volumes\r\n");
 		}
 		return;
 	}
@@ -331,6 +342,38 @@ static void handle_command(char *line)
 		if (argument == NULL || extra == NULL || strtok(NULL, " \t") != NULL || parse_u32(argument, &offset) != 0 || parse_u32(extra, &length) != 0)
 			hwdebug_console_puts("error: usage: flash read <offset> <length>\r\n");
 		else hwdebug_flash_read(offset, length);
+		return;
+	}
+	if (strcmp(subcommand, "bitbang-read") == 0) {
+		argument = strtok(NULL, " \t"); extra = strtok(NULL, " \t");
+		if (argument == NULL || extra == NULL || strtok(NULL, " \t") != NULL ||
+		    parse_u32(argument, &offset) != 0 || parse_u32(extra, &length) != 0) {
+			hwdebug_console_puts("error: usage: flash bitbang-read <offset> <length>\r\n");
+		} else {
+			hwdebug_flash_bitbang_read(offset, length);
+		}
+		return;
+	}
+	if (strcmp(subcommand, "api-read") == 0) {
+		argument = strtok(NULL, " \t"); extra = strtok(NULL, " \t");
+		if (argument == NULL || extra == NULL || strtok(NULL, " \t") != NULL ||
+		    parse_u32(argument, &offset) != 0 ||
+		    parse_u32(extra, &length) != 0) {
+			hwdebug_console_puts("error: usage: flash api-read <offset> <length>\r\n");
+		} else {
+			hwdebug_flash_api_read(offset, length);
+		}
+		return;
+	}
+	if (strcmp(subcommand, "program-test") == 0) {
+		argument = strtok(NULL, " \t");
+		if (argument == NULL || strcmp(argument, "confirm") != 0 ||
+		    strtok(NULL, " \t") != NULL) {
+			hwdebug_console_puts("warning: program-test erases only QSPI sector 0x8000\r\n"
+				"usage: flash program-test confirm\r\n");
+		} else {
+			hwdebug_flash_program_test();
+		}
 		return;
 	}
 	hwdebug_console_puts("error: unknown flash command; use help\r\n");

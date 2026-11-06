@@ -1133,6 +1133,7 @@ static int mtp_prepare_locked(struct usb_device **udev,
 	}
 	ret = get_class_device(0x06U, udev, endpoints);
 	if (ret != 0) {
+		LOG_WRN("Virtual USB peer did not enumerate MTP interface: %d", ret);
 		return ret;
 	}
 	ret = lock_device(*udev);

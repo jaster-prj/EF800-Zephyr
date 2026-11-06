@@ -6,6 +6,7 @@
 #include <zephyr/ztest.h>
 
 #include "ef800_plugin_registry.h"
+#include "ef800_plugin_recovery_state.h"
 #include "ef800_calculation_service.h"
 #include "ef800_workspace.h"
 #include "ef800_persistence_fake.h"
@@ -13,6 +14,7 @@
 #include "ef800_plugin_display.h"
 #include "ef800_keyboard_events.h"
 #include "ef800_plugin_session.h"
+#include "ef800_plugin_worker_abi.h"
 #include "ef800_measurement_submenu.h"
 
 struct calculation_fixture {
@@ -83,6 +85,97 @@ ZTEST(ef800_plugin, test_bounded_calculation_service)
 	fixture.transform_status = -ERANGE;
 	zassert_equal(ef800_calculation_service_run(&service, snapshot,
 		sizeof(snapshot), output, sizeof(output), &length), -ERANGE, NULL);
+}
+
+static struct ef800_plugin_worker_message service_message(uint32_t operation)
+{
+	return (struct ef800_plugin_worker_message){
+		.abi_version = EF800_PLUGIN_WORKER_ABI_VERSION,
+		.struct_size = sizeof(struct ef800_plugin_worker_message),
+		.generation = 7U,
+		.sequence = 1U,
+		.kind = EF800_PLUGIN_WORKER_HOST_SERVICE_REQUEST,
+		.operation = operation,
+		.capability = 0x1234U,
+		.deadline_ms = 250U,
+	};
+}
+
+ZTEST(ef800_plugin, test_worker_mailbox_service_bounds_and_generation)
+{
+	struct ef800_plugin_worker_message message =
+		service_message(EF800_PLUGIN_WORKER_PORT_WRITE);
+
+	message.kind = EF800_PLUGIN_WORKER_HOST_INVOKE;
+	message.operation = EF800_PLUGIN_WORKER_MEASURE;
+	message.payload_offset = 0U;
+	message.payload_length = 16U;
+	message.response_offset = 32U;
+	message.response_capacity = 32U;
+	zassert_ok(ef800_plugin_worker_message_validate(&message,
+		EF800_PLUGIN_WORKER_MAILBOX_PAYLOAD_SIZE, 7U, 100U), NULL);
+
+	message = service_message(EF800_PLUGIN_WORKER_PORT_WRITE);
+
+	message.payload_offset = 16U;
+	message.payload_length = 4U;
+	zassert_ok(ef800_plugin_worker_message_validate(&message,
+		EF800_PLUGIN_WORKER_MAILBOX_PAYLOAD_SIZE, 7U, 100U), NULL);
+	message.struct_size--;
+	zassert_equal(ef800_plugin_worker_message_validate(&message,
+		EF800_PLUGIN_WORKER_MAILBOX_PAYLOAD_SIZE, 7U, 100U), -EINVAL, NULL);
+	message = service_message(EF800_PLUGIN_WORKER_PORT_WRITE);
+	message.reserved = 1U;
+	zassert_equal(ef800_plugin_worker_message_validate(&message,
+		EF800_PLUGIN_WORKER_MAILBOX_PAYLOAD_SIZE, 7U, 100U), -EINVAL, NULL);
+	message = service_message(EF800_PLUGIN_WORKER_PORT_WRITE);
+	message.deadline_padding = 1U;
+	zassert_equal(ef800_plugin_worker_message_validate(&message,
+		EF800_PLUGIN_WORKER_MAILBOX_PAYLOAD_SIZE, 7U, 100U), -EINVAL, NULL);
+	message = service_message(EF800_PLUGIN_WORKER_PORT_WRITE);
+	message.response_length = 1U;
+	zassert_equal(ef800_plugin_worker_message_validate(&message,
+		EF800_PLUGIN_WORKER_MAILBOX_PAYLOAD_SIZE, 7U, 100U), -EINVAL, NULL);
+	message = service_message(EF800_PLUGIN_WORKER_PORT_WRITE);
+	message.operation = 0x7fffU;
+	zassert_equal(ef800_plugin_worker_message_validate(&message,
+		EF800_PLUGIN_WORKER_MAILBOX_PAYLOAD_SIZE, 7U, 100U), -EINVAL, NULL);
+	message = service_message(EF800_PLUGIN_WORKER_PORT_WRITE);
+	zassert_equal(ef800_plugin_worker_message_validate(&message,
+		EF800_PLUGIN_WORKER_MAILBOX_PAYLOAD_SIZE, 8U, 100U), -EINVAL, NULL);
+
+	message.capability = 0U;
+	zassert_equal(ef800_plugin_worker_message_validate(&message,
+		EF800_PLUGIN_WORKER_MAILBOX_PAYLOAD_SIZE, 7U, 100U), -EINVAL, NULL);
+	message.capability = 0x1234U;
+	message.payload_offset = EF800_PLUGIN_WORKER_MAILBOX_PAYLOAD_SIZE - 2U;
+	message.payload_length = 4U;
+	zassert_equal(ef800_plugin_worker_message_validate(&message,
+		EF800_PLUGIN_WORKER_MAILBOX_PAYLOAD_SIZE, 7U, 100U), -EFAULT, NULL);
+
+	message = service_message(EF800_PLUGIN_WORKER_PORT_READ);
+	message.response_offset = 32U;
+	message.response_capacity = EF800_PLUGIN_WORKER_MAX_PORT_TRANSFER;
+	message.timeout_ms = 100U;
+	zassert_ok(ef800_plugin_worker_message_validate(&message,
+		EF800_PLUGIN_WORKER_MAILBOX_PAYLOAD_SIZE, 7U, 100U), NULL);
+	message.deadline_ms = 150U;
+	zassert_equal(ef800_plugin_worker_message_validate(&message,
+		EF800_PLUGIN_WORKER_MAILBOX_PAYLOAD_SIZE, 7U, 100U),
+		-ETIMEDOUT, NULL);
+
+	message = service_message(EF800_PLUGIN_WORKER_RENDER);
+	message.kind = EF800_PLUGIN_WORKER_HOST_INVOKE;
+	message.payload_offset = 8U;
+	message.payload_length = 8U;
+	message.response_offset = 12U;
+	message.response_capacity = 8U;
+	zassert_equal(ef800_plugin_worker_message_validate(&message,
+		EF800_PLUGIN_WORKER_MAILBOX_PAYLOAD_SIZE, 7U, 100U), -EINVAL, NULL);
+
+	message.kind = EF800_PLUGIN_WORKER_RESULT;
+	zassert_equal(ef800_plugin_worker_message_validate(&message,
+		EF800_PLUGIN_WORKER_MAILBOX_PAYLOAD_SIZE, 7U, 100U), -EINVAL, NULL);
 }
 
 ZTEST(ef800_plugin, test_workspace_snapshot_is_bounded)
@@ -303,6 +396,83 @@ ZTEST(ef800_plugin, test_rejects_invalid_and_records_diagnostics)
 		EF800_PLUGIN_REGISTRY_UNAVAILABLE, NULL);
 	zassert_equal(ef800_plugin_registry_state_for(&registry, 999u),
 		EF800_PLUGIN_REGISTRY_MISSING, NULL);
+}
+
+ZTEST(ef800_plugin, test_fault_and_timeout_quarantine_is_boot_scoped)
+{
+	struct ef800_plugin_registry registry;
+	struct ef800_plugin_descriptor_info faulted = {
+		.struct_size = sizeof(faulted),
+		.plugin_id = 105u,
+		.interface_version = 1u,
+		.kind = EF800_PLUGIN_KIND_MEASUREMENT,
+		.menu_category = EF800_PLUGIN_MENU_MEASUREMENT,
+	};
+	struct ef800_plugin_descriptor_info timed_out = faulted;
+	struct ef800_plugin_descriptor_info healthy = faulted;
+
+	strcpy(faulted.name, "faulted measurement");
+	strcpy(faulted.version, "1.0.0");
+	timed_out.plugin_id = 106u;
+	strcpy(timed_out.name, "timed measurement");
+	healthy.plugin_id = 107u;
+	healthy.kind = EF800_PLUGIN_KIND_CALCULATION;
+	healthy.menu_category = EF800_PLUGIN_MENU_CALCULATION;
+	strcpy(healthy.name, "healthy calculation");
+	ef800_plugin_registry_init(&registry);
+	zassert_ok(ef800_plugin_registry_register_external(&registry, &faulted),
+		NULL);
+	zassert_ok(ef800_plugin_registry_register_external(&registry, &timed_out),
+		NULL);
+	zassert_ok(ef800_plugin_registry_register_external(&registry, &healthy),
+		NULL);
+	zassert_equal(ef800_plugin_registry_set_state(&registry, faulted.plugin_id,
+		EF800_PLUGIN_REGISTRY_FAULTED), 0, NULL);
+	zassert_equal(ef800_plugin_registry_state_for(&registry, faulted.plugin_id),
+		EF800_PLUGIN_REGISTRY_FAULTED, NULL);
+	zassert_equal(ef800_plugin_registry_set_state(&registry, timed_out.plugin_id,
+		EF800_PLUGIN_REGISTRY_TIMED_OUT), 0, NULL);
+	zassert_equal(ef800_plugin_registry_state_for(&registry, timed_out.plugin_id),
+		EF800_PLUGIN_REGISTRY_TIMED_OUT, NULL);
+	zassert_equal(ef800_plugin_registry_state_for(&registry, healthy.plugin_id),
+		EF800_PLUGIN_REGISTRY_READY, NULL);
+	zassert_equal(ef800_plugin_registry_set_state(&registry, 999u,
+		EF800_PLUGIN_REGISTRY_FAULTED), -ENOENT, NULL);
+	zassert_equal(ef800_plugin_registry_set_state(&registry, faulted.plugin_id,
+		EF800_PLUGIN_REGISTRY_READY), -EINVAL, NULL);
+
+	/* Runtime quarantine lives only in this registry instance. */
+	ef800_plugin_registry_init(&registry);
+	zassert_ok(ef800_plugin_registry_register_external(&registry, &faulted),
+		NULL);
+	zassert_ok(ef800_plugin_registry_register_external(&registry, &timed_out),
+		NULL);
+	zassert_ok(ef800_plugin_registry_register_external(&registry, &healthy),
+		NULL);
+	zassert_equal(ef800_plugin_registry_state_for(&registry, faulted.plugin_id),
+		EF800_PLUGIN_REGISTRY_READY, NULL);
+	zassert_equal(ef800_plugin_registry_state_for(&registry, timed_out.plugin_id),
+		EF800_PLUGIN_REGISTRY_READY, NULL);
+	zassert_equal(ef800_plugin_registry_state_for(&registry, healthy.plugin_id),
+		EF800_PLUGIN_REGISTRY_READY, NULL);
+}
+
+ZTEST(ef800_plugin, test_recovery_ledger_clears_only_detached_generation)
+{
+	uint32_t generation = 9U;
+	bool worker_mapped = true;
+
+	zassert_true(ef800_plugin_recovery_domain_detached(&generation,
+		&worker_mapped, 9U), NULL);
+	zassert_false(worker_mapped, NULL);
+	zassert_equal(generation, 0U, NULL);
+
+	generation = 10U;
+	worker_mapped = true;
+	zassert_false(ef800_plugin_recovery_domain_detached(&generation,
+		&worker_mapped, 9U), NULL);
+	zassert_true(worker_mapped, NULL);
+	zassert_equal(generation, 10U, NULL);
 }
 
 ZTEST_SUITE(ef800_plugin, NULL, NULL, NULL, NULL, NULL);

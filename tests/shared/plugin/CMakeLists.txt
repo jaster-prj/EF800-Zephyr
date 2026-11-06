@@ -8,6 +8,7 @@ project(ef800_shared_plugin_test)
 target_sources(app PRIVATE
 	${CMAKE_CURRENT_LIST_DIR}/src/main.c
 	${CMAKE_CURRENT_LIST_DIR}/../../../shared/ef800_plugin/ef800_plugin_registry.c
+	${CMAKE_CURRENT_LIST_DIR}/../../../shared/ef800_plugin/ef800_plugin_worker_abi.c
 	${CMAKE_CURRENT_LIST_DIR}/../../../shared/ef800_plugin/ef800_calculation_service.c
 	${CMAKE_CURRENT_LIST_DIR}/../../../shared/ef800_plugin/ef800_plugin_screen.c
 	${CMAKE_CURRENT_LIST_DIR}/../../../shared/ef800_plugin/ef800_plugin_display.c

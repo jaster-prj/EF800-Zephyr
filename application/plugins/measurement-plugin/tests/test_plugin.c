@@ -1,11 +1,13 @@
 /* SPDX-License-Identifier: Apache-2.0 */
 #include <assert.h>
+#include <errno.h>
+#include <stdbool.h>
 #include <stdint.h>
 #include <string.h>
 
 #include "ef800_measurement_plugin.h"
 #include "ef800_plugin_ids.h"
-#include "ef800_port_service.h"
+#include "ef800_plugin_worker_sdk.h"
 #include "plugin_manager/plugin_abi.h"
 
 int pm_plugin_create(const struct pm_service_table *services, void **instance);
@@ -19,23 +21,51 @@ struct fake_port {
     uint32_t output_size;
 };
 
-static int32_t fake_write(void *context, const uint8_t *data, uint32_t length)
-{
-    struct fake_port *fake = context;
-    assert(fake->output_size + length <= sizeof(fake->output));
-    memcpy(fake->output + fake->output_size, data, length);
-    fake->output_size += length;
-    return (int32_t)length;
-}
+static struct ef800_plugin_worker_mailbox worker_mailbox;
+static struct fake_port *active_port;
+static uint32_t worker_sequence;
+#define TEST_WORKER_GENERATION 7u
+#define TEST_WORKER_CAPABILITY 0x7a51c0deu
 
-static int32_t fake_read(void *context, uint8_t *data, uint32_t capacity,
-                         int32_t timeout_ms)
+int ef800_plugin_worker_syscall(
+    struct ef800_plugin_worker_mailbox *mailbox)
 {
-    struct fake_port *fake = context;
-    (void)timeout_ms;
-    if (capacity == 0u || fake->input_offset == fake->input_size) return 0;
-    *data = fake->input[fake->input_offset++];
-    return 1;
+    struct ef800_plugin_worker_message *message;
+
+    assert(mailbox == &worker_mailbox);
+    message = &mailbox->message;
+    assert(ef800_plugin_worker_message_validate(message,
+        EF800_PLUGIN_WORKER_MAILBOX_PAYLOAD_SIZE,
+        TEST_WORKER_GENERATION, 100u) == 0);
+    assert(message->kind == EF800_PLUGIN_WORKER_HOST_SERVICE_REQUEST);
+    assert(message->capability == TEST_WORKER_CAPABILITY);
+    if (message->sequence == 1u) worker_sequence = 0u;
+    assert(message->sequence == ++worker_sequence);
+    assert(active_port != NULL);
+
+    switch (message->operation) {
+    case EF800_PLUGIN_WORKER_PORT_WRITE:
+        assert(active_port->output_size + message->payload_length <=
+            sizeof(active_port->output));
+        memcpy(active_port->output + active_port->output_size,
+            mailbox->payload + message->payload_offset, message->payload_length);
+        active_port->output_size += message->payload_length;
+        message->status = 0;
+        break;
+    case EF800_PLUGIN_WORKER_PORT_READ:
+        if (active_port->input_offset == active_port->input_size) {
+            message->status = -ETIMEDOUT;
+        } else {
+            mailbox->payload[message->response_offset] =
+                active_port->input[active_port->input_offset++];
+            message->response_length = 1u;
+            message->status = 0;
+        }
+        break;
+    default:
+        assert(false);
+    }
+    return 0;
 }
 
 int main(void)
@@ -48,14 +78,18 @@ int main(void)
     static const uint8_t expected[] = "\x11\r\n";
 #endif
     struct fake_port fake = {response, sizeof(response) - 1u, 0u, {0u}, 0u};
-    const struct ef800_port_api port = {
-        EF800_PORT_API_VERSION, sizeof(struct ef800_port_api), &fake,
-        fake_write, fake_read, {0u}
+    struct ef800_plugin_worker_binding binding = {
+        .abi_version = EF800_PLUGIN_WORKER_BINDING_ABI_VERSION,
+        .struct_size = sizeof(binding),
+        .mailbox = &worker_mailbox,
+        .generation = TEST_WORKER_GENERATION,
+        .capability = TEST_WORKER_CAPABILITY,
+        .deadline_ms = 10000u,
     };
     const struct pm_service service = {
-        .service_id = {{EF800_PORT_SERVICE_UUID_BYTES}},
-        .version = EF800_PORT_SERVICE_VERSION,
-        .vtable = &port,
+        .service_id = {{EF800_PLUGIN_WORKER_SERVICE_UUID_BYTES}},
+        .version = EF800_PLUGIN_WORKER_SERVICE_VERSION,
+        .vtable = &binding,
     };
     const struct pm_service_table table = {1u, &service};
     struct ef800_measurement_instance *instance;
@@ -69,9 +103,12 @@ int main(void)
     (void)key_result;
     void *opaque = 0;
 
+    active_port = &fake;
     assert(pm_plugin_create(&table, &opaque) == PM_OK);
     instance = opaque;
     assert(instance != 0 && instance->api != 0);
+    assert(pm_plugin_create(&table, &opaque) == PM_EBUSY);
+    assert(pm_plugin_destroy((void *)((uintptr_t)instance + 1u)) == PM_EINVAL);
     assert(instance->api->abi_version == EF800_MEASUREMENT_API_VERSION);
     assert(instance->api->get_serial_defaults(instance, &serial) == PM_OK);
     assert(serial.baudrate == TEST_BAUD && serial.data_bits == TEST_DATA_BITS);
@@ -149,5 +186,8 @@ int main(void)
     }
     assert(pm_plugin_destroy(instance) == PM_OK);
     assert(pm_plugin_create(&(struct pm_service_table){0u, 0}, &opaque) == PM_ENOENT);
+    assert(pm_plugin_create(&table, &opaque) == PM_OK);
+    assert(opaque != 0);
+    assert(pm_plugin_destroy(opaque) == PM_OK);
     return 0;
 }

@@ -38,6 +38,10 @@ struct ef800_measurement_transport {
 	int (*write)(void *context, const uint8_t *data, size_t length);
 	int (*read)(void *context, uint8_t *data, int32_t timeout_ms);
 	void *context;
+	/* Absolute-deadline variants are required by the isolated worker gateway. */
+	int (*write_until)(void *context, const uint8_t *data, size_t length,
+		uint64_t deadline_ms);
+	int (*read_until)(void *context, uint8_t *data, uint64_t deadline_ms);
 };
 
 struct ef800_measurement_data {

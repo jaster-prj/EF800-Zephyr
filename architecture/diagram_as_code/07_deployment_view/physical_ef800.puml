@@ -1,0 +1,36 @@
+@startuml physical_ef800
+title EF800 — Physical Deployment
+top to bottom direction
+
+node "EF800 PCB" {
+  node "STM32L496ZGT6 — Main / Debug" as l496 {
+    artifact "Bootloader\n0x08000000 / 64 KiB" as bl
+    artifact "BackupApplication\n0x08010000 / 128 KiB" as backup
+    artifact "MainApplication\n0x08030000 / 832 KiB" as main
+    database "Internal flash\n1 MiB" as internal
+    component "QSPI controller" as qspi_ctl
+    database "External QSPI Bank 1\n32 KiB NVS\n992 KiB Configuration FAT\n3072 KiB Shared Data FAT" as qspi
+    component "T6963 LCD + MCP23017" as lcd
+    component "DS3231 + MAX17043" as sensors
+    component "UARTs + USB OTG FS" as interfaces
+  }
+  node "STM32L431 — Keyboard controller" as l431 {
+    artifact "Resident bootloader\n0x08000000..0x08007FFF" as kbl
+    artifact "Keyboard application\nfrom 0x08008000" as kapp
+    component "Key matrix" as matrix
+  }
+}
+actor "Service PC" as pc
+
+bl -- internal
+backup -- internal
+main -- internal
+qspi_ctl --> qspi
+main --> lcd
+main --> sensors
+main --> interfaces
+interfaces <--> pc : USB
+interfaces <--> l431 : 115200 8N1 UART
+kbl -- kapp
+kapp --> matrix
+@enduml

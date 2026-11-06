@@ -1,0 +1,28 @@
+@startuml storage_ownership
+title Shared-Data FAT to Physical MSC Ownership
+autonumber
+
+participant "Main runtime" as Main
+participant "Storage-owner state machine" as Owner
+database "Shared Data FAT" as FAT
+participant "USB MSC class" as MSC
+actor "PC mass-storage host" as Host
+
+Main -> Owner : MSC requested by assignment/composition
+Owner --> Main : FAT_TO_MSC action
+Main -> Main : stop filesystem-backed MCUmgr transport
+Main -> FAT : unmount Shared Data FAT
+alt unmount succeeds
+  Main -> MSC : initialize and enable disk export
+  MSC --> Main : started
+  Main -> Owner : commit MSC ownership
+  Host -> MSC : raw block I/O
+else unmount or MSC startup fails
+  Main -> FAT : restore FAT mount if needed
+  Main -> Main : restore filesystem transport
+end
+note over Main, Host : FAT and MSC ownership must never overlap
+Host --> MSC : disconnect / stop requested
+MSC --> Main : shutdown
+Main -> Main : controlled reboot before FAT remount if worker state is uncertain
+@enduml

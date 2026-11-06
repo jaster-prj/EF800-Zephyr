@@ -68,10 +68,7 @@ class WorkspaceBrowserNativeSimTest(unittest.TestCase):
         cls.latest_frame = None
         cls.request_id = 1
         try:
-            cls.wait_for_lcd(
-                lambda frame: any(frame["pixels"]),
-                timeout=30.0,
-            )
+            cls.wait_for_stable_lcd(timeout=30.0)
         except Exception as error:
             cls.process.terminate()
             output, _ = cls.process.communicate(timeout=5.0)
@@ -130,6 +127,29 @@ class WorkspaceBrowserNativeSimTest(unittest.TestCase):
             if predicate is None or predicate(frame):
                 return frame
         raise TimeoutError("timed out waiting for the expected LCD pixel frame")
+
+    @classmethod
+    def wait_for_stable_lcd(cls, timeout=30.0, stable_for=0.75):
+        deadline = time.monotonic() + timeout
+        last_sequence = None
+        last_change = None
+        while time.monotonic() < deadline:
+            receive_deadline = min(deadline, time.monotonic() + 0.2)
+            try:
+                message_type, payload = cls._receive_message(receive_deadline)
+            except TimeoutError:
+                if (cls.latest_frame is not None and last_change is not None and
+                        time.monotonic() - last_change >= stable_for):
+                    return cls.latest_frame
+                continue
+            if message_type != MSG_LCD_FRAME:
+                continue
+            frame = decode_lcd_frame(payload)
+            cls.latest_frame = frame
+            if frame["sequence"] != last_sequence:
+                last_sequence = frame["sequence"]
+                last_change = time.monotonic()
+        raise TimeoutError("LCD framebuffer did not settle during MainApplication startup")
 
     @classmethod
     def send_key(cls, key):

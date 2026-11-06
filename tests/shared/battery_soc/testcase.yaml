@@ -1,0 +1,9 @@
+tests:
+  ef800.shared.battery_soc:
+    tags:
+      - ef800
+      - battery
+      - soc
+    harness: ztest
+    platform_allow:
+      - native_sim

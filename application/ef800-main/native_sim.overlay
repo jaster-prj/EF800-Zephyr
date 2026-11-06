@@ -1,3 +1,5 @@
+#include <zephyr/dt-bindings/adc/adc.h>
+
 / {
 	chosen {
 		zephyr,keyboard-uart = &lpuart1;
@@ -35,6 +37,8 @@
 		usb-select-gpios = <&mcp23017 8 0>;
 		keyboard-reset-gpios = <&mcp23017 12 0>;
 		power-down-gpios = <&gpiob 5 0>;
+		io-channels = <&battery_adc_emul 2>;
+		io-channel-names = "battery";
 	};
 
 	gpioa: gpioa {
@@ -151,6 +155,26 @@
 		compatible = "zephyr,native-pty-uart";
 		current-speed = <115200>;
 		status = "okay";
+	};
+
+	battery_adc_emul: adc {
+		compatible = "zephyr,adc-emul";
+		nchannels = <3>;
+		ref-internal-mv = <3300>;
+		#io-channel-cells = <1>;
+		status = "okay";
+
+		#address-cells = <1>;
+		#size-cells = <0>;
+
+		channel@2 {
+			reg = <2>;
+			zephyr,gain = "ADC_GAIN_1";
+			zephyr,reference = "ADC_REF_INTERNAL";
+			zephyr,vref-mv = <3300>;
+			zephyr,acquisition-time = <ADC_ACQ_TIME_MAX>;
+			zephyr,resolution = <12>;
+		};
 	};
 
 };

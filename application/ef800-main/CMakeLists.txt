@@ -20,6 +20,18 @@ endif()
 find_package(Zephyr REQUIRED HINTS $ENV{ZEPHYR_BASE})
 project(ef800_main)
 
+if(CONFIG_EF800_MAIN_PLUGIN_RECOVERY_TEST_DIRECTORY)
+	# The recovery-test volume contains exactly the fault and healthy fixtures.
+	# Keep PluginManager's otherwise-large default discovery table bounded in
+	# this dedicated image so it fits the L496 malloc arena.
+	zephyr_compile_definitions(PM_MANAGER_MAX_DISCOVERED=9)
+	elseif(BOARD STREQUAL "ef800")
+	# The physical EF800 build currently supports the two independently
+	# packaged instruments. Keep PluginManager's large fixed discovery table
+	# small enough to leave room in the 16 KiB libc arena for those packages.
+	zephyr_compile_definitions(PM_MANAGER_MAX_DISCOVERED=2)
+endif()
+
 include(${CMAKE_CURRENT_LIST_DIR}/ef800-main-sources.cmake)
 list(LENGTH EF800_MAIN_COMMON_SOURCES EF800_MAIN_COMMON_SOURCE_COUNT)
 message(STATUS "EF800 common production source manifest: ${EF800_MAIN_COMMON_SOURCE_COUNT} sources")

@@ -141,7 +141,7 @@ int ef800_boot_install_update(const struct flash_area *main_area,
 	};
 	struct fs_file_t file;
 	struct fs_dirent entry;
-	const struct flash_area *data_area;
+	const struct flash_area *boot_state_area;
 	struct ef800_update_header header;
 	uint32_t magic;
 	uint32_t vector[2];
@@ -154,11 +154,14 @@ int ef800_boot_install_update(const struct flash_area *main_area,
 	int rc;
 
 	fs_file_t_init(&file);
-	rc = flash_area_open(PARTITION_ID(qspi_storage_partition), &data_area);
+	rc = flash_area_open(PARTITION_ID(qspi_bootstate_partition),
+		&boot_state_area);
 	if (rc != 0) {
 		return rc;
 	}
-	rc = ef800_qspi_layout_check_legacy(data_area->fa_dev, &legacy_layout);
+	rc = ef800_qspi_layout_check_legacy_area(boot_state_area,
+		&legacy_layout);
+	flash_area_close(boot_state_area);
 	if (rc != 0) {
 		return rc;
 	}

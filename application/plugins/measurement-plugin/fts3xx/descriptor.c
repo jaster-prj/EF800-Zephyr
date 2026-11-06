@@ -41,6 +41,13 @@ static const struct ef800_plugin_metadata ef800_metadata = {
     EF800_MEASUREMENT_UI_API_VERSION, sizeof(struct ef800_measurement_api),
     EF800_MEASUREMENT_ACTION_MEASURE,
     9600u, 8u, EF800_SERIAL_PARITY_NONE, 1u, EF800_SERIAL_FLOW_NONE,
+	EF800_PLUGIN_EXECUTION_MODEL, EF800_PLUGIN_ISOLATION_ABI_VERSION,
+	EF800_PLUGIN_TARGET_ARCH, EF800_PLUGIN_REQUIRED_WORKER_SERVICES,
+	EF800_PLUGIN_MINIMUM_MAILBOX_SIZE, 2048u,
+	EF800_PLUGIN_MINIMUM_WORKER_STACK_SIZE,
+	EF800_PLUGIN_REQUIRED_MPU_ALIGNMENT,
+	EF800_PLUGIN_REQUIRED_MPU_ALIGNMENT,
+	EF800_PLUGIN_REQUIRED_MPU_ALIGNMENT,
 };
 
 __attribute__((section(".rodata.pm_descriptor"), used))
@@ -54,6 +61,7 @@ const struct ef800_wire_descriptor pm_plugin_get_descriptor = {
     (uint32_t)(uintptr_t)pm_plugin_create,
     (uint32_t)(uintptr_t)pm_plugin_destroy,
     offsetof(struct ef800_wire_descriptor, metadata), sizeof(ef800_metadata),
-    {EF800_PORT_SERVICE_UUID_BYTES}, EF800_PLUGIN_NAME, EF800_PLUGIN_VERSION,
+	{EF800_PLUGIN_REQUIRED_SERVICE_UUID_BYTES}, EF800_PLUGIN_NAME,
+	EF800_PLUGIN_VERSION,
     ef800_metadata
 };

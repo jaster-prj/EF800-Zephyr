@@ -3,6 +3,12 @@
 These tests target the production `ef800-main` image on the STM32L496. They do
 not use the former NUCLEO PluginManager prototype.
 
+External package execution is disabled in the default physical configuration.
+`plugin-dev.conf` enables the inline compatibility executor only for trusted
+development packages; it does not provide userspace isolation. The
+measurement-plugin native_sim CTest suite separately builds and executes the
+native `.pmp` packages through PluginManager.
+
 The acceptance harness must use the normal MainApplication console and must
 keep the console port closed between scripted accesses. It validates:
 

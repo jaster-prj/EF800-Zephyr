@@ -139,11 +139,9 @@ static int shell_transport_read(const struct shell_transport *transport,
 	context->rx_start = (context->rx_start + *count) % EF800_SHELL_RX_SIZE;
 	context->rx_length -= *count;
 	k_spin_unlock(&context->lock, key);
+#ifdef CONFIG_BOARD_NATIVE_SIM
 	while (*count < length) {
 		uint8_t value;
-		if (shell_binary_mode) {
-			break;
-		}
 		int result = ef800_console_read(&value);
 
 		if (result == 0) {
@@ -165,6 +163,7 @@ static int shell_transport_read(const struct shell_transport *transport,
 		}
 		break;
 	}
+#endif
 	return 0;
 }
 
@@ -188,7 +187,7 @@ static struct shell_transport shell_transport = {
 };
 
 SHELL_DEFINE(ef800_shell, "ef800> ", &shell_transport,
-		1024U, 100U,
+		100U, 100U,
 		SHELL_FLAG_OLF_CRLF);
 
 int ef800_shell_init(void)

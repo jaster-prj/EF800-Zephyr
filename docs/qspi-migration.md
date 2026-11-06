@@ -1,62 +1,107 @@
 # EF800 QSPI layout migration
 
-## Safety rule
+## Development behavior
 
-The new firmware does not convert the existing 4 MiB monolithic FAT volume in
-place. The new NVS, Configuration, and Shared Data regions overlap that old FAT
-volume. A failed mount is **not** permission to format, repartition, or write a
-boot-state record.
+The new QSPI layout is:
 
-The firmware checks the raw QSPI boot sector for a plausible legacy FAT BPB
-before mounting the new filesystems or initializing NVS. On a match, it leaves
-the media untouched and skips the Bootloader update scan. MainApplication uses
-volatile boot-state defaults and does not mount QSPI-backed configuration or
-shared data. BackupApplication also does not expose the legacy volume as raw
-MSC. The image reports the layout mismatch; it does not initialize the new
-NVS/FAT layout over the old volume.
+| Region | Offset | Size | Purpose |
+|---|---:|---:|---|
+| Boot-state NVS | `0x000000` | 32 KiB | Boot selection/failure metadata |
+| Configuration FAT | `0x008000` | 992 KiB | Private EF800 configuration |
+| Shared Data FAT | `0x100000` | 3072 KiB | `data`, `plugins`, and `fwu` |
 
-## Recoverable service procedure
+The development MainApplication enables
+`CONFIG_EF800_MAIN_REFORMAT_LEGACY_QSPI=y`. Before it reads boot metadata or
+mounts storage, it checks QSPI offset zero for a validated legacy monolithic
+FAT boot sector. **If that signature is found, the firmware formats the new
+Configuration and Shared Data FAT partitions, verifies both raw FAT boot
+sectors, erases the boot-state NVS partition, then proceeds with normal
+initialization.** The optional `CONFIG_EF800_MAIN_FORMAT_BLANK_QSPI` boot-time
+provisioning is disabled by default on the board; use the explicit maintenance
+command below for an erased/unformatted device. These development paths
+discard prior contents; there is no file migration. Keep the legacy option
+disabled for production firmware.
 
-Physical QSPI qualification and migration are currently release-gated. Do not
-run this procedure on a target until the fitted part, capacity, erase geometry,
-read path, and a partition-aware initializer have been qualified.
+The formatter leaves the old boot-sector signature intact until both FAT
+volumes format successfully. If power fails during either FAT format, the next
+boot can recognize the old layout and retry. The boot-state partition is erased
+last, after the new FAT volumes have been created. A normal FAT mount failure
+or invalid NVS record by itself does **not** trigger this formatter.
 
-1. Keep the legacy firmware installed. Disconnect USB hosts that could write
-   the volume and stop applications that use it.
-2. Read and save a complete raw 4 MiB QSPI image with an approved read-only
-   programmer. Record its SHA-256 and verify the image size is exactly
-   4,194,304 bytes. Separately copy `.configuration`, `data`, `plugins`, and
-   `fwu` through the legacy filesystem interface; record file sizes and hashes.
-3. Verify that both backups are readable and that the raw image can be restored
-   to a spare or otherwise recoverable device. Keep the original image immutable.
-   If a complete verified backup cannot be made, stop; do not install the new
-   partition map on that device.
-4. With the verified backup secured, explicitly erase the entire QSPI part using
-   the qualified service fixture. Initialize the 32 KiB boot-state NVS at
-   `0x000000`, then separately format the 992 KiB Configuration FAT at
-   `0x008000` and 3072 KiB Shared Data FAT at `0x100000`. Do not use
-   MainApplication's mount path or the existing `hwdebug` storage test as a
-   migration formatter.
-5. Install the matching Bootloader, BackupApplication, and MainApplication
-   images. Confirm the legacy-layout warning is absent, the boot-state record
-   can be initialized, and both FAT volumes mount without formatting on mount
-   failure. Validate BackupApplication file-level MTP recovery access without
-   enabling raw MSC for mounted volumes.
-6. Restore `.configuration` contents to Configuration, and restore `data`,
-   `plugins`, and `fwu` to their corresponding Shared Data directories. Verify
-   each restored file against the recorded size/hash and test a second readback.
-   Keep the host backup until the device passes the complete recovery and
-   filesystem checks.
+The Bootloader and BackupApplication remain non-formatting: when they encounter
+the old layout, the Bootloader skips its update scan and BackupApplication does
+not start recovery MTP. The normal boot path must reach MainApplication for the
+development migration to run.
 
-If any post-erase step fails, restore the saved raw image and the matching
-legacy firmware. Do not boot legacy firmware against the new partition layout;
-it expects one FAT volume beginning at QSPI offset zero. This migration is an
-explicit full-device replacement after backup, not automatic in-place
-repartitioning. The software regression test synthesizes a legacy FAT boot
-sector and verifies that metadata initialization, both new-volume sentinels,
-and the original boot sector remain unchanged. It does not qualify a physical
-QSPI part or service fixture.
+Use the MainApplication maintenance command for a full-layout format:
 
-This procedure is a documented service plan, not evidence that the fitted
-QSPI part or a physical migration has been qualified. Do not flash a target as
-part of the software-only change closeout.
+```text
+storage format-qspi
+storage format-qspi confirm
+```
+
+The first command prints a destructive warning; the second must be entered
+within 30 seconds. It refuses to run while USB MSC owns the disk, stops other
+USB storage personalities, unmounts both FAT volumes, erases all three fixed
+QSPI partitions, creates the two FAT volumes, verifies their raw boot sectors,
+seeds and verifies the BATSOC0/LCDCONTR1 COMPOSITION slots, erases boot-state
+NVS, then reboots. BackupApplication intentionally remains non-formatting while
+its recovery MTP service may own the volumes.
+
+## Production and data-preservation gate
+
+Disable `CONFIG_EF800_MAIN_REFORMAT_LEGACY_QSPI` and
+`CONFIG_EF800_MAIN_FORMAT_BLANK_QSPI` for production firmware. Do not enable the
+legacy formatter on a device whose old files must be retained. Physical QSPI capacity,
+erase geometry, program behavior, maximum frequency, fitted part identity, and
+power-loss behavior remain release-gated; the firmware-side signature check is
+not hardware qualification. The physical QSPI program path is not yet qualified;
+see the latest bring-up results below.
+
+## Latest hardware bring-up (2026-10-31)
+
+The fitted device was identified by JEDEC as IS25LP032D (`9D 60 16`, 4 MiB),
+and its SFDP signature was valid. Under a guarded hwdebug operation, all three
+partitions were erased, but FAT creation did not produce valid boot sectors.
+`fs_mkfs()` returned success while raw reads still showed erased data. A bounded
+program probe also returned success but read back corrupted bytes at the
+Configuration partition start. The status register read `0x40` (QE set, WIP
+clear); erase and read operations were observed, but QSPI programming remains
+unqualified.
+
+The previous MainApplication boot logged `fs mount error (-19)` because an
+erased/unformatted layout was not provisioned. A development-only blank-layout
+formatter was tested: both `fs_mkfs()` calls returned success, but **both raw
+FAT boot-sector checks failed**; provisioning returned `-5`, and mounts were
+skipped. Boot-state NVS also reported an invalid CRC. The boot-time blank
+formatter is now disabled on the physical board to prevent repeated attempts.
+MainApplication has an explicit `storage format-qspi confirm` maintenance
+command. It was run from MainApplication: both FAT partitions were erased, but
+both raw boot-sector checks failed (`-5`, I/O verification failure). The
+boot-state NVS erase is deliberately deferred until FAT verification succeeds,
+so NVS was not erased by that failed attempt.
+
+A temporary diagnostic compared the Zephyr flash API, raw SPI `0x02` Page
+Program, and quad `0x32` Page Program on one 4-KiB sector. That test was
+inconclusive: the raw 1-1-1 read returned all `0x00` even after erase, while
+1-4-4 returned `0xFF`; the Zephyr API read buffer also remained unchanged. Do
+not use those raw-test results to diagnose program behavior. The later GPIO
+bit-bang read, which bypassed the STM32 QSPI peripheral, agreed with the Zephyr
+API for both FAT headers after the flash replacement.
+
+After the external flash was replaced and soldered, the MainApplication
+maintenance command was run again. Both FAT boot-sector checks passed, and the
+subsequent MainApplication boot mounted Configuration and Shared Data. The
+Zephyr flash API and GPIO bit-bang SPI reads agreed on the FAT headers at
+`0x008000` and `0x100000`. MainApplication loaded COMPOSITION generation 2
+(`BATSOC0`/`LCDCONTR1`) and reported BATSOC0 active. The normal
+Bootloader/BackupApplication/MainApplication images are installed; the
+DeviceTree partition map is unchanged. The earlier raw QSPI program diagnostic
+was not trustworthy for 1-1-1 reads and should not overturn the successful
+replacement-flash verification.
+
+If legacy data needs to be preserved, do not boot an image with this option
+enabled. First make and verify a full QSPI backup and a file-level backup, then
+use a separately qualified migration procedure. Legacy firmware must not be
+booted against the new partition layout because it expects a single FAT volume
+beginning at offset zero.

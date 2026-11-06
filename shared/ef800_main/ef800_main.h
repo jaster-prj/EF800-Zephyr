@@ -32,6 +32,8 @@ const struct fs_mount_t *ef800_storage_mount_descriptor(void);
 int ef800_storage_mount(void);
 int ef800_storage_prepare_mtp_roots(void);
 int ef800_storage_unmount(void);
+int ef800_storage_unmount_all(void);
+int ef800_storage_format_qspi_layout(void);
 bool ef800_main_usb_msd_requested(void);
 const char *ef800_storage_configuration_dir(void);
 const char *ef800_storage_data_dir(void);

@@ -28,13 +28,21 @@
 		usb-select-gpios = <&mcp23017 8 0>;
 		keyboard-reset-gpios = <&mcp23017 12 0>;
 		power-down-gpios = <&gpiob 5 0>;
+		io-channels = <&adc1 2>;
+		io-channel-names = "battery";
 	};
 };
 
 #include <zephyr/dt-bindings/pinctrl/stm32-pinctrl.h>
 #include <zephyr/dt-bindings/gpio/gpio.h>
+#include <zephyr/dt-bindings/adc/adc.h>
 
 &pinctrl {
+	battery_adc_pc1: battery_adc_pc1 {
+		pinmux = <STM32_PINMUX('C', 1, ANALOG)>;
+		bias-disable;
+	};
+
 	usart1_tx_pb6: usart1_tx_pb6 {
 		pinmux = <STM32_PINMUX('B', 6, AF7)>;
 		bias-pull-up;
@@ -100,6 +108,24 @@
 		pinmux = <STM32_PINMUX('A', 12, AF10)>;
 	};
 
+};
+
+&adc1 {
+	pinctrl-0 = <&battery_adc_pc1>;
+	pinctrl-names = "default";
+	st,adc-clock-source = "SYNC";
+	st,adc-prescaler = <4>;
+	status = "okay";
+	#address-cells = <1>;
+	#size-cells = <0>;
+
+	channel@2 {
+		reg = <2>;
+		zephyr,gain = "ADC_GAIN_1";
+		zephyr,reference = "ADC_REF_INTERNAL";
+		zephyr,acquisition-time = <ADC_ACQ_TIME_MAX>;
+		zephyr,resolution = <12>;
+	};
 };
 
 &clk_hse {

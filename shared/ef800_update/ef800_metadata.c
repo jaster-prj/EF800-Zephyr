@@ -41,7 +41,7 @@ static int metadata_nvs_mount(const struct flash_area *area)
 		/* NVS may have been cleared by recovery or test setup. */
 		metadata_nvs_ready = false;
 	}
-	ret = ef800_qspi_layout_check_legacy(area->fa_dev, &legacy_layout);
+	ret = ef800_qspi_layout_check_legacy_area(area, &legacy_layout);
 	if (ret != 0) {
 		return ret;
 	}

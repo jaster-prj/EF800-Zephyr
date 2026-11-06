@@ -1,0 +1,41 @@
+@startuml boot_update
+title Boot Selection and Main Update
+autonumber
+
+participant "STM32 reset / IWDG" as HW
+participant "Second-level Bootloader" as BL
+database "QSPI NVS + Shared Data FAT" as Q
+database "Internal flash" as IF
+participant MainApplication as Main
+participant BackupApplication as Backup
+
+HW -> BL : reset at 0x08000000
+BL -> BL : start/feed watchdog; initialize console
+BL -> Q : read boot-state NVS
+alt valid boot state
+  BL -> BL : account prior Main watchdog reset
+else unavailable or invalid state
+  BL -> BL : use volatile safe defaults
+end
+BL -> Q : inspect /fwu Main update (if available)
+alt package and image validate
+  BL -> IF : erase/program Main partition
+  BL -> IF : verify programmed image
+  BL -> Q : remove update only after verification
+else no update or invalid/unavailable
+  BL -> BL : leave installed images unchanged
+end
+BL -> IF : validate Main and Backup vectors
+alt Main valid; failure threshold not reached
+  BL -> Q : persist Main target/failure state
+  BL -> Main : hand off at 0x08030000
+else threshold reached and Backup valid
+  BL -> Q : persist Backup target
+  BL -> Backup : hand off at 0x08010000
+  note over Backup, BL : Following reset, clear recovery state and retry Main
+else Main invalid; Backup valid
+  BL -> Backup : hand off to recovery
+else neither image valid
+  BL -> BL : safe error loop
+end
+@enduml

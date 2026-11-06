@@ -8,6 +8,9 @@ The native target executes the production MainApplication composition root.
 GPIO, UART, I2C, RTC, battery, MCP23017, T6963, keyboard, and FAT-storage
 dependencies are supplied by project-local native-sim emulators or Zephyr
 simulators. The default profile is healthy and uses disposable storage.
+The virtual DS3231 I2C device follows native_sim's host-UTC clock. MainApplication
+reads it through the production RTC driver once per second, applies the configured
+UTC offset and DST adjustment, and refreshes the LCD header with local `HH:MM`.
 
 Build it from the container workspace:
 

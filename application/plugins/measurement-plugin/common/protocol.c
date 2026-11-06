@@ -1,6 +1,8 @@
 /* SPDX-License-Identifier: Apache-2.0 */
 #include "protocol.h"
 
+#include <errno.h>
+
 #include "plugin_manager/plugin_abi.h"
 
 #define RESPONSE_CAPACITY 128u
@@ -15,28 +17,32 @@ uint32_t ef800_protocol_length(const char *text)
     return length;
 }
 
-int32_t ef800_protocol_write(const struct ef800_port_api *port,
+int32_t ef800_protocol_write(ef800_port_binding *port,
                              const uint8_t *data, uint32_t length)
 {
     int32_t written;
-    if (port == 0 || port->write == 0 || (data == 0 && length != 0u))
+    if (port == 0 || (data == 0 && length != 0u))
         return PM_EINVAL;
-    written = port->write(port->context, data, length);
+    written = ef800_plugin_worker_port_write(port, data, length);
     return written < 0 ? written : ((uint32_t)written == length ? PM_OK : PM_EIO);
 }
 
-int32_t ef800_protocol_read_line(const struct ef800_port_api *port,
+int32_t ef800_protocol_read_line(ef800_port_binding *port,
                                  char *buffer, uint32_t capacity)
 {
     uint32_t length = 0u;
-    if (port == 0 || port->read == 0 || buffer == 0 || capacity < 2u)
+    if (port == 0 || buffer == 0 || capacity < 2u)
         return PM_EINVAL;
     while (length + 1u < capacity) {
         uint8_t byte;
-        int32_t count = port->read(port->context, &byte, 1u, 1000);
-        if (count < 0) return count;
-        if (count == 0) return -110;
-        if (count != 1) return PM_EIO;
+        uint32_t count = 0u;
+        int32_t status = ef800_plugin_worker_port_read(port, &byte, 1u,
+            &count, 1000);
+        int32_t count_result = status == 0 ? (int32_t)count : status;
+
+        if (count_result < 0) return count_result;
+        if (count_result == 0) return -ETIMEDOUT;
+        if (count_result != 1) return PM_EIO;
         buffer[length++] = (char)byte;
         if (byte == (uint8_t)'\n') {
             buffer[length] = '\0';
