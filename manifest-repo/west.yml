@@ -16,11 +16,11 @@ manifest:
       import: true
     - name: PluginManager
       remote: jaster-prj
-      revision: 8469d290ea373ccc5abec19b49d97fdea34847c5
+      revision: 07ad72b508f22e5ecf4787bb7f21ca30418119e1
       path: modules/lib/PluginManager
     - name: zephyr-mtp
       remote: jaster-prj
-      revision: 2ddd1097a72db770975a3a91c8c86648ebb5b587
+      revision: 0f4dbd85861d1640a3bdbf32fa50492055400678
       path: modules/lib/ZephyrMTP
 
   self:
