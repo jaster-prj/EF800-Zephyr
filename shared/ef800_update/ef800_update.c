@@ -197,13 +197,36 @@ bool ef800_vector_table_valid(const uint32_t vector[2], uintptr_t image_address,
 bool ef800_keyboard_package_valid(
 	const struct ef800_keyboard_package_header *header, size_t file_size)
 {
+	uint32_t expected_base;
+	uint32_t image_limit;
+
+	if (header == NULL) {
+		return false;
+	}
+	switch (header->image_kind) {
+	case EF800_KEYBOARD_IMAGE_APPLICATION:
+		expected_base = EF800_KEYBOARD_PACKAGE_BASE;
+		image_limit = EF800_KEYBOARD_PACKAGE_LIMIT;
+		break;
+	case EF800_KEYBOARD_IMAGE_BOOTLOADER:
+		expected_base = EF800_KEYBOARD_BOOT_BASE;
+		image_limit = EF800_KEYBOARD_BOOT_LIMIT;
+		break;
+	case EF800_KEYBOARD_IMAGE_UPDATER:
+		expected_base = EF800_KEYBOARD_UPDATER_BASE;
+		image_limit = EF800_KEYBOARD_UPDATER_LIMIT;
+		break;
+	default:
+		return false;
+	}
+
 	return header != NULL && header->magic == EF800_KEYBOARD_PACKAGE_MAGIC &&
 		header->format == EF800_KEYBOARD_PACKAGE_FORMAT &&
 		header->header_size == EF800_KEYBOARD_PACKAGE_HEADER_SIZE &&
 		header->target_id == EF800_KEYBOARD_PACKAGE_TARGET &&
-		header->image_base == EF800_KEYBOARD_PACKAGE_BASE &&
+		header->image_base == expected_base &&
 		header->image_size != 0U &&
-		header->image_size <= EF800_KEYBOARD_PACKAGE_LIMIT &&
+		header->image_size <= image_limit &&
 		file_size == (size_t)header->header_size + header->image_size;
 }
 

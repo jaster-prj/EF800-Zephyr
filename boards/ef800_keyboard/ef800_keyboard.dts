@@ -20,6 +20,11 @@
 		watchdog0 = &iwdg;
 	};
 
+	zephyr,user {
+		/* PB12 is pulled up; JP7 can pull it low to request the updater. */
+		updater-request-gpios = <&gpiob 12 GPIO_PULL_UP>;
+	};
+
 
 	keyboard {
 		compatible = "jaster,ef800-keyboard";
@@ -72,7 +77,11 @@
 		};
 		keyboard_app_partition: partition@8000 {
 			label = "keyboard-application";
-			reg = <0x00008000 0x00038000>;
+			reg = <0x00008000 0x00030000>;
+		};
+		keyboard_updater_partition: partition@38000 {
+			label = "keyboard-updater";
+			reg = <0x00038000 0x00008000>;
 		};
 	};
 };
@@ -85,6 +94,28 @@
 };
 
 &iwdg {
+	status = "okay";
+};
+
+/* MainApplication I2C1 is connected to the keyboard controller on PB6/PB7. */
+&pinctrl {
+	i2c1_scl_pb6: i2c1_scl_pb6 {
+		pinmux = <STM32_PINMUX('B', 6, AF4)>;
+		bias-pull-up;
+		drive-open-drain;
+	};
+
+	i2c1_sda_pb7: i2c1_sda_pb7 {
+		pinmux = <STM32_PINMUX('B', 7, AF4)>;
+		bias-pull-up;
+		drive-open-drain;
+	};
+};
+
+&i2c1 {
+	pinctrl-0 = <&i2c1_scl_pb6 &i2c1_sda_pb7>;
+	pinctrl-names = "default";
+	clock-frequency = <I2C_BITRATE_FAST>;
 	status = "okay";
 };
 

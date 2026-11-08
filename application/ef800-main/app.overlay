@@ -27,6 +27,8 @@
 		memory-kb = <8>;
 		usb-select-gpios = <&mcp23017 8 0>;
 		keyboard-reset-gpios = <&mcp23017 12 0>;
+		/* JP7 to keyboard PB12; assert low only for bootloader fallback. */
+		keyboard-updater-request-gpios = <&gpioe 0 GPIO_ACTIVE_LOW>;
 		power-down-gpios = <&gpiob 5 0>;
 		io-channels = <&adc1 2>;
 		io-channel-names = "battery";

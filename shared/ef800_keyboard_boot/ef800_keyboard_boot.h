@@ -9,6 +9,7 @@
 #define EF800_KEYBOARD_BOOT_STATE_MAGIC 0x4B425354U
 #define EF800_KEYBOARD_BOOT_STATE_VERSION 1U
 #define EF800_KEYBOARD_BOOT_MAX_WATCHDOG_STARTS 3U
+#define EF800_KEYBOARD_BOOT_UPDATER_WINDOW_MS 50U
 
 enum ef800_keyboard_boot_phase {
 	EF800_KEYBOARD_BOOT_NONE = 0U,
@@ -45,6 +46,12 @@ bool ef800_keyboard_boot_consume_system_request(
 	struct ef800_keyboard_boot_state *state);
 bool ef800_keyboard_boot_system_request_pending(
 	const struct ef800_keyboard_boot_state *state);
+bool ef800_keyboard_boot_i2c_probe(bool write_started, bool write_had_data);
+bool ef800_keyboard_boot_updater_window_expired(uint32_t started_ms,
+						       uint32_t now_ms);
+bool ef800_keyboard_boot_should_enter_updater(bool probe_received,
+					     bool recovery_required,
+					     bool application_valid);
 void ef800_keyboard_boot_confirm(struct ef800_keyboard_boot_state *state);
 
 #endif /* EF800_KEYBOARD_BOOT_H */

@@ -231,6 +231,24 @@ ZTEST(keyboard_protocol, test_host_streaming_parser)
 	zassert_equal(ef800_keyboard_host_feed(&host, CMD_RESEND),
 			      EF800_HOST_FEED_COMMAND, NULL);
 }
+
+ZTEST(keyboard_protocol, test_incomplete_keyboard_version_is_not_valid)
+{
+	struct ef800_keyboard_host host;
+	uint8_t version[3];
+
+	ef800_keyboard_host_init(&host);
+	zassert_false(ef800_keyboard_host_get_version(&host, version), NULL);
+	zassert_equal(ef800_keyboard_host_feed(&host, CMD_RETURN),
+		      EF800_HOST_FEED_NONE, NULL);
+	zassert_equal(ef800_keyboard_host_feed(&host, CMD_KEYBOARD_VERSION),
+		      EF800_HOST_FEED_NONE, NULL);
+	zassert_equal(ef800_keyboard_host_feed(&host, 1U),
+		      EF800_HOST_FEED_NONE, NULL);
+	zassert_equal(ef800_keyboard_host_feed(&host, 1U),
+		      EF800_HOST_FEED_NONE, NULL);
+	zassert_false(ef800_keyboard_host_get_version(&host, version), NULL);
+}
 #endif
 
 #if defined(EF800_TEST_RTC)

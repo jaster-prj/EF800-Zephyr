@@ -23,12 +23,14 @@ Native tests run on `native_sim` and do not require EF800 hardware:
 - `tests/shared/core`: focused shared-component tests covering boot target
   priority, FAT/MSC ownership transitions, metadata serialization and
   corruption rejection, and invalid arguments.
+- `tests/shared/keyboard_update`: keyboard image target/range checks, update
+  framing, ordered chunk handling, truncation, and CRC-failure behavior.
 - `tests/shared/virtual_usb`: MainApplication CDC byte exchange, real MTP list/
   upload/download over Zephyr's virtual USB host/device pair, and `USBMSD0`
   shared-data FAT ownership.
 
-The current native baseline is **23 Twister configurations and 133 executed
-ztest cases**. The Python Virtual EF800 gateway/browser suite is separate from
+The current native baseline is **26 Twister configurations and 174 executed
+ztest cases** (latest run: 2026-11-07). The Python Virtual EF800 gateway/browser suite is separate from
 Twister and currently contains 23 passing unit/asset checks; its optional
 `test_mtp_e2e` test is run against a simulator endpoint when
 `EF800_SIMULATOR_HOST` is set.
@@ -103,21 +105,44 @@ behavior.
 
 ## Firmware Build Gates
 
-The Bootloader, BackupApplication, MainApplication, and keyboard-controller
-images are build-tested. Image verification checks their linked addresses and
-partition limits. A successful build does not execute the firmware control flow.
+The Bootloader, BackupApplication, MainApplication, keyboard bootloader,
+keyboard application, and keyboard updater images are build-tested. The revised
+L431 map is bootloader 32 KiB, application 192 KiB, and updater 32 KiB; the
+three keyboard images link into their assigned partitions and their vector
+tables pass bounds checks. These builds do not execute firmware control flow.
 
 ## Hardware-Only Coverage
+
+The 2026-11-07 physical MTP update validation and historical failed
+system-ROM keyboard-package attempt are recorded in
+[`firmware-update-hardware-validation.md`](firmware-update-hardware-validation.md).
+The custom updater is implemented in software: MainApplication streams packages
+over I²C, the keyboard application at `0x2a` can update only the updater slot,
+and the resident updater at `0x48` can update only the keyboard application or
+bootloader. Protocol/range helpers are covered by native tests and all three
+L431 images build within their partitions. Neither the I²C transaction timing,
+Flash erase/write path, nor three-image handoff has been qualified on hardware.
+The three images have been programmed and CubeProgrammer-verified over SWD on
+the L431 after the explicit probe/device-ID checks. Normal post-reset boot,
+the live 1.1.1 version query, and a virtual-key UART make event were observed;
+no keyboard firmware update has yet been validated through the custom updater.
+Recheck L431 identity before any later SWD operation.
+
+The package CRC and transport XOR checks detect accidental corruption; neither
+provides authenticity or protects against a maliciously modified firmware
+package. Hardware interruption/retry behavior, including recovery after a
+partially erased or programmed target, remains unverified.
 
 The following require a powered target and cannot be proven by `native_sim`:
 
 - STM32 reset, watchdog, vector-table handoff, and backup fallback
 - QSPI JEDEC/SFDP, geometry, FAT mount, and power-loss behavior
-- Bootloader update installation and image programming
+- Runtime updater entry, Flash installation, and recovery after interruption
 - USB MSC host enumeration and host-side file transfer
 - FAT-to-MSC ownership transitions with the real QSPI disk
 - Workspace and keyboard-firmware transfer through MSC
-- Keyboard-controller firmware update transport
+- Resident keyboard-controller application/bootloader update transport and
+  power-loss recovery
 - MCP23017, DS3231, fuel gauge, T6963, status LED, UART routing, and physical
   keyboard electrical behavior
 - Bootloader-to-Main handoff, IWDG feeding, and controlled Backup fallback

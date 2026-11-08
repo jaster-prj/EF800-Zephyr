@@ -12,10 +12,12 @@
 #include <zephyr/drivers/adc.h>
 #include <zephyr/drivers/uart.h>
 #include <zephyr/drivers/gpio.h>
+#include <zephyr/drivers/i2c.h>
 #include <zephyr/fs/fs.h>
 #include <zephyr/kernel.h>
 #include <zephyr/logging/log.h>
 #include <zephyr/shell/shell.h>
+#include <zephyr/sys/atomic.h>
 #include <zephyr/sys/printk.h>
 #include <zephyr/sys/reboot.h>
 
@@ -50,6 +52,10 @@
 #include "ef800_workspace.h"
 #include "keyboard_host.h"
 #include "ef800_keyboard_package.h"
+#include "ef800_keyboard_i2c.h"
+#include "ef800_keyboard_update.h"
+#include "ef800_keyboard_update_protocol.h"
+#include "ef800_update.h"
 #include "ef800_mcumgr_transport.h"
 #include "ef800_plugin_host.h"
 #include "ef800_usb_manager.h"
@@ -79,19 +85,16 @@ LOG_MODULE_REGISTER(ef800_main_app, LOG_LEVEL_INF);
 #define EF800_KEYBOARD_PACKAGE_PATH "/DATA:/fwu/EF800_KEYBOARD.pkg"
 #define EF800_KEYBOARD_UPLOAD_MAX_SIZE \
 	(EF800_KEYBOARD_PACKAGE_HEADER_SIZE + EF800_KEYBOARD_PACKAGE_LIMIT)
-#define EF800_KEYBOARD_ROM_ACK 0x79U
-#define EF800_KEYBOARD_ROM_NACK 0x1FU
-#define EF800_KEYBOARD_ROM_GET_ID 0x02U
-#define EF800_KEYBOARD_ROM_READ_MEMORY 0x11U
-#define EF800_KEYBOARD_ROM_EXTENDED_ERASE 0x44U
-#define EF800_KEYBOARD_ROM_WRITE_MEMORY 0x31U
-#define EF800_KEYBOARD_ROM_PAGE_SIZE 2048U
-#define EF800_KEYBOARD_ROM_CHUNK 128U
-#define EF800_KEYBOARD_ROM_TIMEOUT_MS 1500U
 #define EF800_KEYBOARD_UPLOAD_ACK 0x06U
 
 static const struct device *const keyboard_uart =
 	DEVICE_DT_GET(KEYBOARD_UART_NODE);
+#if defined(CONFIG_BOARD_NATIVE_SIM)
+static const struct device *const keyboard_i2c;
+#else
+static const struct device *const keyboard_i2c =
+	DEVICE_DT_GET(DT_NODELABEL(i2c1));
+#endif
 static struct ef800_keyboard_host keyboard_host;
 K_MSGQ_DEFINE(keyboard_rx_msgq, sizeof(uint8_t), KEYBOARD_RX_QUEUE_SIZE, 1);
 K_MUTEX_DEFINE(keyboard_command_mutex);
@@ -99,6 +102,8 @@ K_SEM_DEFINE(keyboard_command_complete, 0, 1);
 static volatile bool keyboard_command_pending;
 static volatile uint8_t keyboard_pending_command;
 static bool keyboard_uart_initialized;
+static atomic_t keyboard_ready_indication;
+static bool keyboard_updater_request_ready;
 static bool keyboard_debug_active;
 static bool keyboard_update_active;
 
@@ -984,6 +989,9 @@ static int set_console_for_port(uint8_t port_id)
 
 static const struct gpio_dt_spec keyboard_reset =
 	GPIO_DT_SPEC_GET_OR(EF800_USER_NODE, keyboard_reset_gpios, {0});
+static const struct gpio_dt_spec keyboard_updater_request =
+	GPIO_DT_SPEC_GET_OR(EF800_USER_NODE,
+		keyboard_updater_request_gpios, {0});
 static const struct gpio_dt_spec usb_select =
 	GPIO_DT_SPEC_GET_OR(EF800_USER_NODE, usb_select_gpios, {0});
 static const struct gpio_dt_spec power_down =
@@ -1074,19 +1082,6 @@ static int configure_keyboard_uart(void)
 	const struct uart_config config = {
 		.baudrate = KB_UART_BAUDRATE,
 		.parity = UART_CFG_PARITY_NONE,
-		.stop_bits = UART_CFG_STOP_BITS_1,
-		.data_bits = UART_CFG_DATA_BITS_8,
-		.flow_ctrl = UART_CFG_FLOW_CTRL_NONE,
-	};
-
-	return uart_configure(keyboard_uart, &config);
-}
-
-static int keyboard_update_uart(bool rom)
-{
-	const struct uart_config config = {
-		.baudrate = KB_UART_BAUDRATE,
-		.parity = rom ? UART_CFG_PARITY_EVEN : UART_CFG_PARITY_NONE,
 		.stop_bits = UART_CFG_STOP_BITS_1,
 		.data_bits = UART_CFG_DATA_BITS_8,
 		.flow_ctrl = UART_CFG_FLOW_CTRL_NONE,
@@ -1299,178 +1294,6 @@ done:
 	return result;
 }
 
-static int keyboard_update_read_byte(uint8_t *byte, uint32_t timeout_ms)
-{
-	int64_t deadline = k_uptime_get() + timeout_ms;
-
-	while (k_uptime_get() < deadline) {
-		if (uart_poll_in(keyboard_uart, byte) == 0) {
-			return 0;
-		}
-		k_msleep(1U);
-	}
-	return -ETIMEDOUT;
-}
-
-static int keyboard_update_send(const uint8_t *data, size_t length)
-{
-	for (size_t i = 0U; i < length; ++i) {
-		uart_poll_out(keyboard_uart, data[i]);
-	}
-	return 0;
-}
-
-static int keyboard_update_expect(uint8_t expected)
-{
-	uint8_t response;
-	int result = keyboard_update_read_byte(&response,
-		EF800_KEYBOARD_ROM_TIMEOUT_MS);
-
-	if (result != 0) {
-		return result;
-	}
-	return response == expected ? 0 :
-		(response == EF800_KEYBOARD_ROM_NACK ? -EIO : -EPROTO);
-}
-
-static uint8_t keyboard_update_xor(const uint8_t *data, size_t length)
-{
-	uint8_t value = 0U;
-
-	for (size_t i = 0U; i < length; ++i) {
-		value ^= data[i];
-	}
-	return value;
-}
-
-static int keyboard_update_rom_command(uint8_t command)
-{
-	uint8_t frame[] = { command, (uint8_t)~command };
-	int result = keyboard_update_send(frame, sizeof(frame));
-
-	return result == 0 ? keyboard_update_expect(EF800_KEYBOARD_ROM_ACK) : result;
-}
-
-static int keyboard_update_rom_address(uint32_t address)
-{
-	uint8_t frame[5] = {
-		(uint8_t)(address >> 24), (uint8_t)(address >> 16),
-		(uint8_t)(address >> 8), (uint8_t)address, 0U,
-	};
-
-	frame[4] = keyboard_update_xor(frame, 4U);
-	return keyboard_update_send(frame, sizeof(frame)) == 0 ?
-		keyboard_update_expect(EF800_KEYBOARD_ROM_ACK) : -EIO;
-}
-
-static int keyboard_update_rom_identify(void)
-{
-	uint8_t count;
-	uint8_t id[2];
-
-	if (keyboard_update_rom_command(EF800_KEYBOARD_ROM_GET_ID) != 0 ||
-		keyboard_update_read_byte(&count, EF800_KEYBOARD_ROM_TIMEOUT_MS) != 0 ||
-		count != 1U ||
-		keyboard_update_read_byte(&id[0], EF800_KEYBOARD_ROM_TIMEOUT_MS) != 0 ||
-		keyboard_update_read_byte(&id[1], EF800_KEYBOARD_ROM_TIMEOUT_MS) != 0 ||
-		keyboard_update_expect(EF800_KEYBOARD_ROM_ACK) != 0) {
-		return -EPROTO;
-	}
-	LOG_INF("keyboard update: ROM device id=0x%02x%02x", id[0], id[1]);
-	return ((uint16_t)id[0] << 8 | id[1]) ==
-		EF800_KEYBOARD_PACKAGE_TARGET ? 0 : -ENODEV;
-}
-
-static int keyboard_update_rom_erase(void)
-{
-	uint8_t frame[2U + 112U * 2U + 1U];
-	uint8_t *cursor = frame;
-
-	if (keyboard_update_rom_command(EF800_KEYBOARD_ROM_EXTENDED_ERASE) != 0) {
-		return -EIO;
-	}
-	*cursor++ = 0U;
-	*cursor++ = 111U;
-	for (uint16_t page = 16U; page < 128U; ++page) {
-		*cursor++ = (uint8_t)(page >> 8);
-		*cursor++ = (uint8_t)page;
-	}
-	*cursor = keyboard_update_xor(frame, (size_t)(cursor - frame));
-	if (keyboard_update_send(frame, sizeof(frame)) != 0) {
-		return -EIO;
-	}
-	return keyboard_update_expect(EF800_KEYBOARD_ROM_ACK);
-}
-
-static int keyboard_update_rom_write(struct fs_file_t *file,
-	const struct ef800_keyboard_package_header *header)
-{
-	uint8_t data[EF800_KEYBOARD_ROM_CHUNK];
-	uint8_t frame[EF800_KEYBOARD_ROM_CHUNK + 2U];
-
-	for (uint32_t offset = 0U; offset < header->image_size;
-		offset += EF800_KEYBOARD_ROM_CHUNK) {
-		size_t length = MIN(EF800_KEYBOARD_ROM_CHUNK,
-			header->image_size - offset);
-		size_t padded = ROUND_UP(length, 8U);
-
-		if (fs_seek(file, header->header_size + offset, FS_SEEK_SET) != 0 ||
-			fs_read(file, data, length) != (ssize_t)length) {
-			return -EIO;
-		}
-		memset(data + length, 0xFF, sizeof(data) - length);
-		frame[0] = (uint8_t)(padded - 1U);
-		memcpy(&frame[1], data, padded);
-		frame[padded + 1U] = keyboard_update_xor(frame, padded + 1U);
-		if (keyboard_update_rom_command(EF800_KEYBOARD_ROM_WRITE_MEMORY) != 0 ||
-			keyboard_update_rom_address(EF800_KEYBOARD_PACKAGE_BASE + offset) != 0 ||
-			keyboard_update_send(frame, padded + 2U) != 0 ||
-			keyboard_update_expect(EF800_KEYBOARD_ROM_ACK) != 0) {
-			return -EIO;
-		}
-		if ((offset % 4096U) == 0U || offset + length == header->image_size) {
-			LOG_INF("keyboard update: flashed %u/%u bytes", offset + length,
-				header->image_size);
-		}
-	}
-	return 0;
-}
-
-static int keyboard_update_rom_verify(struct fs_file_t *file,
-	const struct ef800_keyboard_package_header *header)
-{
-	uint8_t expected[EF800_KEYBOARD_ROM_CHUNK];
-	uint8_t response[EF800_KEYBOARD_ROM_CHUNK];
-
-	LOG_INF("keyboard update: flash verification started");
-	for (uint32_t offset = 0U; offset < header->image_size;
-		offset += EF800_KEYBOARD_ROM_CHUNK) {
-		size_t length = MIN(EF800_KEYBOARD_ROM_CHUNK,
-			header->image_size - offset);
-		uint8_t size_frame[2] = { (uint8_t)(length - 1U),
-			(uint8_t)~(length - 1U) };
-
-		if (fs_seek(file, header->header_size + offset, FS_SEEK_SET) != 0 ||
-			fs_read(file, expected, length) != (ssize_t)length ||
-			keyboard_update_rom_command(EF800_KEYBOARD_ROM_READ_MEMORY) != 0 ||
-			keyboard_update_rom_address(EF800_KEYBOARD_PACKAGE_BASE + offset) != 0 ||
-			keyboard_update_send(size_frame, sizeof(size_frame)) != 0) {
-			return -EIO;
-		}
-		for (size_t i = 0U; i < length; ++i) {
-			if (keyboard_update_read_byte(&response[i],
-				EF800_KEYBOARD_ROM_TIMEOUT_MS) != 0) {
-				return -ETIMEDOUT;
-			}
-		}
-		if (memcmp(expected, response, length) != 0) {
-			return -EBADMSG;
-		}
-	}
-	LOG_INF("keyboard update: flash verification successful");
-	return 0;
-}
-
 static int keyboard_update_read_package(struct fs_file_t *file,
 	struct ef800_keyboard_package_header *header, size_t file_size)
 {
@@ -1498,13 +1321,294 @@ static int keyboard_update_read_package(struct fs_file_t *file,
 	return crc == header->image_crc32 ? 0 : -EBADMSG;
 }
 
+#define KEYBOARD_UPDATE_RESPONSE_TIMEOUT_MS 30000U
+#define KEYBOARD_UPDATE_POLL_MS 10U
+
+static uint32_t keyboard_update_get_le32(const uint8_t *data)
+{
+	return (uint32_t)data[0] | ((uint32_t)data[1] << 8) |
+		((uint32_t)data[2] << 16) | ((uint32_t)data[3] << 24);
+}
+
+static void keyboard_update_put_le16(uint8_t *data, uint16_t value)
+{
+	data[0] = (uint8_t)value;
+	data[1] = (uint8_t)(value >> 8);
+}
+
+static void keyboard_update_put_le32(uint8_t *data, uint32_t value)
+{
+	data[0] = (uint8_t)value;
+	data[1] = (uint8_t)(value >> 8);
+	data[2] = (uint8_t)(value >> 16);
+	data[3] = (uint8_t)(value >> 24);
+}
+
+static int keyboard_update_request(uint16_t address, uint8_t command,
+					   const uint8_t *payload, size_t payload_length,
+					   uint8_t *response, size_t response_length,
+					   uint32_t timeout_ms)
+{
+	uint8_t frame[EF800_KB_UPDATE_REQUEST_MAX];
+	size_t frame_length;
+	int64_t deadline;
+	int result;
+
+	if (!device_is_ready(keyboard_i2c) || response == NULL ||
+	    response_length == 0U) {
+		return -ENODEV;
+	}
+	frame_length = ef800_kb_update_frame_encode(command, payload,
+		payload_length, frame, sizeof(frame));
+	if (frame_length == 0U) {
+		return -EINVAL;
+	}
+	result = i2c_write(keyboard_i2c, frame, frame_length, address);
+	if (result != 0) {
+		return result;
+	}
+	deadline = k_uptime_get() + timeout_ms;
+	do {
+		memset(response, 0xFF, response_length);
+		result = i2c_read(keyboard_i2c, response, response_length, address);
+		if (result == 0) {
+			if (response[0] == EF800_KB_PROTOCOL_BUSY) {
+				k_msleep(KEYBOARD_UPDATE_POLL_MS);
+				continue;
+			}
+			if (response[0] == EF800_KB_PROTOCOL_NACK) {
+				return -EPROTO;
+			}
+			return ef800_kb_update_response_valid(response, response_length) ?
+				0 : -EBADMSG;
+		}
+		k_msleep(KEYBOARD_UPDATE_POLL_MS);
+	} while (k_uptime_get() < deadline);
+	return result != 0 ? result : -ETIMEDOUT;
+}
+
+static int keyboard_update_query_version(uint16_t address, uint8_t *version,
+						uint32_t timeout_ms)
+{
+	uint8_t command = EF800_KB_UPDATE_VERSION_COMMAND;
+	int64_t deadline = k_uptime_get() + timeout_ms;
+	int result = -EIO;
+
+	/* The bootloader may acknowledge the probe just before the updater has
+	 * registered its target address. Retry command writes as well as reads. */
+	do {
+		result = i2c_write(keyboard_i2c, &command, sizeof(command), address);
+		if (result == 0) {
+			break;
+		}
+		k_msleep(KEYBOARD_UPDATE_POLL_MS);
+	} while (k_uptime_get() < deadline);
+	if (result != 0) {
+		return result;
+	}
+	do {
+		result = i2c_read(keyboard_i2c, version,
+			EF800_KB_UPDATE_VERSION_SIZE, address);
+		if (result == 0) {
+			if (version[0] == EF800_KB_PROTOCOL_BUSY) {
+				k_msleep(KEYBOARD_UPDATE_POLL_MS);
+				continue;
+			}
+			return version[0] == command &&
+				version[4] == EF800_KB_UPDATE_VERSION_ACK ? 0 : -EBADMSG;
+		}
+		k_msleep(KEYBOARD_UPDATE_POLL_MS);
+	} while (k_uptime_get() < deadline);
+	return result != 0 ? result : -ETIMEDOUT;
+}
+
+static int keyboard_update_enter_bootloader_fallback(uint8_t *version)
+{
+	int result;
+	int release_result;
+
+	if (!keyboard_updater_request_ready || keyboard_reset.port == NULL ||
+	    !device_is_ready(keyboard_reset.port)) {
+		return -ENODEV;
+	}
+	/* JP7 carries PE0 low to the L431's pulled-up PB12 during reset. */
+	result = gpio_pin_set_dt(&keyboard_updater_request, 1);
+	if (result == 0) {
+		result = gpio_pin_set_dt(&keyboard_reset, 0);
+	}
+	if (result == 0) {
+		k_msleep(10U);
+		result = gpio_pin_set_dt(&keyboard_reset, 1);
+	}
+	if (result == 0) {
+		result = keyboard_update_query_version(
+			EF800_KEYBOARD_UPDATER_I2C_ADDRESS, version, 2000U);
+	}
+	release_result = gpio_pin_set_dt(&keyboard_updater_request, 0);
+	if (result == 0 && release_result != 0) {
+		result = release_result;
+	}
+	if (result == 0) {
+		LOG_INF("keyboard updater fallback: PB12 strap booted updater %u.%u.%u",
+			version[1], version[2], version[3]);
+	}
+	return result;
+}
+
+static int keyboard_update_enter_resident(void)
+{
+	uint8_t enter = EF800_KEYBOARD_I2C_CMD_ENTER_UPDATER;
+	uint8_t enter_response[2];
+	uint8_t version[EF800_KB_UPDATE_VERSION_SIZE];
+	int64_t deadline;
+	int application_result = -EIO;
+	int updater_result = -EIO;
+	bool entry_acknowledged = false;
+
+	deadline = k_uptime_get() + KEYBOARD_UPDATE_RESPONSE_TIMEOUT_MS;
+	do {
+		/* The application may already have left 0x2a after accepting a
+		 * previous request, even if the controller reported an I/O error
+		 * while that transaction was completing. Prefer the updater's live
+		 * VERSION response before retrying the idempotent entry command. */
+		updater_result = keyboard_update_query_version(
+			EF800_KEYBOARD_UPDATER_I2C_ADDRESS, version, 100U);
+		if (updater_result == 0) {
+			return 0;
+		}
+		if (!entry_acknowledged) {
+			application_result = i2c_write_read(keyboard_i2c,
+				EF800_KEYBOARD_I2C_ADDRESS, &enter, sizeof(enter),
+				enter_response, sizeof(enter_response));
+			if (application_result == 0) {
+				if (enter_response[0] != enter ||
+				    enter_response[1] != EF800_KEYBOARD_I2C_ACK) {
+					LOG_ERR("keyboard updater entry: invalid application ACK "
+						"%02x %02x", enter_response[0],
+						enter_response[1]);
+					application_result = -EPROTO;
+					goto bootloader_fallback;
+				}
+				entry_acknowledged = true;
+			}
+		}
+		k_msleep(20U);
+	} while (k_uptime_get() < deadline);
+	LOG_ERR("keyboard updater entry timed out: application transfer=%d, "
+		"updater transfer=%d response=%02x %02x %02x %02x %02x",
+		application_result, updater_result, version[0], version[1],
+		version[2], version[3], version[4]);
+
+bootloader_fallback:
+	updater_result = keyboard_update_enter_bootloader_fallback(version);
+	if (updater_result != 0) {
+		LOG_ERR("keyboard updater bootloader fallback failed: %d "
+			"(direct entry=%d)", updater_result, application_result);
+	}
+	return updater_result;
+}
+
+static int keyboard_update_identify(uint16_t address)
+{
+	uint8_t get[12] = {0};
+	uint8_t id[5] = {0};
+	size_t get_length = address == EF800_KEYBOARD_I2C_ADDRESS ? 11U : 12U;
+	uint8_t command_count = address == EF800_KEYBOARD_I2C_ADDRESS ? 7U : 8U;
+	bool found_id = false;
+	int result;
+
+	result = keyboard_update_request(address, EF800_KB_UPDATE_CMD_GET,
+		NULL, 0U, get, get_length, 2000U);
+	if (result != 0) {
+		LOG_ERR("keyboard update identify GET at 0x%02x failed: %d "
+			"response=%02x %02x %02x %02x", address, result,
+			get[0], get[1], get[2], get[3]);
+		return result;
+	}
+	if (get[1] != 1U || get[2] != command_count ||
+	    get[get_length - 1U] != ef800_kb_update_checksum(get,
+		get_length - 1U)) {
+		LOG_ERR("keyboard update identify GET at 0x%02x invalid: "
+			"response=%02x %02x %02x %02x", address,
+			get[0], get[1], get[2], get[3]);
+		return -ENOTSUP;
+	}
+	for (size_t i = 0U; i < get[2]; ++i) {
+		found_id |= get[3U + i] == EF800_KB_UPDATE_CMD_GET_ID;
+	}
+	if (!found_id) {
+		return -ENOTSUP;
+	}
+	result = keyboard_update_request(address, EF800_KB_UPDATE_CMD_GET_ID,
+		NULL, 0U, id, sizeof(id), 2000U);
+	if (result != 0) {
+		LOG_ERR("keyboard update identify GET_ID at 0x%02x failed: %d "
+			"response=%02x %02x %02x %02x %02x", address, result,
+			id[0], id[1], id[2], id[3], id[4]);
+		return result;
+	}
+	if (id[1] != 2U || id[2] != 0x04U || id[3] != 0x35U) {
+		LOG_ERR("keyboard update identify GET_ID at 0x%02x invalid: "
+			"response=%02x %02x %02x %02x %02x", address,
+			id[0], id[1], id[2], id[3], id[4]);
+		return -ENODEV;
+	}
+	return 0;
+}
+
+static int keyboard_update_wait_app(
+	const struct ef800_keyboard_package_header *header)
+{
+	uint8_t command = EF800_KEYBOARD_I2C_CMD_STATUS;
+	uint8_t status[EF800_KEYBOARD_I2C_STATUS_SIZE];
+	int64_t deadline = k_uptime_get() + KEYBOARD_UPDATE_RESPONSE_TIMEOUT_MS;
+	int result;
+
+	do {
+		result = i2c_write_read(keyboard_i2c, EF800_KEYBOARD_I2C_ADDRESS,
+			&command, 1U, status, sizeof(status));
+		if (result == 0 && status[0] == command &&
+		    status[4] == EF800_KEYBOARD_I2C_MODE_APPLICATION &&
+		    status[5] == EF800_KEYBOARD_I2C_ACK &&
+		    (header->image_kind != EF800_KEYBOARD_IMAGE_APPLICATION ||
+		     (status[1] == header->version_major &&
+		      status[2] == header->version_minor &&
+		      status[3] == header->version_patch))) {
+			return 0;
+		}
+		k_msleep(100U);
+	} while (k_uptime_get() < deadline);
+	return -ETIMEDOUT;
+}
+
+static int keyboard_update_wait_application_service(void)
+{
+	int64_t deadline = k_uptime_get() +
+		CONFIG_EF800_MAIN_KEYBOARD_STARTUP_TIMEOUT_MS;
+
+	/* The keyboard emits 0xaa only after registering its I2C target. Wait
+	 * for that ISR-observed signal before identifying its updater service. */
+	while (atomic_get(&keyboard_ready_indication) == 0 &&
+	       k_uptime_get() < deadline) {
+		k_msleep(5U);
+	}
+	return atomic_get(&keyboard_ready_indication) != 0 ? 0 : -ETIMEDOUT;
+}
+
 static int keyboard_update_run(void)
 {
 	struct fs_dirent entry;
 	struct fs_file_t file;
 	struct ef800_keyboard_package_header header;
-	uint8_t response[5];
-	uint8_t vector[8];
+	uint8_t data[EF800_KB_UPDATE_BLOCK_MAX];
+	uint8_t payload[EF800_KB_UPDATE_BLOCK_MAX + 7U];
+	uint8_t response[EF800_KB_UPDATE_RESPONSE_MAX];
+	uint32_t vector[2];
+	uint32_t image_base;
+	size_t image_limit;
+	uint32_t source_crc = 0U;
+	uint16_t target;
+	uint16_t service_address;
 	int result;
 	bool package_invalid = false;
 
@@ -1517,11 +1621,8 @@ static int keyboard_update_run(void)
 		return 0;
 	}
 	if (result != 0 || entry.type != FS_DIR_ENTRY_FILE) {
-		LOG_ERR("keyboard update: new keyboard software detected but file is invalid");
 		return result != 0 ? result : -EINVAL;
 	}
-	LOG_INF("keyboard update: new keyboard software detected size=%u",
-		(unsigned int)entry.size);
 	fs_file_t_init(&file);
 	result = fs_open(&file, EF800_KEYBOARD_PACKAGE_PATH, FS_O_READ);
 	if (result != 0) {
@@ -1530,102 +1631,171 @@ static int keyboard_update_run(void)
 	keyboard_update_active = true;
 	result = keyboard_update_read_package(&file, &header, entry.size);
 	if (result != 0) {
-		LOG_ERR("keyboard update: package validation failed: %d", result);
 		package_invalid = true;
 		goto cleanup;
 	}
-	if (fs_seek(&file, header.header_size, FS_SEEK_SET) != 0 ||
-		fs_read(&file, vector, sizeof(vector)) != sizeof(vector) ||
-		!ef800_vector_table_valid((const uint32_t *)vector,
-			EF800_KEYBOARD_PACKAGE_BASE, EF800_KEYBOARD_PACKAGE_LIMIT,
-			0x20000000U, 0x0000F000U)) {
+	switch (header.image_kind) {
+	case EF800_KEYBOARD_IMAGE_APPLICATION:
+		image_base = EF800_KEYBOARD_PACKAGE_BASE;
+		image_limit = EF800_KEYBOARD_PACKAGE_LIMIT;
+		target = EF800_KB_UPDATE_TARGET_APPLICATION;
+		service_address = EF800_KEYBOARD_UPDATER_I2C_ADDRESS;
+		break;
+	case EF800_KEYBOARD_IMAGE_BOOTLOADER:
+		image_base = EF800_KEYBOARD_BOOT_BASE;
+		image_limit = EF800_KEYBOARD_BOOT_LIMIT;
+		target = EF800_KB_UPDATE_TARGET_BOOTLOADER;
+		service_address = EF800_KEYBOARD_UPDATER_I2C_ADDRESS;
+		break;
+	case EF800_KEYBOARD_IMAGE_UPDATER:
+		image_base = EF800_KEYBOARD_UPDATER_BASE;
+		image_limit = EF800_KEYBOARD_UPDATER_LIMIT;
+		target = EF800_KB_UPDATE_TARGET_UPDATER;
+		service_address = EF800_KEYBOARD_I2C_ADDRESS;
+		break;
+	default:
 		result = -EINVAL;
 		package_invalid = true;
 		goto cleanup;
 	}
-	LOG_INF("keyboard update: package version=%u.%u.%u base=0x%08x",
-		header.version_major, header.version_minor, header.version_patch,
-		header.image_base);
-	uart_irq_rx_disable(keyboard_uart);
-	k_msgq_purge(&keyboard_rx_msgq);
-	while (uart_poll_in(keyboard_uart, &response[0]) == 0) {
+	if (header.image_size > image_limit ||
+	    fs_seek(&file, header.header_size, FS_SEEK_SET) != 0 ||
+	    fs_read(&file, vector, sizeof(vector)) != sizeof(vector) ||
+	    !ef800_vector_table_valid((const uint32_t *)vector, image_base,
+				      header.image_size, 0x20000000U, 0x0000F000U)) {
+		result = -EINVAL;
+		package_invalid = true;
+		goto cleanup;
 	}
-	keyboard_update_uart(false);
-	if (keyboard_update_send((uint8_t[]){CMD_KEYBOARD_BOOTLOADER}, 1U) != 0) {
-		result = -EIO;
-		goto cleanup_uart;
-	}
-	for (size_t i = 0U; i < 3U; ++i) {
-		if (keyboard_update_read_byte(&response[i],
-			EF800_KEYBOARD_ROM_TIMEOUT_MS) != 0) {
-			result = -ETIMEDOUT;
-			goto cleanup_uart;
+	if (header.image_kind != EF800_KEYBOARD_IMAGE_UPDATER) {
+		result = keyboard_update_enter_resident();
+		if (result != 0) {
+			LOG_ERR("keyboard update: resident updater handoff failed: %d", result);
+			goto cleanup;
+		}
+	} else {
+		/* The app services updater-slot writes at 0x2a. This worker runs
+		 * just after reset release, so wait for its 0xaa startup indication
+		 * (emitted after I2C target registration) before framed GET. */
+		result = keyboard_update_wait_application_service();
+		if (result != 0) {
+			LOG_ERR("keyboard update: application service not ready: %d",
+				result);
+			goto cleanup;
 		}
 	}
-	if (memcmp(response, (uint8_t[]){CMD_RETURN, CMD_KEYBOARD_BOOTLOADER,
-		CMD_ACK}, 3U) != 0) {
-		result = -EPROTO;
-		goto cleanup_uart;
+	result = keyboard_update_identify(service_address);
+	if (result != 0) {
+		LOG_ERR("keyboard update: identify failed: %d", result);
+		goto cleanup;
 	}
-	LOG_INF("keyboard update: keyboard successful switch to system bootloader");
-	k_msleep(100U);
-	if (keyboard_update_uart(true) != 0 ||
-		keyboard_update_send((uint8_t[]){0x7FU}, 1U) != 0 ||
-		keyboard_update_expect(EF800_KEYBOARD_ROM_ACK) != 0 ||
-		keyboard_update_rom_identify() != 0 ||
-		keyboard_update_rom_erase() != 0 ||
-		keyboard_update_rom_write(&file, &header) != 0 ||
-		keyboard_update_rom_verify(&file, &header) != 0) {
-		result = -EIO;
-		goto cleanup_uart;
-	}
-	LOG_INF("keyboard update: successful flashed");
-	gpio_pin_set_dt(&keyboard_reset, 0);
-	k_msleep(20U);
-	keyboard_update_uart(false);
-	gpio_pin_set_dt(&keyboard_reset, 1);
-	k_msleep(100U);
-	if (keyboard_update_read_byte(&response[0],
-		EF800_KEYBOARD_ROM_TIMEOUT_MS) != 0 || response[0] != CMD_INITIALIZED ||
-		keyboard_update_send((uint8_t[]){CMD_KEYBOARD_VERSION}, 1U) != 0) {
-		result = -ETIMEDOUT;
-		goto cleanup_uart;
-	}
-	for (size_t i = 1U; i < sizeof(response); ++i) {
-		if (keyboard_update_read_byte(&response[i],
-			EF800_KEYBOARD_ROM_TIMEOUT_MS) != 0) {
-			result = -ETIMEDOUT;
-			goto cleanup_uart;
-		}
-	}
-	if (memcmp(response, (uint8_t[]){CMD_RETURN, CMD_KEYBOARD_VERSION,
-		header.version_major, header.version_minor, header.version_patch},
-		 sizeof(response)) != 0) {
-		result = -EPROTO;
-		goto cleanup_uart;
-	}
-	LOG_INF("keyboard update: keyboard restarted");
-	result = fs_unlink(EF800_KEYBOARD_PACKAGE_PATH);
-	if (result == 0) {
-		LOG_INF("keyboard update: update successful; package removed");
-	}
+	{
+		uint8_t begin[9];
+		uint8_t erase[2] = {(uint8_t)target,
+			EF800_KB_UPDATE_ERASE_PARTITION};
 
-cleanup_uart:
-	(void)keyboard_update_uart(false);
-	while (uart_poll_in(keyboard_uart, &response[0]) == 0) {
+		begin[0] = (uint8_t)target;
+		keyboard_update_put_le32(&begin[1], header.image_size);
+		keyboard_update_put_le32(&begin[5], header.image_crc32);
+		result = keyboard_update_request(service_address,
+			EF800_KB_UPDATE_CMD_BEGIN, begin, sizeof(begin), response,
+			2U, 2000U);
+		if (result == 0) {
+			LOG_INF("keyboard update: partition ERASE started target=0x%02x",
+				target);
+			result = keyboard_update_request(service_address,
+				EF800_KB_UPDATE_CMD_ERASE, erase, sizeof(erase),
+				response, 2U, 30000U);
+		}
+		if (result != 0) {
+			LOG_ERR("keyboard update: BEGIN/ERASE failed: %d", result);
+			goto cleanup;
+		}
 	}
-	uart_irq_callback_user_data_set(keyboard_uart, keyboard_uart_isr, NULL);
-	uart_irq_rx_enable(keyboard_uart);
-	k_msgq_purge(&keyboard_rx_msgq);
+	for (uint32_t offset = 0U; offset < header.image_size;) {
+		size_t length = MIN(sizeof(data), header.image_size - offset);
+
+		if (fs_seek(&file, header.header_size + offset, FS_SEEK_SET) != 0 ||
+		    fs_read(&file, data, length) != (ssize_t)length) {
+			result = -EIO;
+			goto cleanup;
+		}
+		source_crc = ef800_crc32_update(source_crc, data, length);
+		payload[0] = (uint8_t)target;
+		keyboard_update_put_le32(&payload[1], offset);
+		keyboard_update_put_le16(&payload[5], (uint16_t)length);
+		memcpy(&payload[7], data, length);
+		result = keyboard_update_request(service_address,
+			EF800_KB_UPDATE_CMD_WRITE_MEMORY, payload, length + 7U,
+			response, 2U, 5000U);
+		if (result != 0) {
+			LOG_ERR("keyboard update: WRITE offset 0x%x failed: %d",
+				offset, result);
+			goto cleanup;
+		}
+		offset += length;
+		if ((offset % 4096U) == 0U || offset == header.image_size) {
+			LOG_INF("keyboard update: streamed %u/%u bytes", offset,
+				header.image_size);
+		}
+	}
+	if (source_crc != header.image_crc32) {
+		result = -EBADMSG;
+		goto cleanup;
+	}
+	{
+		uint8_t check_target = (uint8_t)target;
+
+		LOG_INF("keyboard update: Flash CHECK started target=0x%02x",
+			target);
+		result = keyboard_update_request(service_address,
+			EF800_KB_UPDATE_CMD_CHECK, &check_target, 1U, response,
+			7U, 30000U);
+		if (result != 0 || keyboard_update_get_le32(&response[1]) !=
+		    header.image_crc32 || response[5] != 1U) {
+			result = result != 0 ? result : -EBADMSG;
+			LOG_ERR("keyboard update: Flash CHECK failed: %d", result);
+			goto cleanup;
+		}
+	}
+	if (header.image_kind == EF800_KEYBOARD_IMAGE_UPDATER) {
+		uint8_t version[EF800_KB_UPDATE_VERSION_SIZE];
+		/* A direct application-to-updater branch leaves stale STM32 I2C
+		 * peripheral state behind: CHECK can pass, but the updater's 0x48
+		 * target then never answers. Reset through the resident bootloader
+		 * with JP7 asserted so it performs a clean updater startup. */
+		result = keyboard_update_enter_bootloader_fallback(version);
+		if (result == 0 &&
+		    (version[1] != header.version_major ||
+		     version[2] != header.version_minor ||
+		     version[3] != header.version_patch)) {
+			LOG_ERR("keyboard updater version mismatch: expected %u.%u.%u, "
+				"got %u.%u.%u", header.version_major,
+				header.version_minor, header.version_patch,
+				version[1], version[2], version[3]);
+			result = -EBADMSG;
+		}
+	} else {
+		result = keyboard_update_request(service_address,
+			EF800_KB_UPDATE_CMD_RUN, NULL, 0U, response, 2U, 2000U);
+		if (result == 0) {
+			result = keyboard_update_wait_app(&header);
+		}
+	}
+	if (result == 0) {
+		result = fs_unlink(EF800_KEYBOARD_PACKAGE_PATH);
+	}
+	if (result == 0) {
+		LOG_INF("keyboard update: transfer and verification complete");
+	}
 cleanup:
 	(void)fs_close(&file);
 	if (package_invalid) {
-		int remove_result = fs_unlink(EF800_KEYBOARD_PACKAGE_PATH);
-		LOG_WRN("keyboard update: invalid package removed result=%d", remove_result);
+		(void)fs_unlink(EF800_KEYBOARD_PACKAGE_PATH);
 	}
 	keyboard_update_active = false;
 	if (result != 0) {
-		LOG_ERR("keyboard update: failed phase result=%d", result);
+		LOG_ERR("keyboard update: failed: %d", result);
 	}
 	return result;
 }
@@ -1652,6 +1822,9 @@ static int keyboard_send_command_locked(uint8_t command,
 	k_sem_reset(&keyboard_command_complete);
 	keyboard_pending_command = command;
 	keyboard_command_pending = true;
+	if (command == CMD_KEYBOARD_VERSION) {
+		LOG_INF("Keyboard version query: TX command 0x%02x", command);
+	}
 	keyboard_uart_send(&command, 1U);
 	if (payload != NULL && payload_length != 0U) {
 		keyboard_uart_send(payload, payload_length);
@@ -1660,7 +1833,16 @@ static int keyboard_send_command_locked(uint8_t command,
 		K_MSEC(KEYBOARD_COMMAND_TIMEOUT_MS));
 	keyboard_command_pending = false;
 	if (result != 0) {
+		if (command == CMD_KEYBOARD_VERSION) {
+			LOG_WRN("Keyboard version query timed out; RX response incomplete or absent");
+		}
 		return -ETIMEDOUT;
+	}
+	if (command == CMD_KEYBOARD_VERSION) {
+		uint8_t version[3];
+
+		return ef800_keyboard_host_get_version(&keyboard_host, version) ?
+			0 : -EBADMSG;
 	}
 	status = keyboard_host.last_command_status;
 	return status == CMD_ACK ? 0 : -EIO;
@@ -5796,6 +5978,79 @@ static int cmd_rtc_set(const struct shell *shell, size_t argc, char **argv)
 	return 0;
 }
 
+static int cmd_keyboard_version(const struct shell *shell, size_t argc,
+				const char *argv[])
+{
+	uint8_t request = EF800_KEYBOARD_I2C_CMD_STATUS;
+	uint8_t response[EF800_KEYBOARD_I2C_STATUS_SIZE];
+	int result;
+
+	ARG_UNUSED(argc);
+	ARG_UNUSED(argv);
+	k_mutex_lock(&keyboard_command_mutex, K_FOREVER);
+	if (!device_is_ready(keyboard_i2c)) {
+		result = -ENODEV;
+	} else {
+		result = i2c_write_read(keyboard_i2c,
+			EF800_KEYBOARD_I2C_ADDRESS, &request, sizeof(request),
+			response, sizeof(response));
+	}
+	if (result == 0 && response[0] == EF800_KEYBOARD_I2C_CMD_STATUS &&
+	    response[4] == EF800_KEYBOARD_I2C_MODE_APPLICATION &&
+	    response[5] == EF800_KEYBOARD_I2C_ACK) {
+		shell_print(shell, "Keyboard firmware version %u.%u.%u",
+			response[1], response[2], response[3]);
+	} else {
+		result = result != 0 ? result : -EBADMSG;
+		shell_error(shell, "Keyboard I2C version query failed: %d", result);
+	}
+	k_mutex_unlock(&keyboard_command_mutex);
+	return result;
+}
+
+static int cmd_keyboard_updater_version(const struct shell *shell, size_t argc,
+					       const char *argv[])
+{
+	uint8_t response[EF800_KB_UPDATE_VERSION_SIZE];
+	int result;
+
+	ARG_UNUSED(argc);
+	ARG_UNUSED(argv);
+	if (!device_is_ready(keyboard_i2c)) {
+		result = -ENODEV;
+	} else {
+		result = keyboard_update_query_version(
+			EF800_KEYBOARD_UPDATER_I2C_ADDRESS, response, 2000U);
+	}
+	if (result == 0) {
+		shell_print(shell, "Keyboard updater version %u.%u.%u",
+			response[1], response[2], response[3]);
+		return 0;
+	}
+	result = result != 0 ? result : -EBADMSG;
+	shell_error(shell, "Keyboard updater I2C version query failed: %d", result);
+	return result;
+}
+
+static int cmd_keyboard_boot_probe(const struct shell *shell, size_t argc,
+				  const char *argv[])
+{
+	uint8_t version[EF800_KB_UPDATE_VERSION_SIZE] = {0};
+	int result;
+
+	ARG_UNUSED(argc);
+	ARG_UNUSED(argv);
+	shell_print(shell, "Asserting JP7 updater request and resetting keyboard");
+	result = keyboard_update_enter_bootloader_fallback(version);
+	if (result == 0) {
+		shell_print(shell, "Bootloader strap PASS; updater version %u.%u.%u",
+			version[1], version[2], version[3]);
+		return 0;
+	}
+	shell_error(shell, "bootloader strap handoff failed: %d", result);
+	return result;
+}
+
 static int cmd_keyboard_debug_start(const struct shell *shell,
 					    size_t argc, char **argv)
 {
@@ -6346,6 +6601,13 @@ SHELL_STATIC_SUBCMD_SET_CREATE(keyboard_debug_commands,
 );
 
 SHELL_STATIC_SUBCMD_SET_CREATE(keyboard_commands,
+	SHELL_CMD_ARG(version, NULL, "Read keyboard firmware version",
+			cmd_keyboard_version, 1, 0),
+	SHELL_CMD_ARG(updater-version, NULL, "Read live updater version at 0x48",
+			cmd_keyboard_updater_version, 1, 0),
+	SHELL_CMD_ARG(boot-probe, NULL,
+			"Reset keyboard and test bootloader 0x48 updater entry",
+			cmd_keyboard_boot_probe, 1, 0),
 	SHELL_CMD_ARG(upload, NULL, "Upload EF800_KEYBOARD.pkg via DebugConsole",
 			cmd_keyboard_upload, 1, 0),
 	SHELL_CMD(debug, &keyboard_debug_commands, "Keyboard debug input", NULL),
@@ -6576,6 +6838,9 @@ static void keyboard_uart_isr(const struct device *dev, void *user_data)
 		return;
 	}
 	while (uart_fifo_read(dev, &byte, 1U) == 1) {
+		if (byte == 0xAAU) {
+			atomic_set(&keyboard_ready_indication, 1);
+		}
 		(void)k_msgq_put(&keyboard_rx_msgq, &byte, K_NO_WAIT);
 	}
 }
@@ -6616,6 +6881,10 @@ static void process_keyboard_byte(uint8_t byte, uint32_t now_ms)
 {
 	enum ef800_host_feed_result result;
 
+	if (keyboard_command_pending &&
+	    keyboard_pending_command == CMD_KEYBOARD_VERSION) {
+		LOG_INF("Keyboard version query: RX byte 0x%02x", byte);
+	}
 	result = ef800_keyboard_host_feed_at(&keyboard_host, byte, now_ms);
 	switch (result) {
 	case EF800_HOST_FEED_READY:
@@ -6897,6 +7166,21 @@ result = ef800_mcp23017_open(&mcp23017,
 	if (result == 0) {
 		result = ef800_mcp23017_set_pin(&mcp23017, usb_select.pin, true);
 	}
+	if (keyboard_updater_request.port != NULL &&
+	    device_is_ready(keyboard_updater_request.port)) {
+		int strap_result = gpio_pin_configure_dt(&keyboard_updater_request,
+			GPIO_OUTPUT_INACTIVE);
+
+		keyboard_updater_request_ready = strap_result == 0;
+		if (strap_result != 0) {
+			LOG_WRN("Keyboard updater-request PE0 unavailable: %d",
+				strap_result);
+		} else {
+			LOG_INF("Keyboard updater-request PE0 initialized inactive");
+		}
+	} else {
+		LOG_WRN("Keyboard updater-request PE0 GPIO unavailable");
+	}
 	if (result == 0 && startup_mtp_pending) {
 		result = ef800_usb_manager_set(EF800_USB_PERSONALITY_MTP);
 		LOG_INF("Deferred USB MTP startup result=%d", result);
@@ -6922,6 +7206,7 @@ result = ef800_mcp23017_open(&mcp23017,
 		uart_irq_callback_user_data_set(keyboard_uart, keyboard_uart_isr, NULL);
 		uart_irq_rx_enable(keyboard_uart);
 		/* RX is live before reset release so the controller's one-shot 0xaa is kept. */
+		atomic_set(&keyboard_ready_indication, 0);
 		k_msleep(10U);
 		result = gpio_pin_set_dt(&keyboard_reset, 1);
 		keyboard_rx_armed = result == 0;

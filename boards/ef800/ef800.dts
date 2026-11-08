@@ -32,6 +32,11 @@
 		watchdog0 = &iwdg;
 	};
 
+	zephyr,user {
+		/* JP7 links this active-low request to keyboard PB12. */
+		keyboard-updater-request-gpios = <&gpioe 0 GPIO_ACTIVE_LOW>;
+	};
+
 	leds {
 		compatible = "gpio-leds";
 

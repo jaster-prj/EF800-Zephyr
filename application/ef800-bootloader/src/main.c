@@ -26,6 +26,7 @@
 #include "boot_update.h"
 #include "ef800_boot_decision.h"
 #include "ef800_watchdog.h"
+#include "boot_trace.h"
 
 LOG_MODULE_REGISTER(ef800_bootloader, LOG_LEVEL_INF);
 
@@ -184,6 +185,8 @@ int main(void)
 	/* Start/feed the option-byte IWDG before slow flash and metadata work. */
 	watchdog_result = ef800_watchdog_start(10000U);
 	console_result = ef800_console_init(true);
+	ef800_boot_trace("bootloader: entered main\r\n");
+	ef800_boot_trace_result("console init", console_result);
 	printk("ef800 bootloader: main (console=%u, init=%d)\r\n",
 		ef800_console_get_target(), console_result);
 	if (watchdog_result != 0) {
@@ -228,9 +231,12 @@ int main(void)
 		}
 	}
 
+	LOG_INF("checking MTP MainApplication update");
 	rc = ef800_boot_install_update(main_area, PARTITION_ADDRESS(main_partition),
 					 sram_address, sram_size);
 	update_installed = rc == 0;
+	LOG_INF("MTP MainApplication update result: %d", rc);
+	ef800_boot_trace_result("MainApplication update", rc);
 	if (rc < 0 && rc != -ENOENT && rc != -ENODEV) {
 		LOG_WRN("update inspection failed: %d", rc);
 	}

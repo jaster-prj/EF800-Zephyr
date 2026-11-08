@@ -41,6 +41,7 @@ set(EF800_MAIN_COMMON_SOURCES
 	${CMAKE_CURRENT_LIST_DIR}/../../shared/ef800_ports/ef800_usb_manager.c
 	${CMAKE_CURRENT_LIST_DIR}/../../shared/ef800_update/ef800_update.c
 	${CMAKE_CURRENT_LIST_DIR}/../../shared/ef800_update/ef800_metadata.c
+	${CMAKE_CURRENT_LIST_DIR}/../../shared/ef800_keyboard_update/ef800_keyboard_update_protocol.c
 	${CMAKE_CURRENT_LIST_DIR}/../../shared/ef800_storage/ef800_storage_owner.c
 	${CMAKE_CURRENT_LIST_DIR}/../../shared/ef800_storage/ef800_qspi_layout.c
 	${CMAKE_CURRENT_LIST_DIR}/../../shared/ef800_plugin/ef800_plugin_registry.c
@@ -66,6 +67,8 @@ set(EF800_MAIN_COMMON_INCLUDE_DIRS
 	${CMAKE_CURRENT_LIST_DIR}/../../shared/ef800_measurement
 	${CMAKE_CURRENT_LIST_DIR}/../../shared/ef800_ports
 	${CMAKE_CURRENT_LIST_DIR}/../../shared/ef800_update
+	${CMAKE_CURRENT_LIST_DIR}/../../shared/ef800_keyboard_update
+	${CMAKE_CURRENT_LIST_DIR}/../../shared/ef800_keyboard_boot
 	${CMAKE_CURRENT_LIST_DIR}/../../shared/ef800_watchdog
 	${CMAKE_CURRENT_LIST_DIR}/../../shared/ef800_storage
 	${CMAKE_CURRENT_LIST_DIR}/../../shared/ef800_plugin

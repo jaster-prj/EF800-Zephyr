@@ -109,6 +109,25 @@ bool ef800_keyboard_boot_system_request_pending(
 		state->request == EF800_KEYBOARD_BOOT_REQUEST_SYSTEM;
 }
 
+bool ef800_keyboard_boot_i2c_probe(bool write_started, bool write_had_data)
+{
+	return write_started && !write_had_data;
+}
+
+bool ef800_keyboard_boot_updater_window_expired(uint32_t started_ms,
+					       uint32_t now_ms)
+{
+	return (uint32_t)(now_ms - started_ms) >=
+		EF800_KEYBOARD_BOOT_UPDATER_WINDOW_MS;
+}
+
+bool ef800_keyboard_boot_should_enter_updater(bool probe_received,
+					     bool recovery_required,
+					     bool application_valid)
+{
+	return probe_received || recovery_required || !application_valid;
+}
+
 void ef800_keyboard_boot_confirm(struct ef800_keyboard_boot_state *state)
 {
 	if (ef800_keyboard_boot_state_valid(state)) {

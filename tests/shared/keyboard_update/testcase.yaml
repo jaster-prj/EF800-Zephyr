@@ -1,0 +1,7 @@
+common:
+  tags: [shared, keyboard, update]
+  harness: ztest
+tests:
+  ef800.shared.keyboard_update:
+    platform_allow:
+      - native_sim

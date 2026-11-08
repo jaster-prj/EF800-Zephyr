@@ -118,6 +118,23 @@ ZTEST(shared_core, test_keyboard_system_request)
 	zassert_true(ef800_keyboard_boot_state_valid(&state), NULL);
 }
 
+ZTEST(shared_core, test_keyboard_address_only_update_probe)
+{
+	zassert_true(ef800_keyboard_boot_i2c_probe(true, false), NULL);
+	zassert_false(ef800_keyboard_boot_i2c_probe(false, false), NULL);
+	zassert_false(ef800_keyboard_boot_i2c_probe(true, true), NULL);
+	zassert_false(ef800_keyboard_boot_updater_window_expired(10U,
+		10U + EF800_KEYBOARD_BOOT_UPDATER_WINDOW_MS - 1U), NULL);
+	zassert_true(ef800_keyboard_boot_updater_window_expired(10U,
+		10U + EF800_KEYBOARD_BOOT_UPDATER_WINDOW_MS), NULL);
+	zassert_true(ef800_keyboard_boot_updater_window_expired(UINT32_MAX - 10U,
+		EF800_KEYBOARD_BOOT_UPDATER_WINDOW_MS - 11U), NULL);
+	zassert_false(ef800_keyboard_boot_should_enter_updater(false, false, true), NULL);
+	zassert_true(ef800_keyboard_boot_should_enter_updater(true, false, true), NULL);
+	zassert_true(ef800_keyboard_boot_should_enter_updater(false, true, true), NULL);
+	zassert_true(ef800_keyboard_boot_should_enter_updater(false, false, false), NULL);
+}
+
 ZTEST(shared_core, test_keyboard_package_validation)
 {
 	struct ef800_keyboard_package_header header = {
@@ -127,11 +144,32 @@ ZTEST(shared_core, test_keyboard_package_validation)
 		.target_id = EF800_KEYBOARD_PACKAGE_TARGET,
 		.image_base = EF800_KEYBOARD_PACKAGE_BASE,
 		.image_size = 128U,
+		.image_kind = EF800_KEYBOARD_IMAGE_APPLICATION,
 	};
 
 	zassert_true(ef800_keyboard_package_valid(&header,
 		EF800_KEYBOARD_PACKAGE_HEADER_SIZE + header.image_size), NULL);
 	header.target_id = 0x0461U;
+	zassert_false(ef800_keyboard_package_valid(&header,
+		EF800_KEYBOARD_PACKAGE_HEADER_SIZE + header.image_size), NULL);
+	header.target_id = EF800_KEYBOARD_PACKAGE_TARGET;
+	header.image_kind = EF800_KEYBOARD_IMAGE_BOOTLOADER;
+	header.image_base = EF800_KEYBOARD_BOOT_BASE;
+	header.image_size = EF800_KEYBOARD_BOOT_LIMIT;
+	zassert_true(ef800_keyboard_package_valid(&header,
+		EF800_KEYBOARD_PACKAGE_HEADER_SIZE + header.image_size), NULL);
+	header.image_base = EF800_KEYBOARD_PACKAGE_BASE;
+	zassert_false(ef800_keyboard_package_valid(&header,
+		EF800_KEYBOARD_PACKAGE_HEADER_SIZE + header.image_size), NULL);
+	header.image_kind = EF800_KEYBOARD_IMAGE_UPDATER;
+	header.image_base = EF800_KEYBOARD_UPDATER_BASE;
+	header.image_size = EF800_KEYBOARD_UPDATER_LIMIT;
+	zassert_true(ef800_keyboard_package_valid(&header,
+		EF800_KEYBOARD_PACKAGE_HEADER_SIZE + header.image_size), NULL);
+	header.image_base = EF800_KEYBOARD_PACKAGE_BASE;
+	zassert_false(ef800_keyboard_package_valid(&header,
+		EF800_KEYBOARD_PACKAGE_HEADER_SIZE + header.image_size), NULL);
+	header.image_kind = 0xffU;
 	zassert_false(ef800_keyboard_package_valid(&header,
 		EF800_KEYBOARD_PACKAGE_HEADER_SIZE + header.image_size), NULL);
 }

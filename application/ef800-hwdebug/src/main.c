@@ -17,6 +17,7 @@
 #include "rtc.h"
 #include "fuel_gauge.h"
 #include "peripheral_tests.h"
+#include "keyboard_i2c_debug.h"
 
 #define CONSOLE_LINE_SIZE 128U
 #define CONSOLE_RX_QUEUE_SIZE 128U
@@ -43,6 +44,8 @@ static void print_help(void)
 		"  keyboard version\r\n"
 		"  keyboard version-raw\r\n"
 		"  keyboard id-raw\r\n"
+		"  keyboard i2c-status\r\n"
+		"  keyboard i2c-rom-test (no flash erase/write)\r\n"
 		"  keyboard update /DATA:/fwu/EF800_KEYBOARD.pkg\r\n"
 		"  keyboard receive\r\n"
 		"  keyboard bootloader probe\r\n"
@@ -136,6 +139,12 @@ static void handle_command(char *line)
 		} else if (subcommand != NULL && strcmp(subcommand, "id-raw") == 0 &&
 			   argument == NULL && strtok(NULL, " \t") == NULL) {
 			hwdebug_keyboard_id_raw();
+		} else if (subcommand != NULL && strcmp(subcommand, "i2c-status") == 0 &&
+			   argument == NULL && strtok(NULL, " \t") == NULL) {
+			hwdebug_keyboard_i2c_status();
+		} else if (subcommand != NULL && strcmp(subcommand, "i2c-rom-test") == 0 &&
+			   argument == NULL && strtok(NULL, " \t") == NULL) {
+			hwdebug_keyboard_i2c_rom_test();
 		} else if (subcommand != NULL && strcmp(subcommand, "interactive") == 0 &&
 			   argument == NULL && strtok(NULL, " \t") == NULL) {
 			hwdebug_keyboard_interactive();

@@ -105,3 +105,15 @@ enabled. First make and verify a full QSPI backup and a file-level backup, then
 use a separately qualified migration procedure. Legacy firmware must not be
 booted against the new partition layout because it expects a single FAT volume
 beginning at offset zero.
+
+## Full-format and MTP confirmation (2026-11-08)
+
+On the development target, `storage format-qspi confirm` erased all 4 MiB and
+reported both Configuration and Shared Data raw FAT boot sectors verified;
+COMPOSITION `BATSOC0/LCDCONTR1` was also verified. MainApplication subsequently
+mounted both volumes. As expected, the format reset Configuration data,
+including the Port 4 USB assignment. Port 4 was restored to USB MTP, the target
+enumerated as `2fe3:ef87`, and the three MTP roots exposed Data, Plugins, and
+FWU. Empty `.data`, `.plugins`, and `.fmu` markers were created in those roots.
+This records successful formatter behavior on this target, not production
+qualification of QSPI capacity, geometry, frequency, or power-loss behavior.

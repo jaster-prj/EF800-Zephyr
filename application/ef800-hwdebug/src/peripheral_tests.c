@@ -1318,7 +1318,9 @@ void hwdebug_keyboard_version(void)
 void hwdebug_keyboard_version_raw(void)
 {
 	const struct device *uart = DEVICE_DT_GET(DT_NODELABEL(lpuart1));
-	uint8_t response[5] = {0};
+	const uint8_t expected[] = {
+		CMD_RETURN, CMD_KEYBOARD_VERSION, 1U, 1U, 1U,
+	};
 	int ret;
 
 	hwdebug_test_begin("keyboard/version-raw");
@@ -1327,12 +1329,12 @@ void hwdebug_keyboard_version_raw(void)
 	if (ret == 0) {
 		uart_drain(uart);
 		keyboard_uart_send(uart, CMD_KEYBOARD_VERSION);
-		ret = keyboard_response(uart, CMD_KEYBOARD_VERSION, response,
-			sizeof(response));
+		ret = keyboard_response(uart, CMD_KEYBOARD_VERSION, expected,
+			sizeof(expected));
 	}
 	hwdebug_console_printf("keyboard version raw:");
-	for (size_t index = 0U; index < sizeof(response); ++index) {
-		hwdebug_console_printf(" %02x", response[index]);
+	for (size_t index = 0U; index < sizeof(expected); ++index) {
+		hwdebug_console_printf(" %02x", expected[index]);
 	}
 	hwdebug_console_puts("\r\n");
 	if (ret == 0) hwdebug_test_pass();
@@ -1342,7 +1344,9 @@ void hwdebug_keyboard_version_raw(void)
 void hwdebug_keyboard_id_raw(void)
 {
 	const struct device *uart = DEVICE_DT_GET(DT_NODELABEL(lpuart1));
-	uint8_t response[4] = {0};
+	const uint8_t expected[] = {
+		CMD_RETURN, CMD_KEYBOARD_ID, 0xABU, 0x83U,
+	};
 	int ret;
 
 	hwdebug_test_begin("keyboard/id-raw");
@@ -1351,12 +1355,12 @@ void hwdebug_keyboard_id_raw(void)
 	if (ret == 0) {
 		uart_drain(uart);
 		keyboard_uart_send(uart, CMD_KEYBOARD_ID);
-		ret = keyboard_response(uart, CMD_KEYBOARD_ID, response,
-			sizeof(response));
+		ret = keyboard_response(uart, CMD_KEYBOARD_ID, expected,
+			sizeof(expected));
 	}
 	hwdebug_console_printf("keyboard id raw:");
-	for (size_t index = 0U; index < sizeof(response); ++index) {
-		hwdebug_console_printf(" %02x", response[index]);
+	for (size_t index = 0U; index < sizeof(expected); ++index) {
+		hwdebug_console_printf(" %02x", expected[index]);
 	}
 	hwdebug_console_puts("\r\n");
 	if (ret == 0) hwdebug_test_pass();
