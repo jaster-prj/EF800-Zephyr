@@ -67,6 +67,29 @@
 
 };
 
+/* STM32L496 FMC is not declared by the upstream L4 SoC DTSI. */
+
+/ {
+	fmc: memory-controller@a0000000 {
+		compatible = "st,stm32-fmc";
+		reg = <0xa0000000 0x400>;
+		clocks = <&rcc STM32_CLOCK(AHB3, 0)>;
+		status = "disabled";
+
+		fmc_sram: sram {
+			compatible = "st,stm32-fmc-nor-psram";
+			#address-cells = <1>;
+			#size-cells = <0>;
+			status = "disabled";
+
+			sram_bank1: sram@0 {
+				reg = <0>;
+				status = "disabled";
+			};
+		};
+	};
+};
+
 &usbotg_fs {
 		pinctrl-0 = <&usb_otg_fs_dm_pa11 &usb_otg_fs_dp_pa12>;
 		pinctrl-names = "default";

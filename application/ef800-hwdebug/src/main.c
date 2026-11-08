@@ -18,6 +18,7 @@
 #include "fuel_gauge.h"
 #include "peripheral_tests.h"
 #include "keyboard_i2c_debug.h"
+#include "sram_test.h"
 
 #define CONSOLE_LINE_SIZE 128U
 #define CONSOLE_RX_QUEUE_SIZE 128U
@@ -58,6 +59,7 @@ static void print_help(void)
 		"  storage format-layout\r\n"
 		"  storage format-volumes\r\n"
 		"  watchdog test\r\n"
+		"  sram test\r\n"
 		"  usb cdc test\r\n"
 		"  next (storage step)\r\n"
 		"  pass|fail|cancel|exit (pending interactive test)\r\n"
@@ -255,6 +257,16 @@ static void handle_command(char *line)
 		return;
 	}
 	if (strcmp(command, "help") == 0) { print_help(); return; }
+	if (strcmp(command, "sram") == 0) {
+		subcommand = strtok(NULL, " \t");
+		if (subcommand != NULL && strcmp(subcommand, "test") == 0 &&
+		    strtok(NULL, " \t") == NULL) {
+			hwdebug_sram_test();
+		} else {
+			hwdebug_console_puts("error: usage: sram test\r\n");
+		}
+		return;
+	}
 	if (strcmp(command, "hardware") == 0) {
 		subcommand = strtok(NULL, " \t");
 		argument = strtok(NULL, " \t");
@@ -414,7 +426,7 @@ int main(void)
 	keyboard_reset_result = hwdebug_keyboard_reset_release();
 	uart_irq_callback_set(console_uart, console_rx_callback);
 	uart_irq_rx_enable(console_uart);
-	hwdebug_console_puts("boot: main\r\nboot: UART4 ready\r\nboot: clock source HSE 25 MHz -> PLL -> SYSCLK 80 MHz\r\nEF800 hardware debug\r\n");
+	hwdebug_console_puts("boot: main\r\nboot: UART4 ready\r\nboot: clock source HSE 25 MHz -> PLL -> SYSCLK 20 MHz (SRAM timing experiment)\r\nEF800 hardware debug\r\n");
 	hwdebug_console_printf("boot: reason=%s (reset_cause=0x%08x)\r\n",
 		watchdog_reset ? "watchdog" : "normal", reset_cause);
 	hwdebug_console_printf("watchdog: %s (%d)\r\n", watchdog_result == 0 ? "feeding" : "unavailable", watchdog_result);
