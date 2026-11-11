@@ -17,6 +17,11 @@ distinct from an unavailable source.
 
 ## PC1 calibration table
 
+Each successful `BATSOC1` acquisition contributes one PC1 reading to an
+8-sample moving-average ring buffer. The SOC lookup and reported voltage use
+the mean of the readings currently in the buffer; startup uses the samples
+available so far rather than waiting for a full window. `BATSOC2` is unaffected.
+
 No factory-measured LiFePO4 calibration is available. The EF800 target's
 22 kOhm / 100 kOhm divider is wired with 22 kOhm on the battery side and
 100 kOhm from PC1 to ground. The table below is a generic, approximate 1S

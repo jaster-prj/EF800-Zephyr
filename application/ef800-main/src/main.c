@@ -27,6 +27,7 @@
 
 #include "ef800_max17043.h"
 #include "ef800_battery_soc.h"
+#include "ef800_battery_adc_ring.h"
 #include "ef800_battery_soc_gauge.h"
 #include "ef800_battery_soc_store.h"
 #include "ef800_main.h"
@@ -160,6 +161,7 @@ static bool virtual_power_off;
 #endif
 static bool battery_soc_store_ready;
 static bool battery_adc_ready;
+static struct ef800_battery_adc_ring battery_adc_ring;
 static bool mcumgr_transport_active;
 static const struct adc_dt_spec battery_adc =
 	ADC_DT_SPEC_GET_BY_NAME(DT_PATH(zephyr_user), battery);
@@ -5749,9 +5751,10 @@ static int read_adc_battery(void *context,
 	struct ef800_max17043_status *status)
 {
 	struct ef800_battery_soc_table table;
-	struct adc_sequence sequence;
+	struct adc_sequence sequence = {0};
 	int16_t raw_sample;
 	int32_t pin_mv;
+	uint16_t filtered_pin_mv;
 #ifdef CONFIG_BOARD_NATIVE_SIM
 	uint16_t pin_mv_input;
 #endif
@@ -5796,10 +5799,15 @@ static int read_adc_battery(void *context,
 	    pin_mv > (int32_t)EF800_BATTERY_SOC_ADC_MAX_MV) {
 		return result != 0 ? result : -ERANGE;
 	}
-	result = ef800_battery_soc_from_pin_mv(&table, (uint16_t)pin_mv,
+	result = ef800_battery_adc_ring_push(&battery_adc_ring,
+		(uint16_t)pin_mv, &filtered_pin_mv);
+	if (result != 0) {
+		return result;
+	}
+	result = ef800_battery_soc_from_pin_mv(&table, filtered_pin_mv,
 		&status->soc_percent);
 	if (result == 0) {
-		status->voltage_uv = (uint32_t)pin_mv * 1000U;
+		status->voltage_uv = (uint32_t)filtered_pin_mv * 1000U;
 	}
 	return result;
 }
