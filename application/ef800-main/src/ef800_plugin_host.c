@@ -1,5 +1,6 @@
 /* SPDX-License-Identifier: Apache-2.0 */
 #include "ef800_plugin_host.h"
+#include "ef800_memory_pool.h"
 
 #include <errno.h>
 #include <string.h>
@@ -39,6 +40,7 @@
 #include "ef800_plugin_worker_abi.h"
 #include "ef800_plugin_worker.h"
 #include "ef800_plugin_syscall.h"
+#include "ef800_memory_pool.h"
 LOG_MODULE_REGISTER(ef800_plugin_host, LOG_LEVEL_INF);
 
 #define EF800_PLUGIN_DIRECTORY "plugins"
@@ -56,7 +58,7 @@ LOG_MODULE_REGISTER(ef800_plugin_host, LOG_LEVEL_INF);
 #define EF800_PLUGIN_SCAN_ENTRIES EF800_PLUGIN_MAX_ENTRIES
 #define EF800_PLUGIN_DESCRIPTOR_SLOTS EF800_PLUGIN_SCAN_ENTRIES
 #else
-#define EF800_PLUGIN_MAX_ENTRIES 2u
+#define EF800_PLUGIN_MAX_ENTRIES 3u
 #define EF800_PLUGIN_SCAN_ENTRIES 16u
 #define EF800_PLUGIN_DESCRIPTOR_SLOTS EF800_PLUGIN_MAX_ENTRIES
 #endif
@@ -112,12 +114,18 @@ struct plugin_image_slot {
 };
 
 #if !CONFIG_BOARD_NATIVE_SIM
-static uint8_t plugin_text_arena[EF800_PLUGIN_TEXT_SIZE]
-	__aligned(EF800_PLUGIN_TEXT_SIZE);
-static uint8_t plugin_rodata_arena[EF800_PLUGIN_RODATA_SIZE]
-	__aligned(EF800_PLUGIN_RODATA_SIZE);
-BUILD_ASSERT(sizeof(plugin_text_arena) == 32768U);
-BUILD_ASSERT(sizeof(plugin_rodata_arena) == 32768U);
+#define EF800_PLUGIN_INTERNAL_ARENA_SIZE 0x4000u
+static uint8_t plugin_text_internal[EF800_PLUGIN_INTERNAL_ARENA_SIZE]
+	__aligned(EF800_PLUGIN_INTERNAL_ARENA_SIZE);
+static uint8_t plugin_rodata_internal[EF800_PLUGIN_INTERNAL_ARENA_SIZE]
+	__aligned(EF800_PLUGIN_INTERNAL_ARENA_SIZE);
+static uint8_t *plugin_text_arena = plugin_text_internal;
+static uint8_t *plugin_rodata_arena = plugin_rodata_internal;
+static size_t plugin_text_capacity = EF800_PLUGIN_INTERNAL_ARENA_SIZE;
+static size_t plugin_rodata_capacity = EF800_PLUGIN_INTERNAL_ARENA_SIZE;
+static bool plugin_arenas_external;
+BUILD_ASSERT(sizeof(plugin_text_internal) == EF800_PLUGIN_INTERNAL_ARENA_SIZE);
+BUILD_ASSERT(sizeof(plugin_rodata_internal) == EF800_PLUGIN_INTERNAL_ARENA_SIZE);
 #endif
 
 #if CONFIG_BOARD_NATIVE_SIM
@@ -174,13 +182,13 @@ static volatile uintptr_t worker_support_anchor[3];
 #if !CONFIG_BOARD_NATIVE_SIM
 static struct k_mem_domain plugin_worker_domain;
 static struct k_mem_partition plugin_worker_text_partition = {
-	.start = (uintptr_t)plugin_text_arena,
-	.size = sizeof(plugin_text_arena),
+	.start = (uintptr_t)plugin_text_internal,
+	.size = EF800_PLUGIN_INTERNAL_ARENA_SIZE,
 	.attr = K_MEM_PARTITION_P_RX_U_RX,
 };
 static struct k_mem_partition plugin_worker_rodata_partition = {
-	.start = (uintptr_t)plugin_rodata_arena,
-	.size = sizeof(plugin_rodata_arena),
+	.start = (uintptr_t)plugin_rodata_internal,
+	.size = EF800_PLUGIN_INTERNAL_ARENA_SIZE,
 	.attr = K_MEM_PARTITION_P_RO_U_RO,
 };
 static struct k_mem_partition plugin_worker_mailbox_partition = {
@@ -238,8 +246,10 @@ static bool plugin_async_busy;
 static bool plugin_async_queued;
 static bool plugin_async_complete;
 static bool plugin_supervisor_started;
-static char plugin_async_calculation_output[
+static char plugin_async_calculation_output_internal[
 	EF800_PLUGIN_ASYNC_CALCULATION_OUTPUT_SIZE];
+static char *plugin_async_calculation_output =
+	plugin_async_calculation_output_internal;
 #if !CONFIG_BOARD_NATIVE_SIM
 	struct plugin_worker_fault_record {
 	atomic_t state;
@@ -257,6 +267,44 @@ static struct plugin_worker_fault_record plugin_worker_fault_record = {
 K_SEM_DEFINE(plugin_worker_fault_wakeup, 0, 1);
 static atomic_t plugin_worker_invocation_active = ATOMIC_INIT(0);
 #endif
+#endif
+
+#if !CONFIG_BOARD_NATIVE_SIM
+static void plugin_arenas_configure(void)
+{
+	uint8_t *text = NULL;
+	uint8_t *rodata = NULL;
+
+	if (ef800_memory_pool_external_ready()) {
+		text = ef800_memory_pool_external_alloc(EF800_PLUGIN_TEXT_SIZE,
+							EF800_PLUGIN_TEXT_SIZE);
+		rodata = ef800_memory_pool_external_alloc(EF800_PLUGIN_RODATA_SIZE,
+							  EF800_PLUGIN_RODATA_SIZE);
+	}
+	if (text != NULL && rodata != NULL) {
+		plugin_text_arena = text;
+		plugin_rodata_arena = rodata;
+		plugin_text_capacity = EF800_PLUGIN_TEXT_SIZE;
+		plugin_rodata_capacity = EF800_PLUGIN_RODATA_SIZE;
+		plugin_arenas_external = true;
+	} else {
+		ef800_memory_pool_external_free(text);
+		ef800_memory_pool_external_free(rodata);
+		plugin_text_arena = plugin_text_internal;
+		plugin_rodata_arena = plugin_rodata_internal;
+		plugin_text_capacity = sizeof(plugin_text_internal);
+		plugin_rodata_capacity = sizeof(plugin_rodata_internal);
+		plugin_arenas_external = false;
+	}
+	plugin_worker_text_partition.start = (uintptr_t)plugin_text_arena;
+	plugin_worker_text_partition.size = plugin_text_capacity;
+	plugin_worker_rodata_partition.start = (uintptr_t)plugin_rodata_arena;
+	plugin_worker_rodata_partition.size = plugin_rodata_capacity;
+	LOG_INF("Plugin arenas profile=%s text=%p/%u rodata=%p/%u",
+		plugin_arenas_external ? "external" : "internal-reduced",
+		plugin_text_arena, (unsigned int)plugin_text_capacity,
+		plugin_rodata_arena, (unsigned int)plugin_rodata_capacity);
+}
 #endif
 
 static void recovery_ledger_manager_state(uint32_t plugin_id,
@@ -389,9 +437,9 @@ static bool plugin_worker_fault_pc_attributable(uintptr_t pc)
 	uintptr_t mailbox_start = (uintptr_t)&plugin_mailbox_region;
 
 	return (address >= text_start &&
-		address - text_start < sizeof(plugin_text_arena)) ||
+		address - text_start < plugin_text_capacity) ||
 		(address >= rodata_start &&
-		address - rodata_start < sizeof(plugin_rodata_arena)) ||
+		address - rodata_start < plugin_rodata_capacity) ||
 		(address >= rw_start && address - rw_start < sizeof(plugin_rw_arena)) ||
 		(address >= mailbox_start &&
 		address - mailbox_start < sizeof(plugin_mailbox_region));
@@ -574,6 +622,15 @@ static int plugin_worker_request(uint32_t operation, const void *input,
 		return -EPROTO;
 	}
 	if (request.status != PM_OK) {
+		if (operation == EF800_PLUGIN_WORKER_GET_WORKSPACE_RECORD &&
+			request.status == PM_ENOENT) {
+			LOG_DBG("Plugin Workspace record not ready: sequence=%u",
+				(unsigned int)sequence);
+		} else {
+			LOG_WRN("Plugin worker request failed: operation=%u sequence=%u status=%d response=%u",
+				(unsigned int)operation, (unsigned int)sequence, request.status,
+				(unsigned int)request.response_length);
+		}
 		recovery_ledger_invocation_end(plugin_worker_generation,
 			request.status);
 		if (output_capacity != 0U) {
@@ -666,9 +723,9 @@ static int plugin_worker_start(void)
 		return ret;
 	}
 	mailbox->plugin_text_base = (uint32_t)(uintptr_t)plugin_text_arena;
-	mailbox->plugin_text_size = sizeof(plugin_text_arena);
+	mailbox->plugin_text_size = plugin_text_capacity;
 	mailbox->plugin_rodata_base = (uint32_t)(uintptr_t)plugin_rodata_arena;
-	mailbox->plugin_rodata_size = sizeof(plugin_rodata_arena);
+	mailbox->plugin_rodata_size = plugin_rodata_capacity;
 	mailbox->plugin_rw_base = (uint32_t)(uintptr_t)plugin_rw_arena;
 	mailbox->plugin_rw_size = sizeof(plugin_rw_arena);
 	mailbox->allowed_services = plugin_worker_allowed_services;
@@ -789,7 +846,7 @@ static int worker_entry_offset(const void *entry, uint32_t *offset)
 	uintptr_t base = (uintptr_t)plugin_text_arena;
 
 	if (entry == NULL || offset == NULL || address < base ||
-		address - base >= sizeof(plugin_text_arena)) {
+		address - base >= plugin_text_capacity) {
 		return -EINVAL;
 	}
 	*offset = (uint32_t)(address - base);
@@ -1053,6 +1110,13 @@ static int validate_measurement_display(
 static bool metadata_isolation_valid(
 	const struct ef800_plugin_metadata *metadata, uint32_t plugin_kind)
 {
+#if CONFIG_BOARD_NATIVE_SIM
+	const size_t active_text_capacity = EF800_PLUGIN_TEXT_SIZE;
+	const size_t active_rodata_capacity = EF800_PLUGIN_RODATA_SIZE;
+#else
+	const size_t active_text_capacity = plugin_text_capacity;
+	const size_t active_rodata_capacity = plugin_rodata_capacity;
+#endif
 	const uint32_t known_services =
 		EF800_PLUGIN_WORKER_SERVICE_PORT |
 		EF800_PLUGIN_WORKER_SERVICE_WORKSPACE_SNAPSHOT |
@@ -1103,6 +1167,17 @@ static bool metadata_isolation_valid(
 		metadata->text_alignment != EF800_PLUGIN_MPU_ALIGNMENT ||
 		metadata->rodata_alignment != EF800_PLUGIN_MPU_ALIGNMENT ||
 		metadata->data_alignment != EF800_PLUGIN_MPU_ALIGNMENT) {
+		return false;
+	}
+	if (metadata->maximum_text_size == 0U ||
+		metadata->maximum_text_size > active_text_capacity ||
+		metadata->maximum_rodata_size == 0U ||
+		metadata->maximum_rodata_size > active_rodata_capacity ||
+		metadata->maximum_data_size > EF800_PLUGIN_DATA_SIZE ||
+		metadata->maximum_bss_size > EF800_PLUGIN_BSS_SIZE ||
+		metadata->maximum_shared_buffer_size > EF800_PLUGIN_RW_REGION_SIZE ||
+		metadata->maximum_data_size + metadata->maximum_bss_size >
+			metadata->minimum_plugin_ram_size) {
 		return false;
 	}
 	if (plugin_kind == EF800_PLUGIN_KIND_MEASUREMENT &&
@@ -1219,12 +1294,25 @@ static int adapt_descriptor(const struct pm_wire_plugin_descriptor *wire,
 				status, wire->create_address, wire->destroy_address);
 		}
 	}
-	if (status == PM_OK && descriptor_slot->extension != NULL &&
-		descriptor_slot->extension_size >= sizeof(struct ef800_plugin_metadata)) {
+	if (status == PM_OK &&
+		(descriptor_slot->extension == NULL ||
+		 descriptor_slot->extension_size < sizeof(struct ef800_plugin_metadata))) {
+		LOG_WRN("Plugin %u metadata extension missing/truncated: size=%u",
+			(unsigned int)wire->plugin_id,
+			(unsigned int)descriptor_slot->extension_size);
+		status = PM_ENOTSUP;
+	}
+	if (status == PM_OK) {
 		const struct ef800_plugin_metadata *metadata =
 			(const struct ef800_plugin_metadata *)descriptor_slot->extension;
 
-		if (metadata->execution_model == EF800_PLUGIN_EXECUTION_USER_WORKER) {
+		if (memcmp(metadata->metadata_id,
+			(uint8_t[]){EF800_PLUGIN_METADATA_UUID_BYTES}, 16u) != 0 ||
+			metadata->version != EF800_PLUGIN_METADATA_VERSION ||
+			metadata->size < sizeof(*metadata)) {
+			status = PM_ENOTSUP;
+		} else if (metadata->execution_model ==
+			EF800_PLUGIN_EXECUTION_USER_WORKER) {
 			uintptr_t text_alignment = metadata->text_alignment;
 			uintptr_t rodata_alignment = metadata->rodata_alignment;
 			uintptr_t data_alignment = metadata->data_alignment;
@@ -1235,6 +1323,10 @@ static int adapt_descriptor(const struct pm_wire_plugin_descriptor *wire,
 					&(pm_uuid_t){{EF800_PLUGIN_MEASUREMENT_UUID_BYTES}}) ?
 					EF800_PLUGIN_KIND_MEASUREMENT :
 					EF800_PLUGIN_KIND_CALCULATION) ||
+				image->text_size > metadata->maximum_text_size ||
+				image->rodata_size > metadata->maximum_rodata_size ||
+				image->data_size > metadata->maximum_data_size ||
+				image->bss_size > metadata->maximum_bss_size ||
 				(uintptr_t)image->text % text_alignment != 0U ||
 				(uintptr_t)image->rodata % rodata_alignment != 0U ||
 				(uintptr_t)image->data % data_alignment != 0U ||
@@ -1246,6 +1338,15 @@ static int adapt_descriptor(const struct pm_wire_plugin_descriptor *wire,
 	}
 	if (status == PM_OK) {
 		*result = descriptor_slot;
+	} else {
+		for (size_t index = 0U; index < ARRAY_SIZE(descriptor_slots); ++index) {
+			if (&descriptor_slots[index] == descriptor_slot) {
+				descriptor_slot_used[index] = false;
+				descriptor_slot_ids[index] = 0U;
+				memset(descriptor_slot, 0, sizeof(*descriptor_slot));
+				break;
+			}
+		}
 	}
 	return status;
 }
@@ -1259,8 +1360,8 @@ static int allocate_image(void *context, size_t text_size, size_t rodata_size,
 
 	ARG_UNUSED(context);
 	if (text == NULL || rodata == NULL || data == NULL || bss == NULL ||
-		text_size > EF800_PLUGIN_TEXT_SIZE ||
-		rodata_size > EF800_PLUGIN_RODATA_SIZE ||
+		text_size > plugin_text_capacity ||
+		rodata_size > plugin_rodata_capacity ||
 		data_size > EF800_PLUGIN_DATA_SIZE || bss_size > EF800_PLUGIN_BSS_SIZE) {
 		return PM_EOVERFLOW;
 	}
@@ -1304,8 +1405,8 @@ static int allocate_image(void *context, size_t text_size, size_t rodata_size,
 			slot->rodata = plugin_rodata_arena;
 			slot->data = plugin_rw_arena;
 			slot->bss = plugin_rw_arena + bss_offset;
-			memset(plugin_text_arena, 0, sizeof(plugin_text_arena));
-			memset(plugin_rodata_arena, 0, sizeof(plugin_rodata_arena));
+			memset(plugin_text_arena, 0, plugin_text_capacity);
+			memset(plugin_rodata_arena, 0, plugin_rodata_capacity);
 			memset(plugin_rw_arena, 0, sizeof(plugin_rw_arena));
 #endif
 			slot->used = true;
@@ -1334,8 +1435,8 @@ static void free_image(void *context, uint8_t *text, uint8_t *rodata,
 			munmap(slot->bss, EF800_PLUGIN_BSS_SIZE);
 			slot->text = slot->rodata = slot->data = slot->bss = NULL;
 #else
-			memset(plugin_text_arena, 0, sizeof(plugin_text_arena));
-			memset(plugin_rodata_arena, 0, sizeof(plugin_rodata_arena));
+			memset(plugin_text_arena, 0, plugin_text_capacity);
+			memset(plugin_rodata_arena, 0, plugin_rodata_capacity);
 			memset(plugin_rw_arena, 0, sizeof(plugin_rw_arena));
 			slot->data = slot->bss = NULL;
 			slot->text = slot->rodata = NULL;
@@ -1620,6 +1721,9 @@ int ef800_plugin_host_measurement_session_measure(
 		EF800_PLUGIN_DEADLINE_MEASURE_MS);
 	if (status != PM_OK || response_length != sizeof(result) ||
 		result.struct_size < sizeof(result)) {
+		LOG_WRN("Plugin worker measure rejected: status=%d response=%u expected=%u struct=%u",
+			status, (unsigned int)response_length,
+			(unsigned int)sizeof(result), (unsigned int)result.struct_size);
 		return -EIO;
 	}
 	measurement->distance_mm = result.distance_mm;
@@ -1698,13 +1802,21 @@ int ef800_plugin_host_measurement_session_input(
 		EF800_MEASUREMENT_ACTION_DOWN : input == EF800_MEASUREMENT_INPUT_ENTER ?
 		EF800_MEASUREMENT_ACTION_ENTER : 0U;
 #if CONFIG_EF800_MAIN_PLUGIN_USER_WORKER
+	int worker_status;
+
 	if (session == NULL || session->state != EF800_MEASUREMENT_SESSION_ACTIVE ||
 		session->instance != &plugin_manager_instance_token || action == 0U) {
 		return -ENOTSUP;
 	}
-	return plugin_worker_request(EF800_PLUGIN_WORKER_INPUT, &input,
+	worker_status = plugin_worker_request(EF800_PLUGIN_WORKER_INPUT, &input,
 		sizeof(input), NULL, 0U, NULL,
-		EF800_PLUGIN_DEADLINE_INTERACTIVE_MS) == PM_OK ? 0 : -EIO;
+		EF800_PLUGIN_DEADLINE_INTERACTIVE_MS);
+	if (worker_status != PM_OK) {
+		LOG_WRN("Plugin %u input callback failed: input=%u status=%d",
+			(unsigned int)session->plugin_id, (unsigned int)input,
+			worker_status);
+	}
+	return worker_status;
 #else
 	struct ef800_measurement_instance *instance;
 
@@ -1744,7 +1856,7 @@ int ef800_plugin_host_measurement_session_key(
 	}
 	status = plugin_worker_request(EF800_PLUGIN_WORKER_KEY, &event,
 		sizeof(event), &worker_result, sizeof(worker_result),
-		&response_length, EF800_PLUGIN_DEADLINE_INTERACTIVE_MS);
+		&response_length, EF800_PLUGIN_DEADLINE_MEASURE_MS);
 	if (status != PM_OK || response_length != sizeof(worker_result)) {
 		return -EIO;
 	}
@@ -2087,7 +2199,7 @@ static void inspect_available_metadata(void)
 		uint32_t plugin_id;
 		uint32_t loaded_id;
 		struct pm_available_plugin available;
-		const struct pm_plugin_descriptor *descriptor;
+		const struct pm_plugin_descriptor *descriptor = NULL;
 		bool compatible = false;
 		int status;
 
@@ -2110,7 +2222,9 @@ static void inspect_available_metadata(void)
 				plugin_id, EF800_PLUGIN_REGISTRY_INCOMPATIBLE);
 			continue;
 		}
-		if (pm_manager_get_descriptor(manager, plugin_id, &descriptor) == PM_OK &&
+		int descriptor_status = pm_manager_get_descriptor(manager, plugin_id,
+			&descriptor);
+		if (descriptor_status == PM_OK &&
 			descriptor != NULL && descriptor->extension != NULL &&
 			descriptor->extension_size >=
 			sizeof(struct ef800_plugin_metadata)) {
@@ -2140,6 +2254,13 @@ static void inspect_available_metadata(void)
 				}
 				if (entry != NULL &&
 					plugin_kind == EF800_PLUGIN_KIND_MEASUREMENT) {
+					LOG_INF("Plugin %u metadata serial: baud=%u data=%u parity=%u stop=%u flow=%u",
+						(unsigned int)plugin_id,
+						(unsigned int)metadata->serial_baudrate,
+						(unsigned int)metadata->serial_data_bits,
+						(unsigned int)metadata->serial_parity,
+						(unsigned int)metadata->serial_stop_bits,
+						(unsigned int)metadata->serial_flow_control);
 					entry->info.measurement_actions =
 							metadata->measurement_actions;
 						entry->info.serial_baudrate = metadata->serial_baudrate;
@@ -2149,7 +2270,31 @@ static void inspect_available_metadata(void)
 						entry->info.serial_flow_control = metadata->serial_flow_control;
 					}
 				}
+				if (!compatible) {
+					LOG_WRN("Plugin %u metadata rejected: version=%u size=%u model=%u target=%u text=%u rodata=%u data=%u bss=%u",
+						(unsigned int)plugin_id,
+						(unsigned int)metadata->version,
+						(unsigned int)metadata->size,
+						(unsigned int)metadata->execution_model,
+						(unsigned int)metadata->target_architecture,
+						(unsigned int)metadata->maximum_text_size,
+						(unsigned int)metadata->maximum_rodata_size,
+						(unsigned int)metadata->maximum_data_size,
+						(unsigned int)metadata->maximum_bss_size);
+				}
 			}
+			else {
+				LOG_WRN("Plugin %u has invalid metadata identity/size: extension=%u version=%u size=%u",
+					(unsigned int)plugin_id,
+					(unsigned int)descriptor->extension_size,
+					(unsigned int)metadata->version,
+					(unsigned int)metadata->size);
+			}
+		} else {
+			LOG_WRN("Plugin %u descriptor metadata unavailable: status=%d descriptor=%p extension=%p size=%u",
+				(unsigned int)plugin_id, descriptor_status, (void *)descriptor,
+				descriptor == NULL ? NULL : descriptor->extension,
+				(unsigned int)(descriptor == NULL ? 0U : descriptor->extension_size));
 		}
 		if (!compatible) {
 			(void)ef800_plugin_registry_record_diagnostic(active_registry,
@@ -2254,7 +2399,8 @@ static void plugin_async_execute(
 			request->snapshot_length == 0U ||
 			request->snapshot_length > EF800_PLUGIN_MAX_WORKSPACE_SNAPSHOT ||
 			request->output_capacity == 0U ||
-			request->output_capacity > sizeof(plugin_async_calculation_output)) {
+			request->output_capacity >
+				EF800_PLUGIN_ASYNC_CALCULATION_OUTPUT_SIZE) {
 			result->status = -EINVAL;
 			break;
 		}
@@ -2395,7 +2541,7 @@ static void plugin_worker_discard_outputs(
 	struct ef800_plugin_async_result *result)
 {
 	memset(plugin_async_calculation_output, 0,
-		sizeof(plugin_async_calculation_output));
+		 EF800_PLUGIN_ASYNC_CALCULATION_OUTPUT_SIZE);
 	memset(&result->value, 0, sizeof(result->value));
 	recovery_ledger_output_pending(0U);
 	recovery_ledger_cleanup_mark(
@@ -2588,7 +2734,7 @@ int ef800_plugin_host_async_poll(uint32_t token,
 			plugin_async_complete = false;
 			recovery_ledger_output_pending(0U);
 			memset(plugin_async_calculation_output, 0,
-				sizeof(plugin_async_calculation_output));
+				 EF800_PLUGIN_ASYNC_CALCULATION_OUTPUT_SIZE);
 			ret = 0;
 		}
 	}
@@ -2610,7 +2756,7 @@ int ef800_plugin_host_async_release(uint32_t token)
 		ret = -ESTALE;
 	} else {
 		memset(plugin_async_calculation_output, 0,
-			sizeof(plugin_async_calculation_output));
+			 EF800_PLUGIN_ASYNC_CALCULATION_OUTPUT_SIZE);
 		plugin_async_result.value.calculation.data = NULL;
 		plugin_async_result.value.calculation.length = 0U;
 		plugin_async_busy = false;
@@ -2708,12 +2854,24 @@ static void recovery_ledger_set_route(uint32_t plugin_id, uint8_t port_id,
 
 int ef800_plugin_host_init(struct ef800_plugin_registry *registry)
 {
+	char *external_output;
 	struct pm_manager_config config = {
 		.contract = &contract,
 		.max_plugins = EF800_PLUGIN_MAX_ENTRIES,
 		.lock = host_lock,
 		.unlock = host_unlock,
 	};
+	external_output = ef800_memory_pool_external_alloc(
+		EF800_PLUGIN_ASYNC_CALCULATION_OUTPUT_SIZE, 32U);
+	if (external_output != NULL) {
+		plugin_async_calculation_output = external_output;
+		LOG_INF("Calculation output scratch uses external SRAM (%u bytes at %p)",
+			(unsigned)EF800_PLUGIN_ASYNC_CALCULATION_OUTPUT_SIZE,
+			plugin_async_calculation_output);
+	} else {
+		LOG_INF("Calculation output scratch uses internal fallback (%u bytes)",
+			(unsigned)sizeof(plugin_async_calculation_output_internal));
+	}
 	plugin_filesystem = (struct pm_zephyr_filesystem){
 		.mount = ef800_storage_mount_descriptor(),
 		.plugin_directory = EF800_PLUGIN_DIRECTORY,
@@ -2734,6 +2892,9 @@ int ef800_plugin_host_init(struct ef800_plugin_registry *registry)
 	if (registry == NULL) {
 		return -EINVAL;
 	}
+#if !CONFIG_BOARD_NATIVE_SIM
+	plugin_arenas_configure();
+#endif
 #if !CONFIG_EF800_MAIN_PLUGIN_DEV_DIRECT_EXECUTION && \
 	!CONFIG_EF800_MAIN_PLUGIN_USER_WORKER
 	LOG_WRN("External plugins disabled: isolated worker executor is not enabled");
@@ -2789,8 +2950,8 @@ int ef800_plugin_host_worker_domain_attach(struct k_thread *worker,
 	if (worker == NULL || generation == NULL || k_is_user_context()) {
 		return -EINVAL;
 	}
-	if ((text_start % EF800_PLUGIN_TEXT_SIZE) != 0U ||
-		(rodata_start % EF800_PLUGIN_RODATA_SIZE) != 0U ||
+	if ((text_start % plugin_text_capacity) != 0U ||
+		(rodata_start % plugin_rodata_capacity) != 0U ||
 		(rw_start % EF800_PLUGIN_RW_REGION_SIZE) != 0U ||
 		(mailbox_start % EF800_PLUGIN_WORKER_MAILBOX_REGION_SIZE) != 0U) {
 		return -EINVAL;

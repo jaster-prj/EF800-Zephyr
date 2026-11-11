@@ -65,6 +65,18 @@
 		status = "okay";
 	};
 
+	/*
+	 * External SRAM is deliberately separate from chosen zephyr,sram (sram0).
+	 * Enable this memory region only in images that also initialize FMC before
+	 * accessing it. It is not ordinary RAM and is not used for stacks by default.
+	 */
+	external_sram: memory@60000000 {
+		compatible = "zephyr,memory-region", "mmio-sram";
+		reg = <0x60000000 0x00080000>;
+		zephyr,memory-region = "EF800_EXT_SRAM";
+		status = "disabled";
+	};
+
 };
 
 /* STM32L496 FMC is not declared by the upstream L4 SoC DTSI. */

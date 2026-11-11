@@ -23,7 +23,10 @@ with serial.Serial(args.port, timeout=0.1, **settings) as port:
             continue
         print("rx", command.hex(" "))
         if args.instrument == "fts3xx" and command == b"\x11\r\n":
-            port.write(b"1234 0452700 0900000\r\n")
+            response = b"1234 0452700 0900000\r\n"
+            port.write(response)
+            port.flush()
+            print("tx", response.hex(" "), flush=True)
         elif args.instrument == "elta3" and command == b"S14\r\n":
             port.write(b"A\r\n")
             pending_measurement = True

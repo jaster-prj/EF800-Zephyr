@@ -86,8 +86,15 @@ int ef800_plugin_registry_record_diagnostic(
 		state > EF800_PLUGIN_REGISTRY_TIMED_OUT) {
 		return -EINVAL;
 	}
-	if (ef800_plugin_registry_find(registry, plugin_id) != NULL) {
-		return -EEXIST;
+	{
+		struct ef800_plugin_registry_entry *existing =
+			(struct ef800_plugin_registry_entry *)
+			ef800_plugin_registry_find(registry, plugin_id);
+
+		if (existing != NULL) {
+			existing->state = state;
+			return 0;
+		}
 	}
 	if (registry->count >= EF800_PLUGIN_REGISTRY_MAX_ENTRIES) {
 		return -ENOSPC;

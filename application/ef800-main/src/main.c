@@ -58,6 +58,7 @@
 #include "ef800_update.h"
 #include "ef800_mcumgr_transport.h"
 #include "ef800_plugin_host.h"
+#include "ef800_memory_pool.h"
 #include "ef800_usb_manager.h"
 #include "ef800_measurement_plugin.h"
 #include "ef800_ui.h"
@@ -184,7 +185,9 @@ static uint32_t plugin_failure_plugin_id;
 static int plugin_failure_status;
 static enum ef800_plugin_failure_class plugin_failure_class;
 static struct ef800_plugin_async_result plugin_async_ui_result;
-static char calculation_snapshot[EF800_PLUGIN_WORKER_MAX_WORKSPACE_SNAPSHOT];
+static char calculation_snapshot_internal[
+	EF800_PLUGIN_WORKER_MAX_WORKSPACE_SNAPSHOT];
+static char *calculation_snapshot = calculation_snapshot_internal;
 static bool calculation_result_pending;
 #endif
 
@@ -493,10 +496,120 @@ enum application_menu {
 	APPLICATION_MENU_PLUGIN_FAILURE,
 	APPLICATION_MENU_CALCULATION_CONFIRMATION,
 };
+static enum application_menu active_menu = APPLICATION_MENU_MAIN;
+
+static const char *application_menu_name(enum application_menu menu)
+{
+	switch (menu) {
+	case APPLICATION_MENU_MAIN: return "Main";
+	case APPLICATION_MENU_SETTINGS: return "Settings";
+	case APPLICATION_MENU_WORKSPACE: return "Workspace";
+	case APPLICATION_MENU_WORKSPACE_MANAGEMENT: return "Workspace management";
+	case APPLICATION_MENU_WORKSPACE_VIEW: return "Workspace view";
+	case APPLICATION_MENU_WORKSPACE_ROW_ACTIONS: return "Workspace row actions";
+	case APPLICATION_MENU_WORKSPACE_ROW_EDITOR: return "Workspace row editor";
+	case APPLICATION_MENU_WORKSPACE_ROW_DELETE_CONFIRMATION: return "Delete row?";
+	case APPLICATION_MENU_WORKSPACE_CREATE: return "Create workspace";
+	case APPLICATION_MENU_WORKSPACE_SELECT: return "Select workspace";
+	case APPLICATION_MENU_WORKSPACE_LIST: return "Workspace list";
+	case APPLICATION_MENU_WORKSPACE_DELETE_CONFIRMATION: return "Delete workspace?";
+	case APPLICATION_MENU_POSITION: return "Position";
+	case APPLICATION_MENU_PORTS: return "Port assignment";
+	case APPLICATION_MENU_PORT_DEVICES: return "Port device";
+	case APPLICATION_MENU_PORT_CONNECTIONS: return "Port connection";
+	case APPLICATION_MENU_PORT_DEBUG_CONFIRMATION: return "Debug port confirmation";
+	case APPLICATION_MENU_MEASUREMENTS: return "Measurements";
+	case APPLICATION_MENU_MEASUREMENT_ACTIONS: return "Measurement actions";
+	case APPLICATION_MENU_MEASUREMENT_EDITOR: return "Measurement editor";
+	case APPLICATION_MENU_CALCULATIONS: return "Calculations";
+	case APPLICATION_MENU_LCD_CONTRAST: return "LCD contrast";
+	case APPLICATION_MENU_PLUGIN_FAILURE: return "Plugin failure";
+	case APPLICATION_MENU_CALCULATION_CONFIRMATION: return "Calculation confirmation";
+	default: return "Unknown";
+	}
+}
+
+static enum application_menu application_menu_parent(enum application_menu menu)
+{
+	switch (menu) {
+	case APPLICATION_MENU_MAIN:
+		return APPLICATION_MENU_MAIN;
+	case APPLICATION_MENU_SETTINGS:
+	case APPLICATION_MENU_WORKSPACE:
+	case APPLICATION_MENU_POSITION:
+	case APPLICATION_MENU_MEASUREMENTS:
+	case APPLICATION_MENU_CALCULATIONS:
+		return APPLICATION_MENU_MAIN;
+	case APPLICATION_MENU_WORKSPACE_MANAGEMENT:
+	case APPLICATION_MENU_LCD_CONTRAST:
+	case APPLICATION_MENU_PORTS:
+		return APPLICATION_MENU_SETTINGS;
+	case APPLICATION_MENU_WORKSPACE_VIEW:
+	case APPLICATION_MENU_WORKSPACE_CREATE:
+	case APPLICATION_MENU_WORKSPACE_SELECT:
+	case APPLICATION_MENU_WORKSPACE_LIST:
+		return APPLICATION_MENU_WORKSPACE;
+	case APPLICATION_MENU_WORKSPACE_ROW_ACTIONS:
+		return APPLICATION_MENU_WORKSPACE_VIEW;
+	case APPLICATION_MENU_WORKSPACE_ROW_EDITOR:
+	case APPLICATION_MENU_WORKSPACE_ROW_DELETE_CONFIRMATION:
+		return APPLICATION_MENU_WORKSPACE_ROW_ACTIONS;
+	case APPLICATION_MENU_WORKSPACE_DELETE_CONFIRMATION:
+		return APPLICATION_MENU_WORKSPACE_MANAGEMENT;
+	case APPLICATION_MENU_PORT_DEVICES:
+		return APPLICATION_MENU_PORTS;
+	case APPLICATION_MENU_PORT_CONNECTIONS:
+	case APPLICATION_MENU_PORT_DEBUG_CONFIRMATION:
+		return APPLICATION_MENU_PORT_DEVICES;
+	case APPLICATION_MENU_MEASUREMENT_ACTIONS:
+		return APPLICATION_MENU_MEASUREMENTS;
+	case APPLICATION_MENU_MEASUREMENT_EDITOR:
+		return APPLICATION_MENU_MEASUREMENT_ACTIONS;
+	case APPLICATION_MENU_CALCULATION_CONFIRMATION:
+		return APPLICATION_MENU_CALCULATIONS;
+	case APPLICATION_MENU_PLUGIN_FAILURE:
+		return APPLICATION_MENU_MEASUREMENTS;
+	default:
+		return APPLICATION_MENU_MAIN;
+	}
+}
+
+static void log_application_menu_path(const char *event, uint8_t key)
+{
+	enum application_menu path[8];
+	enum application_menu menu = active_menu;
+	size_t count = 0U;
+	size_t offset = 0U;
+	char path_text[160];
+
+	while (count < ARRAY_SIZE(path)) {
+		path[count++] = menu;
+		if (menu == APPLICATION_MENU_MAIN) {
+			break;
+		}
+		enum application_menu parent = application_menu_parent(menu);
+		if (parent == menu) {
+			break;
+		}
+		menu = parent;
+	}
+	while (count > 0U) {
+		const char *name = application_menu_name(path[--count]);
+		int written = snprintk(path_text + offset,
+			sizeof(path_text) - offset, "%s%s", offset == 0U ? "" : " > ",
+			name);
+
+		if (written < 0 || (size_t)written >= sizeof(path_text) - offset) {
+			break;
+		}
+		offset += (size_t)written;
+	}
+	LOG_INF("UI %s key=0x%02x path=%s selection=%u", event, key,
+		path_text, menu_selection);
+}
 
 #define WORKSPACE_LIST_MAX 16U
 
-static enum application_menu active_menu = APPLICATION_MENU_MAIN;
 static char workspace_input[EF800_WORKSPACE_NAME_MAX + 1U];
 static uint8_t workspace_input_length;
 static char workspace_names[WORKSPACE_LIST_MAX][EF800_WORKSPACE_NAME_MAX + 1U];
@@ -768,16 +881,32 @@ static int reconcile_port_uart_state(void)
 		}
 	}
 	console_port = debug_port;
+	if (IS_ENABLED(CONFIG_EF800_MAIN_FORCE_CONSOLE_FALLBACK)) {
+		console_port = EF800_CONSOLE_FALLBACK_PORT;
+		if (ef800_port_assignment_is_assigned(&port_assignments,
+						     console_port)) {
+			console_port = EF800_CONSOLE_NO_TARGET;
+		}
+	}
 	if (console_port == 0U) {
 		console_port = ef800_port_assignment_is_assigned(&port_assignments,
 			EF800_CONSOLE_FALLBACK_PORT) ? EF800_CONSOLE_NO_TARGET :
 			EF800_CONSOLE_FALLBACK_PORT;
 	}
+	LOG_INF("Console reconciliation desired=%u current=%u debug_port=%u",
+		console_port, ef800_console_get_target(), debug_port);
 	if (console_port == EF800_CONSOLE_NO_TARGET) {
 		ef800_console_clear_target();
 		result = 0;
+	} else if (console_port == ef800_console_get_target()) {
+		/* Main selected the stable fallback before loading persisted ports.
+		 * Don't tear down and reconfigure that same UART during assignment
+		 * reconciliation; it can interrupt the active shell/log transport. */
+		result = 0;
 	} else {
+		LOG_INF("Switching console target to port %u", console_port);
 		result = set_console_for_port(console_port);
+		LOG_INF("Console target switch returned %d", result);
 	}
 	if (result != 0) {
 		ef800_console_clear_target();
@@ -797,16 +926,21 @@ static int reconcile_port_uart_state(void)
 			(void)ef800_console_write((const uint8_t *)diagnostic, (size_t)length);
 		}
 	}
+	LOG_INF("Port routing reconcile begin console_port=%u", console_port);
 	result = ef800_port_uart_registry_init(&port_uart_registry,
 								 port_uart_id_for_console(console_port));
 	if (result != 0) {
+		LOG_ERR("Port UART registry init failed: %d", result);
 		return result;
 	}
+	LOG_INF("Port UART registry initialized; restoring assignments");
 	result = claim_loaded_port_assignments();
 	if (result != 0) {
+		LOG_ERR("Port assignment restore failed: %d", result);
 		return result;
 	}
 	ef800_port_uart_startup_complete(&port_uart_registry);
+	LOG_INF("Port routing reconcile complete");
 	return 0;
 }
 
@@ -928,7 +1062,7 @@ static int claim_loaded_port_assignments(void)
 		if (ef800_plugin_registry_find(&plugin_registry, plugin_id) != NULL &&
 			ef800_plugin_registry_find(&plugin_registry, plugin_id)->info.kind ==
 			EF800_PLUGIN_KIND_MEASUREMENT) {
-			struct ef800_measurement_serial_config config;
+			struct ef800_measurement_serial_config config = {0};
 			const struct ef800_port_uart_route *route =
 				ef800_port_uart_for_connection(port->id, connection);
 			const struct device *device = route == NULL ? NULL :
@@ -941,10 +1075,16 @@ static int claim_loaded_port_assignments(void)
 				continue;
 			}
 			result = ef800_plugin_host_serial_config(plugin_id, NULL, &config);
+			LOG_INF("Port %u plugin %u serial metadata result=%d baud=%u data=%u parity=%u stop=%u flow=%u",
+				port->id, plugin_id, result, config.baudrate,
+				config.data_bits, config.parity, config.stop_bits,
+				config.flow_control);
 			if (result == 0) {
 				result = ef800_measurement_zephyr_init_with_config(
 					&measurement_transports[port->id - 1U], device, &config);
 			}
+			LOG_INF("Port %u measurement transport init result=%d", port->id,
+				result);
 			if (result != 0 && first_error == 0) {
 				first_error = result;
 			} else if (result == 0) {
@@ -1011,6 +1151,41 @@ static const struct device *port_uart_device(
 		return NULL;
 	}
 }
+
+#ifndef CONFIG_BOARD_NATIVE_SIM
+static int refresh_measurement_uart_config(uint8_t port_id, uint32_t plugin_id)
+{
+	const struct ef800_port_uart_route *route;
+	const struct device *device;
+	struct ef800_measurement_serial_config config = {0};
+	int result;
+
+	if (port_id == 0U || port_id > EF800_PORT_COUNT || plugin_id == 0U ||
+		!ef800_port_assignment_is_assigned(&port_assignments, port_id) ||
+		ef800_port_assignment_get_plugin_id(&port_assignments, port_id) != plugin_id) {
+		return -EINVAL;
+	}
+	result = ef800_plugin_host_serial_config(plugin_id, NULL, &config);
+	if (result != 0) {
+		return result;
+	}
+	route = ef800_port_uart_for_connection(port_id,
+		ef800_port_assignment_get_connection(&port_assignments, port_id));
+	device = route == NULL ? NULL : port_uart_device(route->uart_id);
+	if (device == NULL) {
+		return -ENODEV;
+	}
+	LOG_INF("Refreshing measurement UART: port=%u plugin=%u uart=%s baud=%u data=%u parity=%u stop=%u",
+		port_id, plugin_id, route->name, config.baudrate, config.data_bits,
+		config.parity, config.stop_bits);
+	result = ef800_measurement_zephyr_init_with_config(
+		&measurement_transports[port_id - 1U], device, &config);
+	LOG_INF("Measurement UART refresh result: port=%u result=%d",
+		port_id, result);
+	return result;
+}
+
+#endif
 
 static int port_uart_check_ready(uint8_t port_id, uint32_t connection)
 {
@@ -3133,6 +3308,13 @@ static int load_measurement_ports(void)
 {
 	measurement_port_count = 0U;
 	for (uint8_t port_id = 1U; port_id <= EF800_PORT_COUNT; ++port_id) {
+		/* Built-in assignments also store their builder ID in plugin_id. They
+		 * are not measurement packages and must not be reported as unavailable
+		 * external plugins by this menu. */
+		if (ef800_port_assignment_get_builder(&port_assignments, port_id) !=
+			EF800_PORT_BUILDER_NONE) {
+			continue;
+		}
 		uint32_t plugin_id = ef800_port_assignment_get_plugin_id(&port_assignments, port_id);
 
 		if (ef800_plugin_registry_find(&plugin_registry, plugin_id) != NULL &&
@@ -3937,6 +4119,9 @@ static void process_plugin_async_completion(void)
 		display_line(6U, "Plugin operation failed");
 		return;
 	}
+	LOG_INF("Plugin async completion: operation=%u plugin=%u status=%d failure=%u",
+		(unsigned)result->operation, (unsigned)result->plugin_id,
+		result->status, (unsigned)result->failure_class);
 	if (result->recovery_required) {
 		if (result->recovery_status != 0) {
 			LOG_ERR("Plugin recovery could not prove safe state: op=%u status=%d",
@@ -3982,6 +4167,9 @@ static void process_plugin_async_completion(void)
 		}
 		break;
 	case EF800_PLUGIN_ASYNC_SESSION_KEY:
+		LOG_INF("Measurement plugin key completed: plugin=%u status=%d consumed=%u",
+			(unsigned)result->plugin_id, result->status,
+			result->value.key.consumed);
 		if (result->status == 0 && result->value.key.consumed) {
 			const struct ef800_plugin_async_request request = {
 				.operation = EF800_PLUGIN_ASYNC_WORKSPACE_RECORD,
@@ -5114,7 +5302,7 @@ static void activate_menu_entry(void)
 			return;
 		}
 		result = ef800_workspace_snapshot(&workspace, calculation_snapshot,
-			sizeof(calculation_snapshot), &snapshot_length);
+			EF800_PLUGIN_WORKER_MAX_WORKSPACE_SNAPSHOT, &snapshot_length);
 		if (result != 0 || snapshot_length == 0U) {
 			LOG_WRN("Calculation plugin %u not run: Workspace snapshot unavailable (%d, %u)",
 				(unsigned)entry->info.plugin_id, result,
@@ -5154,6 +5342,19 @@ static void activate_menu_entry(void)
 				if (current_code != NULL) {
 					strncpy(context.code, current_code, sizeof(context.code) - 1U);
 				}
+#ifndef CONFIG_BOARD_NATIVE_SIM
+				{
+					int config_result = refresh_measurement_uart_config(
+						selected_measurement_port, plugin_id);
+
+					if (config_result != 0) {
+						LOG_ERR("Port %u plugin %u UART configuration refresh failed: %d",
+							selected_measurement_port, plugin_id, config_result);
+						display_line(6U, "UART configuration failed");
+						return;
+					}
+				}
+#endif
 #if CONFIG_EF800_MAIN_PLUGIN_USER_WORKER
 				struct ef800_plugin_async_request request = {
 					.operation = EF800_PLUGIN_ASYNC_SESSION_OPEN,
@@ -5198,7 +5399,11 @@ static void activate_menu_entry(void)
 				.session = &measurement_plugin_session,
 				.key = '\r',
 			};
-			if (submit_plugin_async(&request) != 0) {
+			int submit_result = submit_plugin_async(&request);
+			LOG_INF("Measurement plugin Enter queued: plugin=%u result=%d",
+				(unsigned)measurement_plugin_session.plugin_id,
+				submit_result);
+			if (submit_result != 0) {
 				display_line(6U, "Plugin action unavailable");
 			}
 #else
@@ -5427,7 +5632,14 @@ static bool handle_application_key(uint8_t key)
 			.session = &measurement_plugin_session,
 			.key = key,
 		};
-		(void)submit_plugin_async(&request);
+		int result = submit_plugin_async(&request);
+		LOG_INF("Measurement plugin key queued: plugin=%u key=0x%02x result=%d",
+			(unsigned)measurement_plugin_session.plugin_id, key, result);
+		if (result == 0) {
+			display_line(6U, "Plugin working...");
+		} else {
+			display_line(6U, "Plugin action unavailable");
+		}
 		return true;
 #else
 		bool consumed = false;
@@ -5489,6 +5701,20 @@ static bool handle_application_key(uint8_t key)
 						++selection;
 					}
 				}
+				menu_selection = (uint8_t)selection;
+				activate_menu_entry();
+				return true;
+			}
+		}
+		/* Plugin entries are displayed with their plugin IDs in brackets; make
+		 * that displayed numeric shortcut usable as well as arrow navigation. */
+		for (size_t selection = 0U;
+		     selection < port_assignment_device_count(); ++selection) {
+			const struct ef800_plugin_registry_entry *plugin =
+				plugin_at_selection(port, selection);
+
+			if (plugin != NULL && plugin->info.plugin_id <= 9U &&
+				key == (uint8_t)('0' + plugin->info.plugin_id)) {
 				menu_selection = (uint8_t)selection;
 				activate_menu_entry();
 				return true;
@@ -6212,6 +6438,93 @@ SHELL_STATIC_SUBCMD_SET_CREATE(mcumgr_commands,
 SHELL_CMD_REGISTER(mcumgr, &mcumgr_commands,
 	"Raw serial filesystem transport", NULL);
 
+#if defined(CONFIG_THREAD_MONITOR) && defined(CONFIG_THREAD_STACK_INFO) && \
+	defined(CONFIG_INIT_STACKS)
+static void report_thread_stack_usage(const struct k_thread *thread,
+					      void *user_data)
+{
+	const struct shell *shell = user_data;
+	size_t unused = 0U;
+	const char *name = k_thread_name_get((k_tid_t)thread);
+	int ret = k_thread_stack_space_get(thread, &unused);
+
+	if (ret != 0) {
+		shell_print(shell, "stack name=%s error=%d size=%u",
+			    name != NULL ? name : "(unnamed)", ret,
+			    (unsigned int)thread->stack_info.size);
+		return;
+	}
+
+	shell_print(shell, "stack name=%s size=%u used=%u unused=%u",
+		    name != NULL ? name : "(unnamed)",
+		    (unsigned int)thread->stack_info.size,
+		    (unsigned int)(thread->stack_info.size - unused),
+		    (unsigned int)unused);
+}
+#endif
+
+static int cmd_memory_stacks(const struct shell *shell, size_t argc, char **argv)
+{
+	ARG_UNUSED(argv);
+	if (argc != 1U) {
+		shell_error(shell, "usage: memory stacks");
+		return -EINVAL;
+	}
+
+#if defined(CONFIG_THREAD_MONITOR) && defined(CONFIG_THREAD_STACK_INFO) && \
+	defined(CONFIG_INIT_STACKS)
+	shell_print(shell, "stack watermark bytes; sample after normal startup/workload");
+	k_thread_foreach_unlocked(report_thread_stack_usage, (void *)shell);
+	return 0;
+#else
+	shell_error(shell, "stack watermark support not configured");
+	return -ENOTSUP;
+#endif
+}
+
+static int cmd_memory_pool(const struct shell *shell, size_t argc, char **argv)
+{
+	uint32_t *probe;
+
+	ARG_UNUSED(argv);
+	if (argc != 1U) {
+		shell_error(shell, "usage: memory pool");
+		return -EINVAL;
+	}
+	if (!ef800_memory_pool_external_ready()) {
+		shell_print(shell,
+			"profile=internal-only external=unavailable internal-malloc=%u",
+			(unsigned int)ef800_memory_pool_internal_capacity());
+		return -ENODEV;
+	}
+	probe = ef800_memory_pool_external_alloc(32U, 32U);
+	if (probe == NULL) {
+		shell_error(shell, "external pool allocation failed");
+		return -ENOMEM;
+	}
+	probe[0] = 0xEF800123U;
+	if (probe[0] != 0xEF800123U) {
+		ef800_memory_pool_external_free(probe);
+		shell_error(shell, "external pool readback failed at %p", probe);
+		return -EIO;
+	}
+	shell_print(shell,
+		    "profile=external-enabled ext=%u used=%u internal-malloc=%u probe=%p size=32 readback=PASS",
+		    (unsigned int)ef800_memory_pool_external_capacity(),
+		    (unsigned int)ef800_memory_pool_external_used(),
+		    (unsigned int)ef800_memory_pool_internal_capacity(), probe);
+	ef800_memory_pool_external_free(probe);
+	return 0;
+}
+
+SHELL_STATIC_SUBCMD_SET_CREATE(memory_commands,
+	SHELL_CMD(stacks, NULL, "Report per-thread stack high-water marks", cmd_memory_stacks),
+	SHELL_CMD(pool, NULL, "Report pool profile and test an external allocation", cmd_memory_pool),
+	SHELL_SUBCMD_SET_END
+);
+
+SHELL_CMD_REGISTER(memory, &memory_commands, "Memory diagnostics", NULL);
+
 static int cmd_battery_soc_table_set(const struct shell *shell, size_t argc,
 	char **argv)
 {
@@ -6851,6 +7164,10 @@ static void process_keyboard_output(void)
 	uint32_t event;
 
 	while (ef800_keyboard_host_get_key(&keyboard_host, &key) == 0) {
+		enum application_menu previous_menu = active_menu;
+		uint8_t previous_selection = menu_selection;
+		bool handled;
+
 #ifdef CONFIG_BOARD_NATIVE_SIM
 		if (virtual_power_off) {
 			continue;
@@ -6861,13 +7178,17 @@ static void process_keyboard_output(void)
 			continue;
 		}
 		LOG_INF("Keyboard key: 0x%02x", key);
+		log_application_menu_path("before", key);
 		if (lcd_ready) {
 			char line[STATUS_LINE_SIZE];
 			snprintk(line, sizeof(line), "Key 0x%02x '%c'", key,
 				(key >= 0x20U && key < 0x7FU) ? key : '.');
 			display_line(7U, line);
 		}
-		(void)handle_application_key(key);
+		handled = handle_application_key(key);
+		if (active_menu != previous_menu || menu_selection != previous_selection) {
+			log_application_menu_path(handled ? "after" : "after-unhandled", key);
+		}
 	}
 	while (ef800_keyboard_host_get_event(&keyboard_host, &event) == 0) {
 		handle_keyboard_event(event);
@@ -6958,6 +7279,28 @@ int main(void)
 	}
 	(void)ef800_shell_init();
 	printk("ef800 main application: entry\r\n");
+	result = ef800_memory_pool_init();
+	if (result != 0) {
+		LOG_WRN("External SRAM validation failed (%d); internal-only profile active",
+			result);
+	} else {
+		LOG_INF("External SRAM validated: %u bytes available for explicit pool use",
+			(unsigned int)ef800_memory_pool_external_capacity());
+	}
+	{
+		char *external_snapshot = ef800_memory_pool_external_alloc(
+			EF800_PLUGIN_WORKER_MAX_WORKSPACE_SNAPSHOT, 32U);
+
+		if (external_snapshot != NULL) {
+			calculation_snapshot = external_snapshot;
+			LOG_INF("Calculation snapshot scratch uses external SRAM (%u bytes at %p)",
+				(unsigned)EF800_PLUGIN_WORKER_MAX_WORKSPACE_SNAPSHOT,
+				calculation_snapshot);
+		} else {
+			LOG_INF("Calculation snapshot scratch uses internal fallback (%u bytes)",
+				(unsigned)sizeof(calculation_snapshot_internal));
+		}
+	}
 
 	(void)ef800_main_foundation_init();
 #ifdef CONFIG_BOARD_NATIVE_SIM
@@ -7070,14 +7413,18 @@ int main(void)
 				}
 			}
 			if (ef800_storage_configuration_is_mounted()) {
+				LOG_INF("Loading persisted port assignments");
 				result = ef800_port_assignment_load_all(&port_assignments);
+				LOG_INF("Persisted port assignment load result=%d", result);
 				if (result != 0) {
 					LOG_WRN("Port assignments unavailable: %d", result);
 				}
 				clear_unsupported_msd_assignment();
 			}
 			if (plugin_discovery_ready) {
+				LOG_INF("Reconciling plugin assignments");
 				result = reconcile_plugin_assignments();
+				LOG_INF("Plugin assignment reconciliation result=%d", result);
 				if (result != 0) {
 					LOG_WRN("Plugin assignment reconciliation incomplete: %d",
 						result);
@@ -7120,7 +7467,9 @@ int main(void)
 					(void)ef800_usb_manager_init(initial_usb);
 				}
 			}
+			LOG_INF("Starting UART/console assignment reconciliation");
 			result = reconcile_port_uart_state();
+			LOG_INF("UART/console assignment reconciliation result=%d", result);
 			if (result != 0) {
 				LOG_WRN("Port routing initialization incomplete: %d", result);
 			}

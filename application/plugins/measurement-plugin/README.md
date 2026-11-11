@@ -6,12 +6,27 @@ logical keyboard handling, measurement state, and bounded display model:
 
 - ELTA3, persisted plugin/builder ID `2`.
 - FTS3XX (Fennel FTS3XX protocol), persisted plugin ID `3`.
+- Calculate position from source, calculation plugin ID `4` (test/demonstration).
+
+The calculation plugin requires no assigned instrument port. It seeds a small
+xorshift dummy-position generator from the active Workspace snapshot and returns
+a valid position row. The application presents the normal calculation result
+confirmation; accepting it appends the row to the Workspace. The generated
+position is deterministic for a given snapshot, which makes the dummy behavior
+repeatable during testing.
 
 The public headers under `include/` contain no Zephyr types. ABI-visible
-structures use fixed-width fields and explicit reserved space. Metadata v3
+structures use fixed-width fields and explicit reserved space. Metadata v4
 declares the execution model, isolation ABI, target, required worker services,
 mailbox size, minimum plugin RAM/worker stack, and MPU alignment. ELTA3 and
-FTS3XX now build as `USER_WORKER` packages and use the bounded worker SDK; they
+FTS3XX now build as `USER_WORKER` packages and use the bounded worker SDK. It
+also declares maximum text, rodata, data, BSS, and plugin-owned shared-buffer
+sizes. The package verifier checks each ELF section against its declaration;
+MainApplication rechecks the loaded section sizes, active arena capacities,
+aligned MPU mapping, aggregate writable RAM, and shared-buffer ceiling before
+admitting the descriptor. The shipped worker packages declare 16 KiB text and
+rodata bounds, 1 KiB each for data and BSS, and 4 KiB for shared buffers, within
+the fixed worker MPU profile. They
 do not receive a host callback or context pointer. Their build/package checks
 do not qualify L496 MPU, fault-recovery, or normal-protocol behavior on target.
 Standalone package and host-test builds use the minimal ABI shim under

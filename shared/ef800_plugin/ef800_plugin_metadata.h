@@ -7,7 +7,7 @@
 #define EF800_PLUGIN_METADATA_UUID_BYTES \
 	0x65u, 0x66u, 0x38u, 0x30u, 0x30u, 0x2du, 0x6du, 0x65u, \
 	0x74u, 0x61u, 0x2du, 0x76u, 0x31u, 0x00u, 0x00u, 0x01u
-#define EF800_PLUGIN_METADATA_VERSION 3u
+#define EF800_PLUGIN_METADATA_VERSION 4u
 
 #define EF800_PLUGIN_EXECUTION_LEGACY_DIRECT 0u
 #define EF800_PLUGIN_EXECUTION_USER_WORKER 1u
@@ -35,10 +35,15 @@ struct ef800_plugin_metadata {
 	uint32_t text_alignment;
 	uint32_t rodata_alignment;
 	uint32_t data_alignment;
+	uint32_t maximum_text_size;
+	uint32_t maximum_rodata_size;
+	uint32_t maximum_data_size;
+	uint32_t maximum_bss_size;
+	uint32_t maximum_shared_buffer_size;
 };
 
 
-_Static_assert(sizeof(struct ef800_plugin_metadata) == 84U,
-	"EF800 plugin metadata v3 size is part of the package ABI");
+_Static_assert(sizeof(struct ef800_plugin_metadata) == 104U,
+	"EF800 plugin metadata v4 size is part of the package ABI");
 
 #endif /* EF800_PLUGIN_METADATA_H */

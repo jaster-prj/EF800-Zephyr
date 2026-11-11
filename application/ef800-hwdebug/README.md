@@ -1,5 +1,13 @@
 # EF800 hardware debug
 
+Direct instrument tests are available as `uart fts3-test uart1|uart3` (9600
+8N1, request `11 0d 0a`) and `uart elta3-test uart1|uart3` (1200 7O2, full
+`S14`/`B`/`Q` measurement exchange). Both capture response lines as raw hex and use physical
+instruments, not the simulator. The separate `uart test port1|port2` command
+is a 115200 8O2 TX/RX loopback test. The current hwdebug image occupies
+`0x08000000`; restore the second-level bootloader only when finished with
+hardware-debug testing.
+
 ## FMC SRAM design inputs
 
 The external SRAM is the schematic-fitted `IS61WV5128FBLL-10TLI`. Its
@@ -53,10 +61,22 @@ Build `ef800-hwdebug`, verify the ST-LINK target is STM32L496xx (device ID
 `0x461`), and program `build/ef800-hwdebug/zephyr/zephyr.bin` at
 `0x08000000`. The image uses UART4 at 115200 8N1 for the command console;
 connect to the board's CP2102 serial port and issue `sram test`. Each run
-checks boundary bytes, four full-range data patterns, a full-range
-address-sensitive pattern, and power-of-two address alias points. A failure
-prints the phase/address/expected/actual value and ends with
-`region NOT declared usable`. Re-run the command to check repeatability.
+checks boundary bytes, four constant full-range patterns, full-range walking
+data bits (and complements), complementary checkerboards, four deterministic
+pseudorandom full-range passes, an address-sensitive pattern, and
+power-of-two address alias points. A failure prints the phase/address/
+expected/actual value and ends with `region NOT declared usable`.
+
+This command is an engineering diagnostic, not a production qualification
+certificate. Even a pass covers only the attached unit, current supply,
+temperature, clock/timing configuration, and one test run. Production release
+requires repeated cold/warm-start runs on representative units across the
+specified voltage and temperature envelope, long-duration testing, validation
+of actual FMC timing and signal integrity, and stress testing with the intended
+concurrent bus/peripheral workload. Record configuration, unit identity,
+environment, run count, duration, and all failures. Do not integrate SRAM into
+production firmware until those qualification results are reviewed and the
+release gate is explicitly closed.
 
 On 2026-11-06, the pristine hwdebug build passed and generated DeviceTree
 showed FMC Bank 1 enabled with the AF12 pins and configured timing; the link
@@ -124,3 +144,23 @@ still read the base tag. Thus the missing supply and default-low GPIO slew
 were real configuration omissions, but correcting them has not yet validated
 the SRAM. The active trial remains HCLK 20 MHz with ADDSET/ADDHLD/DATAST
 15/8/15; the region remains unavailable.
+
+On 2026-11-08, the updated hwdebug image was built and programmed after the
+selected ST-LINK reported device ID `0x461` (STM32L496xx). The expanded test
+passed once on the attached board, including full-range walking-bit,
+checkerboard, and four pseudorandom passes. This is a successful diagnostic
+run, but it does not establish environmental margins or production
+qualification; the external-memory release gate remains closed pending the
+qualification work above.
+
+### 80 MHz verification
+
+The 20 MHz PLL override was removed from the hwdebug overlay. The generated
+configuration reports `CONFIG_SYS_CLOCK_HW_CYCLES_PER_SEC=80000000`, the
+generated PLL settings are HSE 25 MHz with `mul-n=32` and `div-r=2`, and FMC
+timing is ADDSET/ADDHLD/DATAST 1/1/2. On 2026-11-08, the image was flashed at
+`0x08000000` after the selected L496 probe reported device ID `0x461`. UART4
+reported SYSCLK 80 MHz, and `sram test` passed full 512 KiB boundary, data,
+walking-bit, checkerboard, pseudorandom, address, and alias checks. This
+confirms the diagnostic and configured FMC access at the normal 80 MHz clock;
+it does not replace environmental or production qualification.

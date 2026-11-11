@@ -62,6 +62,11 @@ int ef800_plugin_worker_syscall(
             message->status = 0;
         }
         break;
+    case EF800_PLUGIN_WORKER_LOG:
+        assert(message->payload_length != 0u);
+        assert(message->payload_length <= EF800_PLUGIN_WORKER_MAX_LOG_MESSAGE);
+        message->status = 0;
+        break;
     default:
         assert(false);
     }

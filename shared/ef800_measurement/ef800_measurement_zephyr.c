@@ -3,8 +3,67 @@
 #include "ef800_measurement_zephyr.h"
 
 #include <errno.h>
+#include <stm32_ll_rcc.h>
+#include <stm32_ll_usart.h>
+#include <zephyr/devicetree.h>
 #include <zephyr/drivers/uart.h>
 #include <zephyr/kernel.h>
+#include <zephyr/logging/log.h>
+
+LOG_MODULE_REGISTER(ef800_measurement_uart, LOG_LEVEL_INF);
+
+#if !defined(CONFIG_BOARD_NATIVE_SIM) && defined(CONFIG_SOC_SERIES_STM32L4X)
+/* Port 1/2 USARTs can select an independent kernel clock. PCLK is 80 MHz on
+ * EF800 and its 16x divider cannot represent 1200 baud (BRR > 0xffff), while
+ * HSI is 16 MHz and is a good low-baud source. Keep the APB clocks untouched. */
+static int measurement_uart_clock_configure(const struct device *uart,
+	uint32_t baudrate)
+{
+	bool low_baud = baudrate < 9600U;
+	uint32_t wait_us;
+
+	if (low_baud && LL_RCC_HSI_IsReady() == 0U) {
+		LL_RCC_HSI_Enable();
+		for (wait_us = 0U; wait_us < 1000U; ++wait_us) {
+			if (LL_RCC_HSI_IsReady() != 0U) {
+				break;
+			}
+			k_busy_wait(1U);
+		}
+		if (LL_RCC_HSI_IsReady() == 0U) {
+			LOG_ERR("HSI did not become ready for low-baud measurement UART");
+			return -EIO;
+		}
+	}
+
+	if (uart == DEVICE_DT_GET(DT_NODELABEL(usart3))) {
+		LL_USART_Disable(USART3);
+		LL_RCC_SetUSARTClockSource(low_baud ?
+			LL_RCC_USART3_CLKSOURCE_HSI :
+			LL_RCC_USART3_CLKSOURCE_PCLK1);
+		return 1;
+	}
+	if (uart == DEVICE_DT_GET(DT_NODELABEL(usart1))) {
+		LL_USART_Disable(USART1);
+		LL_RCC_SetUSARTClockSource(low_baud ?
+			LL_RCC_USART1_CLKSOURCE_HSI :
+			LL_RCC_USART1_CLKSOURCE_PCLK2);
+		return 2;
+	}
+	return 0;
+}
+
+static void measurement_uart_baudrate_apply(int instance, uint32_t baudrate)
+{
+	uint32_t clock_hz = baudrate < 9600U ? 16000000U : 80000000U;
+	USART_TypeDef *usart = instance == 1 ? USART3 : USART1;
+
+	/* uart_configure() uses the DTS PCLK rate when calculating BRR. Rewrite
+	 * BRR using the selected kernel clock so both sides of the clock switch
+	 * remain in sync. The STM32L4 peripheral is 16x oversampling here. */
+	LL_USART_SetBaudRate(usart, clock_hz, LL_USART_OVERSAMPLING_16, baudrate);
+}
+#endif
 
 static int zephyr_write(void *context, const uint8_t *data, size_t length)
 {
@@ -24,28 +83,46 @@ static void zephyr_uart_callback(const struct device *dev,
 	void *user_data)
 {
 	struct ef800_measurement_zephyr_transport *transport = user_data;
+	uint8_t byte;
 	int sent;
 
-	if (transport == NULL || transport->tx_data == NULL ||
-		uart_irq_update(dev) <= 0 || !uart_irq_tx_ready(dev)) {
+	if (transport == NULL || uart_irq_update(dev) <= 0) {
 		return;
 	}
-	sent = uart_fifo_fill(dev, transport->tx_data + transport->tx_offset,
-		transport->tx_length - transport->tx_offset);
-	if (sent < 0) {
-		transport->tx_status = sent;
-		transport->tx_faulted = true;
-		uart_irq_tx_disable(dev);
-		transport->tx_data = NULL;
-		k_sem_give(&transport->tx_complete);
-		return;
+	if (uart_irq_rx_ready(dev)) {
+		while (uart_fifo_read(dev, &byte, 1U) == 1) {
+			k_spinlock_key_t key = k_spin_lock(&transport->rx_lock);
+			uint16_t next = (uint16_t)((transport->rx_head + 1U) %
+				EF800_MEASUREMENT_RX_BUFFER_SIZE);
+
+			if (next != transport->rx_tail) {
+				transport->rx_buffer[transport->rx_head] = byte;
+				transport->rx_head = next;
+				k_spin_unlock(&transport->rx_lock, key);
+				k_sem_give(&transport->rx_available);
+			} else {
+				k_spin_unlock(&transport->rx_lock, key);
+			}
+		}
 	}
-	transport->tx_offset += (size_t)sent;
-	if (transport->tx_offset == transport->tx_length) {
-		transport->tx_status = 0;
-		uart_irq_tx_disable(dev);
-		transport->tx_data = NULL;
-		k_sem_give(&transport->tx_complete);
+	if (transport->tx_data != NULL && uart_irq_tx_ready(dev)) {
+		sent = uart_fifo_fill(dev, transport->tx_data + transport->tx_offset,
+			transport->tx_length - transport->tx_offset);
+		if (sent < 0) {
+			transport->tx_status = sent;
+			transport->tx_faulted = true;
+			uart_irq_tx_disable(dev);
+			transport->tx_data = NULL;
+			k_sem_give(&transport->tx_complete);
+			return;
+		}
+		transport->tx_offset += (size_t)sent;
+		if (transport->tx_offset == transport->tx_length) {
+			transport->tx_status = 0;
+			uart_irq_tx_disable(dev);
+			transport->tx_data = NULL;
+			k_sem_give(&transport->tx_complete);
+		}
 	}
 }
 
@@ -65,11 +142,6 @@ static int zephyr_write_until(void *context, const uint8_t *data,
 	}
 	if (transport->tx_data != NULL) {
 		return -EBUSY;
-	}
-	ret = uart_irq_callback_user_data_set(transport->uart,
-		zephyr_uart_callback, transport);
-	if (ret != 0) {
-		return ret;
 	}
 	k_sem_reset(&transport->tx_complete);
 	transport->tx_data = data;
@@ -118,21 +190,37 @@ static int zephyr_read_until(void *context, uint8_t *data,
 		return -EINVAL;
 	}
 	if (transport->tx_faulted) {
+		LOG_ERR("measurement UART read rejected: %s TX is faulted",
+			transport->uart->name);
 		return -EIO;
 	}
+	LOG_DBG("measurement UART read begin: %s", transport->uart->name);
 	while (true) {
-		int result = uart_poll_in(transport->uart, data);
+		k_spinlock_key_t key = k_spin_lock(&transport->rx_lock);
+		bool available = transport->rx_tail != transport->rx_head;
 
-		if (result == 0) {
+		if (available) {
+			*data = transport->rx_buffer[transport->rx_tail];
+			transport->rx_tail = (uint16_t)((transport->rx_tail + 1U) %
+				EF800_MEASUREMENT_RX_BUFFER_SIZE);
+		}
+		k_spin_unlock(&transport->rx_lock, key);
+		if (available) {
+			if (transport->uart_config.data_bits == UART_CFG_DATA_BITS_7) {
+				*data &= 0x7fU;
+			}
+			LOG_DBG("measurement UART RX %s byte=0x%02x",
+				transport->uart->name, (unsigned int)*data);
 			return 1;
 		}
-		if (result != -1) {
-			return result;
-		}
-		if ((uint64_t)k_uptime_get() >= deadline_ms) {
+		int64_t remaining = (int64_t)deadline_ms - k_uptime_get();
+		if (remaining <= 0) {
+			LOG_WRN("measurement UART read timeout: %s", transport->uart->name);
 			return 0;
 		}
-		k_msleep(1);
+		if (k_sem_take(&transport->rx_available, K_MSEC(remaining)) != 0) {
+			return 0;
+		}
 	}
 }
 
@@ -152,6 +240,7 @@ int ef800_measurement_zephyr_init_with_config(
 {
 	struct uart_config uart_config;
 	int result;
+	int clock_instance = 0;
 	enum uart_config_parity parity;
 	enum uart_config_data_bits data_bits;
 	enum uart_config_flow_control flow_control;
@@ -214,6 +303,18 @@ int ef800_measurement_zephyr_init_with_config(
 		.data_bits = data_bits,
 		.flow_ctrl = flow_control,
 	};
+#if !defined(CONFIG_BOARD_NATIVE_SIM) && defined(CONFIG_SOC_SERIES_STM32L4X)
+	clock_instance = measurement_uart_clock_configure(uart,
+		measurement_config->baudrate);
+	if (clock_instance < 0) {
+		return clock_instance;
+	}
+	if (clock_instance != 0) {
+		LOG_INF("measurement UART clock selected: %s baud=%u source=%s",
+			uart->name, measurement_config->baudrate,
+			measurement_config->baudrate < 9600U ? "HSI16" : "PCLK");
+	}
+#endif
 	result = uart_configure(uart, &uart_config);
 	#ifdef CONFIG_BOARD_NATIVE_SIM
 	/* native_sim UART emulation provides the byte stream but does not
@@ -226,10 +327,25 @@ int ef800_measurement_zephyr_init_with_config(
 	if (result != 0) {
 		return result;
 	}
+#if !defined(CONFIG_BOARD_NATIVE_SIM) && defined(CONFIG_SOC_SERIES_STM32L4X)
+	if (clock_instance != 0) {
+		measurement_uart_baudrate_apply(clock_instance,
+			measurement_config->baudrate);
+	}
+#endif
 	transport->uart = uart;
 	k_sem_init(&transport->tx_complete, 0, 1);
+	k_sem_init(&transport->rx_available, 0, EF800_MEASUREMENT_RX_BUFFER_SIZE);
+	transport->rx_head = 0U;
+	transport->rx_tail = 0U;
 	transport->tx_faulted = false;
 	transport->uart_config = uart_config;
+	result = uart_irq_callback_user_data_set(uart, zephyr_uart_callback,
+		transport);
+	if (result != 0) {
+		return result;
+	}
+	uart_irq_rx_enable(uart);
 	transport->transport = (struct ef800_measurement_transport){
 		.write = zephyr_write,
 		.read = zephyr_read,

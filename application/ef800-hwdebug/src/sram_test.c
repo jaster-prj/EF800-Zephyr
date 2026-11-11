@@ -92,9 +92,78 @@ static int test_walking_data(void)
 		uint8_t patterns[] = { pattern, (uint8_t)~pattern };
 
 		for (size_t i = 0; i < ARRAY_SIZE(patterns); ++i) {
-			sram[0] = patterns[i];
 			phase_failure_reported = false;
-			failed |= check_byte(0U, patterns[i], "walking-data") != 0;
+			for (uint32_t offset = 0U; offset < SRAM_SIZE; ++offset) {
+				sram[offset] = patterns[i];
+				if ((offset & 0x0fffU) == 0U) {
+					hwdebug_flash_watchdog_feed();
+				}
+			}
+			for (uint32_t offset = 0U; offset < SRAM_SIZE; ++offset) {
+				failed |= check_byte(offset, patterns[i], "walking-data") != 0;
+				if ((offset & 0x0fffU) == 0U) {
+					hwdebug_flash_watchdog_feed();
+				}
+			}
+		}
+	}
+	return failed;
+}
+
+static uint32_t test_prng_next(uint32_t value)
+{
+	/* xorshift32: deterministic, address-independent pseudorandom data. */
+	value ^= value << 13;
+	value ^= value >> 17;
+	value ^= value << 5;
+	return value;
+}
+
+static int test_full_range_patterns(void)
+{
+	static const uint8_t patterns[] = { 0x00U, 0xffU, 0x55U, 0xaaU };
+	int failed = 0;
+
+	/* Complementary checkerboards expose stuck and coupled data/address lines. */
+	for (size_t p = 0; p < ARRAY_SIZE(patterns); ++p) {
+		phase_failure_reported = false;
+		for (uint32_t offset = 0U; offset < SRAM_SIZE; ++offset) {
+			sram[offset] = (offset & 1U) != 0U ? (uint8_t)~patterns[p] : patterns[p];
+			if ((offset & 0x0fffU) == 0U) {
+				hwdebug_flash_watchdog_feed();
+			}
+		}
+		for (uint32_t offset = 0U; offset < SRAM_SIZE; ++offset) {
+			uint8_t expected = (offset & 1U) != 0U ?
+				(uint8_t)~patterns[p] : patterns[p];
+
+			failed |= check_byte(offset, expected, "checkerboard") != 0;
+			if ((offset & 0x0fffU) == 0U) {
+				hwdebug_flash_watchdog_feed();
+			}
+		}
+	}
+
+	/* Repeat with distinct deterministic pseudorandom streams to catch patterns
+	 * that fixed walking/checkerboard tests may not sensitize. */
+	for (uint32_t pass = 0U; pass < 4U; ++pass) {
+		uint32_t state = 0x9e3779b9U ^ (pass * 0x85ebca6bU);
+
+		phase_failure_reported = false;
+		for (uint32_t offset = 0U; offset < SRAM_SIZE; ++offset) {
+			state = test_prng_next(state);
+			sram[offset] = (uint8_t)(state >> 24);
+			if ((offset & 0x0fffU) == 0U) {
+				hwdebug_flash_watchdog_feed();
+			}
+		}
+		state = 0x9e3779b9U ^ (pass * 0x85ebca6bU);
+		for (uint32_t offset = 0U; offset < SRAM_SIZE; ++offset) {
+			state = test_prng_next(state);
+			failed |= check_byte(offset, (uint8_t)(state >> 24), "pseudorandom") != 0;
+			if ((offset & 0x0fffU) == 0U) {
+				hwdebug_flash_watchdog_feed();
+			}
 		}
 	}
 	return failed;
@@ -184,11 +253,12 @@ void hwdebug_sram_test(void)
 	failed |= test_boundaries() != 0;
 	failed |= test_data_patterns() != 0;
 	failed |= test_walking_data() != 0;
+	failed |= test_full_range_patterns() != 0;
 	failed |= test_address_pattern() != 0;
 	failed |= test_address_aliases() != 0;
 	if (failed) {
 		hwdebug_console_puts("sram FAIL: region NOT declared usable\r\n");
 		return;
 	}
-	hwdebug_console_puts("sram PASS: full 512 KiB boundary/data/address/alias checks; hardware validation still required\r\n");
+	hwdebug_console_puts("sram PASS: full 512 KiB boundary/data/walking/checkerboard/pseudorandom/address/alias checks; production qualification still required\r\n");
 }
