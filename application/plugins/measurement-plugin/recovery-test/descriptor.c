@@ -99,5 +99,6 @@ const struct ef800_wire_descriptor pm_plugin_get_descriptor = {
 		2048U,
 		2048U,
 		1024U, 1024U, 1024U,
+		16384U, 16384U, 1024U, 1024U, 4096U,
 	},
 };

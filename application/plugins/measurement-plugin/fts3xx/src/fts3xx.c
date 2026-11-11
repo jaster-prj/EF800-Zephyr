@@ -59,13 +59,36 @@ static int32_t measure(void *instance, struct ef800_measurement_result *result)
 {
     static const uint8_t command[] = {0x11u, '\r', '\n'};
     char response[128];
-    int32_t status;
+	int32_t status;
+	char log_message[160];
 
-    if (instance != &ef800_runtime.public_instance || result == 0) return PM_EINVAL;
-    status = ef800_protocol_write(&ef800_runtime.binding, command, sizeof(command));
-    if (status != PM_OK) return status;
-    status = ef800_protocol_read_line(&ef800_runtime.binding, response, sizeof(response));
-    if (status < 0) return status;
+	if (instance != &ef800_runtime.public_instance || result == 0) return PM_EINVAL;
+	(void)ef800_plugin_worker_log(&ef800_runtime.binding,
+		"FTS3XX: sending measurement request (11 0d 0a)",
+		(uint32_t)strlen("FTS3XX: sending measurement request (11 0d 0a)"));
+	status = ef800_protocol_write(&ef800_runtime.binding, command, sizeof(command));
+	if (status != PM_OK) {
+		(void)snprintf(log_message, sizeof(log_message),
+			"FTS3XX: request write failed status=%ld", (long)status);
+		(void)ef800_plugin_worker_log(&ef800_runtime.binding, log_message,
+			(uint32_t)strlen(log_message));
+		return status;
+	}
+	(void)ef800_plugin_worker_log(&ef800_runtime.binding,
+		"FTS3XX: request sent; waiting for response line",
+		(uint32_t)strlen("FTS3XX: request sent; waiting for response line"));
+	status = ef800_protocol_read_line(&ef800_runtime.binding, response, sizeof(response));
+	if (status < 0) {
+		(void)snprintf(log_message, sizeof(log_message),
+			"FTS3XX: response read failed status=%ld", (long)status);
+		(void)ef800_plugin_worker_log(&ef800_runtime.binding, log_message,
+			(uint32_t)strlen(log_message));
+		return status;
+	}
+	(void)snprintf(log_message, sizeof(log_message),
+		"FTS3XX: received %ld bytes: %.100s", (long)status, response);
+	(void)ef800_plugin_worker_log(&ef800_runtime.binding, log_message,
+		(uint32_t)strlen(log_message));
     result->struct_size = sizeof(*result);
     result->distance_mm = 0;
     result->horizontal_gon_1e4 = 0;
@@ -74,12 +97,21 @@ static int32_t measure(void *instance, struct ef800_measurement_result *result)
     memset(result->reserved, 0, sizeof(result->reserved));
     result->flags = 0u;
     memset(result->reserved_words, 0, sizeof(result->reserved_words));
-    status = ef800_protocol_fts3xx_parse(response, result);
-    if (status == PM_OK) {
-        last_result = *result;
-        has_result = 1u;
-    }
-    return status;
+	status = ef800_protocol_fts3xx_parse(response, result);
+	if (status == PM_OK) {
+		last_result = *result;
+		has_result = 1u;
+		(void)snprintf(log_message, sizeof(log_message),
+			"FTS3XX: parsed distance=%ld mm horizontal=%ld vertical=%ld (gon x10000)",
+			(long)result->distance_mm, (long)result->horizontal_gon_1e4,
+			(long)result->vertical_gon_1e4);
+	} else {
+		(void)snprintf(log_message, sizeof(log_message),
+			"FTS3XX: response parse failed status=%ld", (long)status);
+	}
+	(void)ef800_plugin_worker_log(&ef800_runtime.binding, log_message,
+		(uint32_t)strlen(log_message));
+	return status;
 }
 
 static int append_scaled(char *buffer, uint32_t capacity, uint32_t *offset,
@@ -186,14 +218,20 @@ static int32_t input(void *instance, uint32_t value)
     }
     if (value != EF800_MEASUREMENT_INPUT_ENTER) return PM_ENOTSUP;
     if (state == FENNEL_INSTRUMENT) {
-        state = FENNEL_CODE;
+		int32_t status = measure(instance, &last_result);
+
+		if (status != PM_OK) return status;
+		state = FENNEL_PENDING;
+		selected_action = 0u;
     } else if (state == FENNEL_CODE) {
         state = FENNEL_POINT;
     } else if (state == FENNEL_POINT) {
         state = FENNEL_STAFF;
     } else if (state == FENNEL_STAFF) {
         editing_staff = 0u;
-        if (measure(instance, &last_result) != PM_OK) return PM_EIO;
+        int32_t status = measure(instance, &last_result);
+
+        if (status != PM_OK) return status;
         state = FENNEL_PENDING;
         selected_action = 0u;
     } else if (state == FENNEL_PENDING) {
@@ -214,7 +252,9 @@ static int32_t render(void *instance, struct ef800_measurement_display *display)
     display->selected_action = selected_action;
     display->row_count = 1u;
     if (state == FENNEL_INSTRUMENT) {
-        (void)ef800_measurement_display_text(display->rows[0], sizeof(display->rows[0]), "Measure");
+        (void)ef800_measurement_display_text(display->rows[0], sizeof(display->rows[0]), "Measure now");
+        (void)ef800_measurement_display_text(display->footer,
+			 sizeof(display->footer), "ENTER start measurement");
     } else if (state == FENNEL_CODE) {
         (void)ef800_measurement_display_text(display->rows[0], sizeof(display->rows[0]), "Code");
         strcpy(display->rows[0], "Last Code: ");

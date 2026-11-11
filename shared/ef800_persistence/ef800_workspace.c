@@ -3,12 +3,16 @@
 #include "ef800_workspace.h"
 
 #include <errno.h>
+#include <limits.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 
 #include <zephyr/kernel.h>
+#include <zephyr/logging/log.h>
 #include <zephyr/sys/byteorder.h>
+
+LOG_MODULE_REGISTER(ef800_workspace, LOG_LEVEL_DBG);
 
 static int workspace_transaction_recover(struct ef800_workspace *workspace);
 
@@ -340,6 +344,12 @@ int ef800_workspace_append(struct ef800_workspace *workspace,
 	}
 	ret = ef800_persistence_append(workspace->storage, EF800_PERSISTENCE_DATA,
 			workspace->filename, data, length);
+	if (ret == 0 && data != NULL && length > 0U) {
+		LOG_INF("Workspace %s: appended new line (%u bytes)",
+			workspace->filename, (unsigned int)length);
+		LOG_DBG("Workspace %s new line: %.*s", workspace->filename,
+			(int)MIN(length, (size_t)INT_MAX), (const char *)data);
+	}
 	if (ret == 0 && data != NULL && length > 0U) {
 		char line[EF800_MEASUREMENT_TEXT_MAX + 96U];
 		size_t copy_length = MIN(length, sizeof(line) - 1U);

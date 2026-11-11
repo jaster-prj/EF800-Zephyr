@@ -13,6 +13,7 @@ target_compile_definitions(app PRIVATE
 target_sources(app PRIVATE
 	src/main.c
 	${CMAKE_CURRENT_LIST_DIR}/../../../shared/ef800_battery/ef800_battery_soc.c
+	${CMAKE_CURRENT_LIST_DIR}/../../../shared/ef800_battery/ef800_battery_adc_ring.c
 	${CMAKE_CURRENT_LIST_DIR}/../../../shared/ef800_battery/ef800_battery_soc_gauge.c
 	${CMAKE_CURRENT_LIST_DIR}/../../../shared/ef800_battery/ef800_battery_soc_store.c
 	${CMAKE_CURRENT_LIST_DIR}/../../../shared/ef800_runtime/ef800_runtime_state.c

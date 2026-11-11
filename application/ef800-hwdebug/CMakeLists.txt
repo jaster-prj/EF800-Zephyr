@@ -15,6 +15,8 @@ target_sources(app PRIVATE
 	src/peripheral_tests.c
 	src/keyboard_update.c
 	src/keyboard_i2c_debug.c
+	src/sram_test.c
+	src/sram_power.c
 	${CMAKE_CURRENT_LIST_DIR}/../../shared/ef800_drivers/ef800_mcp23017.c
 	${CMAKE_CURRENT_LIST_DIR}/../../shared/ef800_drivers/ef800_max17043.c
 	${CMAKE_CURRENT_LIST_DIR}/../../shared/ef800_drivers/ef800_t6963.c

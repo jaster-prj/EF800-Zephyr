@@ -1,9 +1,11 @@
 # EF800 isolation spike
 
 The spike has a NUCLEO-F767ZI configuration for early MPU development and an
-EF800 STM32L496 configuration for target-specific validation. The L496 variant
-links to the MainApplication partition at `0x08030000`; it must never be
-programmed at `0x08000000`.
+EF800 STM32L496 configuration for target-specific validation. The EF800 test
+image is linked and programmed at `0x08000000` for direct bring-up. This
+replaces the bootloader image during testing; the bootloader, backup, and main
+images must all be restored after the external-SRAM change's target testing is
+finished. Do not leave this temporary test image installed for normal use.
 
 It exercises:
 
@@ -28,8 +30,9 @@ Run inside the reusable development container. For the EF800 L496 target:
 docker exec -w /workspace EF800_Devcontainer /opt/venv/bin/west build -p always -b ef800 application/application/ef800-isolation-spike -d application/build/ef800-isolation-spike-l496
 ```
 
-The `ef800` board overlay selects `main_partition` at `0x08030000`. The
-NUCLEO-F767ZI build remains available:
+The EF800 board config links the temporary test image at `0x08000000` and
+enables the external-SRAM configuration. The NUCLEO-F767ZI build remains
+available:
 
 ```powershell
 docker exec -w /workspace EF800_Devcontainer /opt/venv/bin/west build -p always -b nucleo_f767zi application/application/ef800-isolation-spike -d application/build/ef800-isolation-spike-f767
@@ -168,6 +171,39 @@ booting normally. Before restoration, a current mode-0 baseline image cleared
 the spike-only backup-register marker and passed `worker user=1 result=0x5a`.
 Rebuild/run mode 0 before repeating the same fault mode if its marker is still
 present.
+
+### EF800 external-SRAM MPU validation
+
+The EF800-specific build enables FMC before accessing the external region and
+places the spike's 1 KiB RX plugin-text section at `0x60000000`. The RO/XN,
+RW/XN, and mailbox partitions are at `0x60001000`, `0x60002000`, and
+`0x60004000`; `0x60003000` is deliberately mapped in physical SRAM but omitted
+from the worker domain. The user stack remains internal. The image checks FMC
+and SRAM device readiness, waits the required power-up interval, and clears
+only its assigned external test partitions before creating the worker domain.
+
+On 2026-11-08, the image was built in the devcontainer and run on the confirmed
+L496 target (probe `066FFF504982494867074032`, device ID `0x461`) at
+`0x08000000`, with the board's 80 MHz clock configuration and FMC 1/1/2
+timings. The baseline now initializes a Zephyr `k_heap` directly over the
+external RW partition, obtains a 32-byte allocation (`0x60002034`), verifies
+privileged read/write, and passes that allocated pointer to the unprivileged
+worker through the external mailbox; the worker writes and reads it through
+the RW MPU partition. The CP2102/UART4 console reported `worker user=1 result=0x5a PASS`.
+MPU fault probes on the same 80 MHz setup produced these observations:
+
+| Spike mode | External-SRAM result |
+|---:|---|
+| 0 | Worker executed from RX text at `0x60000000`, accessed its domain, and completed `worker user=1 result=0x5a PASS`. |
+| 12 | RO write faulted at `0x60001000` (Data Access Violation, reason 19); worker fault was reported and terminated. |
+| 3 | RW/XN execute faulted at `0x60002000` (Instruction Access Violation, reason 20); worker fault was reported and terminated. |
+| 16 | Read of omitted 1 KiB region faulted at `0x60003000` (Data Access Violation, reason 19); worker fault was reported and terminated. |
+
+These observations demonstrate target-side MPU execution/access behavior for
+the tested domain layout. They do not qualify Zephyr thread stacks or DMA
+buffers in external SRAM; those remain unsupported and must stay internal
+unless separately validated. This spike is not MainApplication integration or
+production release approval.
 
 ## WB55 USER_USB CDC lifecycle test (spike only)
 

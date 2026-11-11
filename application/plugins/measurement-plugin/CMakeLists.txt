@@ -47,6 +47,17 @@ target_compile_definitions(fts3xx_host_test PRIVATE
     TEST_CONTROL=0u TEST_HAS_INPUT=0)
 add_test(NAME fts3xx_protocol COMMAND fts3xx_host_test)
 
+add_executable(dummy_calculation_test
+    tests/test_dummy_calculation.c calculation-dummy/random_position.c)
+target_include_directories(dummy_calculation_test PRIVATE ${COMMON_INCLUDES})
+target_compile_features(dummy_calculation_test PRIVATE c_std_11)
+if(MSVC)
+    target_compile_options(dummy_calculation_test PRIVATE /W4)
+else()
+    target_compile_options(dummy_calculation_test PRIVATE -Wall -Wextra -Werror)
+endif()
+add_test(NAME dummy_calculation_workspace_position COMMAND dummy_calculation_test)
+
 add_executable(worker_sdk_test
     tests/test_worker_sdk.c
     ${CMAKE_CURRENT_LIST_DIR}/../../../shared/ef800_plugin/ef800_plugin_worker_sdk.c
@@ -59,6 +70,10 @@ else()
     target_compile_options(worker_sdk_test PRIVATE -Wall -Wextra -Werror)
 endif()
 add_test(NAME worker_sdk_bounded_gateway COMMAND worker_sdk_test)
+
+add_test(NAME plugin_memory_declaration_validation
+    COMMAND ${Python3_EXECUTABLE}
+        ${CMAKE_CURRENT_LIST_DIR}/tools/test_verify_package.py)
 
 if(PM_ARM_TOOLCHAIN_PREFIX)
     set(ARM_CC "${PM_ARM_TOOLCHAIN_PREFIX}-gcc")
@@ -120,6 +135,39 @@ if(PM_ARM_TOOLCHAIN_PREFIX)
 
     add_arm_plugin(elta3_plugin elta3 elta3/src/elta3.c 2 "EF800 ELTA3")
     add_arm_plugin(fts3xx_plugin fts3xx fts3xx/src/fts3xx.c 3 "EF800 FTS3XX")
+
+    set(DUMMY_CALC_IMAGE ${CMAKE_CURRENT_BINARY_DIR}/dummy_random_position.elf)
+    set(DUMMY_CALC_PACKAGE ${CMAKE_CURRENT_BINARY_DIR}/dummy_random_position.pmp)
+    add_custom_command(OUTPUT ${DUMMY_CALC_IMAGE}
+        COMMAND ${ARM_CC} -mcpu=cortex-m4 -mthumb -mfloat-abi=soft -mlong-calls
+            -std=c11 -Os -ffreestanding -fno-builtin -fno-common
+            -ffunction-sections -fdata-sections -fno-jump-tables
+            -Wall -Wextra -Werror
+            -I${CMAKE_CURRENT_LIST_DIR}/include
+            -I${CMAKE_CURRENT_LIST_DIR}/compat
+            -I${CMAKE_CURRENT_LIST_DIR}/../../../shared/ef800_plugin
+            ${CMAKE_CURRENT_LIST_DIR}/calculation-dummy/random_position.c
+            ${CMAKE_CURRENT_LIST_DIR}/calculation-dummy/descriptor.c
+            ${CMAKE_CURRENT_LIST_DIR}/common/freestanding.c
+            -r -nostdlib -nostartfiles -nodefaultlibs
+            -T${CMAKE_CURRENT_BINARY_DIR}/plugin_memory.ld
+            -o ${DUMMY_CALC_IMAGE}
+        DEPENDS calculation-dummy/random_position.c
+            calculation-dummy/descriptor.c
+            common/freestanding.c
+            ${CMAKE_CURRENT_LIST_DIR}/cmake/plugin_memory.ld.in
+            ${CMAKE_CURRENT_LIST_DIR}/cmake/plugin_sections.ld)
+    add_custom_command(OUTPUT ${DUMMY_CALC_PACKAGE}
+        COMMAND ${Python3_EXECUTABLE} ${CMAKE_CURRENT_LIST_DIR}/tools/package_plugin.py
+            --image ${DUMMY_CALC_IMAGE} --output ${DUMMY_CALC_PACKAGE}
+            --plugin-id 4 --name "Calculate position from source"
+            --version ${EF800_PLUGIN_VERSION} --interface calculation
+            --execution-model user-worker --target 1
+            --ram-size 2048 --stack-size 2048
+        COMMAND ${Python3_EXECUTABLE} ${CMAKE_CURRENT_LIST_DIR}/tools/verify_package.py
+            ${DUMMY_CALC_PACKAGE} --plugin-id 4 --interface calculation
+        DEPENDS ${DUMMY_CALC_IMAGE} tools/package_plugin.py tools/verify_package.py)
+    add_custom_target(dummy_random_position_plugin ALL DEPENDS ${DUMMY_CALC_PACKAGE})
 
     if(PM_BUILD_TARGET_RECOVERY_TESTS)
         if(NOT EF800_RECOVERY_TEST_FAULT_MODE MATCHES "^([1-9]|10)$")

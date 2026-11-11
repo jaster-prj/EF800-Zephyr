@@ -17,6 +17,7 @@ void hwdebug_display_interactive(void);
 void hwdebug_display_wr_test(uint32_t count);
 void hwdebug_display_status(void);
 void hwdebug_uart_test(const char *port_name);
+void hwdebug_instrument_uart_test(const char *instrument, const char *uart_name);
 void hwdebug_lpuart_test(void);
 void hwdebug_lpuart_host_test(void);
 void hwdebug_lpuart_bitbang_test(void);

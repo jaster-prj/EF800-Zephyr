@@ -15,7 +15,7 @@ MIN_PLUGIN_RAM_SIZE = 2048
 MIN_WORKER_STACK_SIZE = 2048
 MPU_ALIGNMENT = 1024
 LEGACY_ALIGNMENT = 4
-METADATA_SIZE_V3 = 84
+METADATA_SIZE_V4 = 104
 METADATA_UUID = bytes.fromhex("65663830302d6d6574612d7631000001")
 WORKER_GATEWAY_IMPORT = "ef800_plugin_worker_syscall"
 
@@ -80,6 +80,25 @@ def unsupported_relocations(image: bytes, sections, target: int) -> list[int]:
     return types
 
 
+def validate_memory_bounds(section_map: dict, ram_size: int,
+                           max_text: int, max_rodata: int, max_data: int,
+                           max_bss: int, max_shared: int) -> None:
+    """Reject missing, inconsistent, or over-policy section declarations."""
+    if (max_text <= 0 or max_rodata <= 0 or max_text > 32768 or
+            max_rodata > 32768 or max_data > 4096 or max_bss > 4096 or
+            max_shared > 4096 or max_data + max_bss > ram_size):
+        raise ValueError("invalid or out-of-policy plugin memory declaration")
+    actual = {name: section_map.get(name, (0, 0))[0]
+              for name in (".text", ".rodata", ".data", ".bss")}
+    bounds = {".text": max_text, ".rodata": max_rodata,
+              ".data": max_data, ".bss": max_bss}
+    for name, size in actual.items():
+        if size > bounds[name]:
+            raise ValueError(f"{name} exceeds its declared plugin memory bound")
+    if actual[".data"] + actual[".bss"] > ram_size:
+        raise ValueError("ELF writable sections exceed declared plugin RAM")
+
+
 def verify(path: Path, expected_id: int | None,
            expected_interface: str = "measurement") -> None:
     package = path.read_bytes()
@@ -124,15 +143,17 @@ def verify(path: Path, expected_id: int | None,
         raise ValueError("package and descriptor service counts differ")
 
     metadata_offset, metadata_size = u32(rodata, 80), u32(rodata, 84)
-    if metadata_size != METADATA_SIZE_V3 or metadata_offset + metadata_size > len(rodata):
+    if metadata_size != METADATA_SIZE_V4 or metadata_offset + metadata_size > len(rodata):
         raise ValueError("descriptor has no complete isolation metadata")
     metadata = rodata[metadata_offset:metadata_offset + metadata_size]
-    if metadata[:16] != METADATA_UUID or u16(metadata, 16) != 3 or \
-            u16(metadata, 18) != METADATA_SIZE_V3:
+    if metadata[:16] != METADATA_UUID or u16(metadata, 16) != 4 or \
+            u16(metadata, 18) != METADATA_SIZE_V4:
         raise ValueError("unsupported isolation metadata version")
     model, isolation_abi, metadata_target, services, mailbox_size, ram_size, stack_size, \
         text_align, rodata_align, data_align = struct.unpack_from("<10I", metadata, 44)
     package_ram_size, package_stack_size = u32(package, 64), u32(package, 68)
+    max_text, max_rodata, max_data, max_bss, max_shared = struct.unpack_from(
+        "<5I", metadata, 84)
     if metadata_target != target:
         raise ValueError("metadata target architecture mismatch")
     if model == 0:  # Existing development packages are explicitly not isolated.
@@ -173,11 +194,8 @@ def verify(path: Path, expected_id: int | None,
     for section_name in (".text", ".rodata", ".data", ".bss"):
         if section_name in section_map and section_map[section_name][1] < required_alignment:
             raise ValueError(f"{section_name} alignment is below the package declaration")
-    writable_size = section_map.get(".data", (0, 0))[0] + \
-        section_map.get(".bss", (0, 0))[0]
-    if writable_size > ram_size or section_map.get(".text", (0, 0))[0] > 32768 or \
-            section_map.get(".rodata", (0, 0))[0] > 32768:
-        raise ValueError("ELF sections exceed the declared plugin memory layout")
+    validate_memory_bounds(section_map, ram_size, max_text, max_rodata,
+                           max_data, max_bss, max_shared)
     if package_services != expected_service_uuid or (service_count != 0 and \
             rodata[required_offset:required_offset + 16] != expected_service_uuid):
         raise ValueError("package and descriptor service declaration mismatch")

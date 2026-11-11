@@ -1,0 +1,72 @@
+/* SPDX-License-Identifier: Apache-2.0 */
+
+#include <zephyr/dt-bindings/pinctrl/stm32-pinctrl.h>
+#include <zephyr/dt-bindings/memory-controller/stm32-fmc-nor-psram.h>
+
+&pinctrl {
+	fmc_pd0: fmc_pd0 { pinmux = <STM32_PINMUX('D', 0, AF12)>; slew-rate = "very-high-speed"; };
+	fmc_pd1: fmc_pd1 { pinmux = <STM32_PINMUX('D', 1, AF12)>; slew-rate = "very-high-speed"; };
+	fmc_pd4: fmc_pd4 { pinmux = <STM32_PINMUX('D', 4, AF12)>; slew-rate = "very-high-speed"; };
+	fmc_pd5: fmc_pd5 { pinmux = <STM32_PINMUX('D', 5, AF12)>; slew-rate = "very-high-speed"; };
+	fmc_pd7: fmc_pd7 { pinmux = <STM32_PINMUX('D', 7, AF12)>; slew-rate = "very-high-speed"; };
+	fmc_pd11: fmc_pd11 { pinmux = <STM32_PINMUX('D', 11, AF12)>; slew-rate = "very-high-speed"; };
+	fmc_pd12: fmc_pd12 { pinmux = <STM32_PINMUX('D', 12, AF12)>; slew-rate = "very-high-speed"; };
+	fmc_pd13: fmc_pd13 { pinmux = <STM32_PINMUX('D', 13, AF12)>; slew-rate = "very-high-speed"; };
+	fmc_pd14: fmc_pd14 { pinmux = <STM32_PINMUX('D', 14, AF12)>; slew-rate = "very-high-speed"; };
+	fmc_pd15: fmc_pd15 { pinmux = <STM32_PINMUX('D', 15, AF12)>; slew-rate = "very-high-speed"; };
+	fmc_pf0: fmc_pf0 { pinmux = <STM32_PINMUX('F', 0, AF12)>; slew-rate = "very-high-speed"; };
+	fmc_pf1: fmc_pf1 { pinmux = <STM32_PINMUX('F', 1, AF12)>; slew-rate = "very-high-speed"; };
+	fmc_pf2: fmc_pf2 { pinmux = <STM32_PINMUX('F', 2, AF12)>; slew-rate = "very-high-speed"; };
+	fmc_pf3: fmc_pf3 { pinmux = <STM32_PINMUX('F', 3, AF12)>; slew-rate = "very-high-speed"; };
+	fmc_pf4: fmc_pf4 { pinmux = <STM32_PINMUX('F', 4, AF12)>; slew-rate = "very-high-speed"; };
+	fmc_pf5: fmc_pf5 { pinmux = <STM32_PINMUX('F', 5, AF12)>; slew-rate = "very-high-speed"; };
+	fmc_pf12: fmc_pf12 { pinmux = <STM32_PINMUX('F', 12, AF12)>; slew-rate = "very-high-speed"; };
+	fmc_pf13: fmc_pf13 { pinmux = <STM32_PINMUX('F', 13, AF12)>; slew-rate = "very-high-speed"; };
+	fmc_pf14: fmc_pf14 { pinmux = <STM32_PINMUX('F', 14, AF12)>; slew-rate = "very-high-speed"; };
+	fmc_pf15: fmc_pf15 { pinmux = <STM32_PINMUX('F', 15, AF12)>; slew-rate = "very-high-speed"; };
+	fmc_pg0: fmc_pg0 { pinmux = <STM32_PINMUX('G', 0, AF12)>; slew-rate = "very-high-speed"; };
+	fmc_pg1: fmc_pg1 { pinmux = <STM32_PINMUX('G', 1, AF12)>; slew-rate = "very-high-speed"; };
+	fmc_pg2: fmc_pg2 { pinmux = <STM32_PINMUX('G', 2, AF12)>; slew-rate = "very-high-speed"; };
+	fmc_pg3: fmc_pg3 { pinmux = <STM32_PINMUX('G', 3, AF12)>; slew-rate = "very-high-speed"; };
+	fmc_pg4: fmc_pg4 { pinmux = <STM32_PINMUX('G', 4, AF12)>; slew-rate = "very-high-speed"; };
+	fmc_pg5: fmc_pg5 { pinmux = <STM32_PINMUX('G', 5, AF12)>; slew-rate = "very-high-speed"; };
+	fmc_pe0: fmc_pe0 { pinmux = <STM32_PINMUX('E', 0, AF12)>; slew-rate = "very-high-speed"; };
+	fmc_pe7: fmc_pe7 { pinmux = <STM32_PINMUX('E', 7, AF12)>; slew-rate = "very-high-speed"; };
+	fmc_pe8: fmc_pe8 { pinmux = <STM32_PINMUX('E', 8, AF12)>; slew-rate = "very-high-speed"; };
+	fmc_pe9: fmc_pe9 { pinmux = <STM32_PINMUX('E', 9, AF12)>; slew-rate = "very-high-speed"; };
+	fmc_pe10: fmc_pe10 { pinmux = <STM32_PINMUX('E', 10, AF12)>; };
+};
+
+&fmc {
+	pinctrl-0 = <&fmc_pd0 &fmc_pd1 &fmc_pd4 &fmc_pd5 &fmc_pd7
+		&fmc_pd11 &fmc_pd12 &fmc_pd13 &fmc_pd14 &fmc_pd15
+		&fmc_pf0 &fmc_pf1 &fmc_pf2 &fmc_pf3 &fmc_pf4 &fmc_pf5
+		&fmc_pf12 &fmc_pf13 &fmc_pf14 &fmc_pf15
+		&fmc_pg0 &fmc_pg1 &fmc_pg2 &fmc_pg3 &fmc_pg4 &fmc_pg5
+		&fmc_pe0 &fmc_pe7 &fmc_pe8 &fmc_pe9 &fmc_pe10>;
+	pinctrl-names = "default";
+	status = "okay";
+};
+
+&fmc_sram { status = "okay"; };
+&external_sram { status = "okay"; };
+
+&sram_bank1 {
+	st,control = <STM32_FMC_DATA_ADDRESS_MUX_DISABLE
+		STM32_FMC_MEMORY_TYPE_SRAM
+		STM32_FMC_NORSRAM_MEM_BUS_WIDTH_8
+		STM32_FMC_BURST_ACCESS_MODE_DISABLE
+		STM32_FMC_WAIT_SIGNAL_POLARITY_LOW
+		STM32_FMC_WAIT_TIMING_BEFORE_WS
+		STM32_FMC_WRITE_OPERATION_ENABLE
+		STM32_FMC_WAIT_SIGNAL_DISABLE
+		STM32_FMC_EXTENDED_MODE_DISABLE
+		STM32_FMC_ASYNCHRONOUS_WAIT_DISABLE
+		STM32_FMC_WRITE_BURST_DISABLE
+		STM32_FMC_CONTINUOUS_CLOCK_SYNC_ONLY
+		STM32_FMC_WRITE_FIFO_ENABLE
+		STM32_FMC_PAGE_SIZE_NONE>;
+	/* 80 MHz HCLK: one setup cycle and two data/write cycles. */
+	st,timing = <1 1 2 0 2 0 STM32_FMC_ACCESS_MODE_A>;
+	status = "okay";
+};

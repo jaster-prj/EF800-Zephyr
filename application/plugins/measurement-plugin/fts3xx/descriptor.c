@@ -48,6 +48,7 @@ static const struct ef800_plugin_metadata ef800_metadata = {
 	EF800_PLUGIN_REQUIRED_MPU_ALIGNMENT,
 	EF800_PLUGIN_REQUIRED_MPU_ALIGNMENT,
 	EF800_PLUGIN_REQUIRED_MPU_ALIGNMENT,
+	16384u, 16384u, 1024u, 1024u, 4096u,
 };
 
 __attribute__((section(".rodata.pm_descriptor"), used))

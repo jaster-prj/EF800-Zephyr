@@ -18,6 +18,7 @@
 #include "fuel_gauge.h"
 #include "peripheral_tests.h"
 #include "keyboard_i2c_debug.h"
+#include "sram_test.h"
 
 #define CONSOLE_LINE_SIZE 128U
 #define CONSOLE_RX_QUEUE_SIZE 128U
@@ -51,6 +52,8 @@ static void print_help(void)
 		"  keyboard bootloader probe\r\n"
 		"  display test|interactive|status|wr-test [count]\r\n"
 		"  uart test port1|port2\r\n"
+		"  uart fts3-test uart1|uart3 (9600 8N1)\r\n"
+		"  uart elta3-test uart1|uart3 (1200 7O2)\r\n"
 		"  lpuart test\r\n"
 		"  lpuart host-test\r\n"
 		"  lpuart bitbang-test\r\n"
@@ -58,6 +61,7 @@ static void print_help(void)
 		"  storage format-layout\r\n"
 		"  storage format-volumes\r\n"
 		"  watchdog test\r\n"
+		"  sram test\r\n"
 		"  usb cdc test\r\n"
 		"  next (storage step)\r\n"
 		"  pass|fail|cancel|exit (pending interactive test)\r\n"
@@ -191,7 +195,13 @@ static void handle_command(char *line)
 	if (strcmp(command, "uart") == 0) {
 		subcommand = strtok(NULL, " \t");
 		argument = strtok(NULL, " \t");
-		if (subcommand != NULL && strcmp(subcommand, "test") == 0 &&
+		if (subcommand != NULL &&
+		    (strcmp(subcommand, "fts3-test") == 0 || strcmp(subcommand, "elta3-test") == 0) &&
+		    argument != NULL && strtok(NULL, " \t") == NULL &&
+		    (strcmp(argument, "uart1") == 0 || strcmp(argument, "uart3") == 0)) {
+			hwdebug_instrument_uart_test(strcmp(subcommand, "fts3-test") == 0 ?
+				"fts3xx" : "elta3", argument);
+		} else if (subcommand != NULL && strcmp(subcommand, "test") == 0 &&
 		    argument != NULL && strtok(NULL, " \t") == NULL &&
 		    (strcmp(argument, "port1") == 0 || strcmp(argument, "port2") == 0)) {
 			hwdebug_uart_test(argument);
@@ -255,6 +265,16 @@ static void handle_command(char *line)
 		return;
 	}
 	if (strcmp(command, "help") == 0) { print_help(); return; }
+	if (strcmp(command, "sram") == 0) {
+		subcommand = strtok(NULL, " \t");
+		if (subcommand != NULL && strcmp(subcommand, "test") == 0 &&
+		    strtok(NULL, " \t") == NULL) {
+			hwdebug_sram_test();
+		} else {
+			hwdebug_console_puts("error: usage: sram test\r\n");
+		}
+		return;
+	}
 	if (strcmp(command, "hardware") == 0) {
 		subcommand = strtok(NULL, " \t");
 		argument = strtok(NULL, " \t");

@@ -4,6 +4,7 @@
 # native_sim must consume this list; only platform adapters are target-specific.
 set(EF800_MAIN_COMMON_SOURCES
 	${CMAKE_CURRENT_LIST_DIR}/src/main.c
+	${CMAKE_CURRENT_LIST_DIR}/src/ef800_memory_pool.c
 	${CMAKE_CURRENT_LIST_DIR}/src/keyboard_host.c
 	${CMAKE_CURRENT_LIST_DIR}/src/ef800_plugin_host.c
 	${CMAKE_CURRENT_LIST_DIR}/src/ef800_plugin_syscall.c
@@ -16,6 +17,7 @@ set(EF800_MAIN_COMMON_SOURCES
 	${CMAKE_CURRENT_LIST_DIR}/../../shared/ef800_lcd_contrast/ef800_lcd_contrast_storage.c
 	${CMAKE_CURRENT_LIST_DIR}/../../shared/ef800_runtime/ef800_runtime_state.c
 	${CMAKE_CURRENT_LIST_DIR}/../../shared/ef800_battery/ef800_battery_soc.c
+	${CMAKE_CURRENT_LIST_DIR}/../../shared/ef800_battery/ef800_battery_adc_ring.c
 	${CMAKE_CURRENT_LIST_DIR}/../../shared/ef800_battery/ef800_battery_soc_gauge.c
 	${CMAKE_CURRENT_LIST_DIR}/../../shared/ef800_battery/ef800_battery_soc_store.c
 	${CMAKE_CURRENT_LIST_DIR}/../../shared/ef800_drivers/ef800_mcp23017.c

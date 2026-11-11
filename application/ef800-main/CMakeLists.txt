@@ -14,7 +14,9 @@ set(KCONFIG_ROOT ${CMAKE_CURRENT_LIST_DIR}/Kconfig)
 if(BOARD STREQUAL "native_sim")
 	set(DTC_OVERLAY_FILE ${CMAKE_CURRENT_LIST_DIR}/native_sim.overlay)
 else()
-	set(DTC_OVERLAY_FILE ${CMAKE_CURRENT_LIST_DIR}/app.overlay)
+	set(DTC_OVERLAY_FILE
+		${CMAKE_CURRENT_LIST_DIR}/app.overlay
+		${CMAKE_CURRENT_LIST_DIR}/boards/ef800-sram.overlay)
 endif()
 
 find_package(Zephyr REQUIRED HINTS $ENV{ZEPHYR_BASE})
@@ -26,10 +28,9 @@ if(CONFIG_EF800_MAIN_PLUGIN_RECOVERY_TEST_DIRECTORY)
 	# this dedicated image so it fits the L496 malloc arena.
 	zephyr_compile_definitions(PM_MANAGER_MAX_DISCOVERED=9)
 	elseif(BOARD STREQUAL "ef800")
-	# The physical EF800 build currently supports the two independently
-	# packaged instruments. Keep PluginManager's large fixed discovery table
-	# small enough to leave room in the 16 KiB libc arena for those packages.
-	zephyr_compile_definitions(PM_MANAGER_MAX_DISCOVERED=2)
+	# Keep PluginManager's fixed discovery table bounded while supporting the
+	# two serial instruments and the port-free dummy calculation package.
+	zephyr_compile_definitions(PM_MANAGER_MAX_DISCOVERED=3)
 endif()
 
 include(${CMAKE_CURRENT_LIST_DIR}/ef800-main-sources.cmake)

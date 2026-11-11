@@ -798,8 +798,15 @@ static void watchdog_task(void *arg1, void *arg2, void *arg3)
 	int result;
 	result = ef800_watchdog_start(CONFIG_EF800_MAIN_WATCHDOG_TIMEOUT_MS);
 	if (result != 0) {
-		LOG_ERR("Watchdog start failed: %d", result);
-		return;
+		int inherit_result = ef800_watchdog_inherit();
+
+		if (inherit_result != 0) {
+			LOG_ERR("Watchdog start failed: %d; inherited watchdog adoption failed: %d",
+				result, inherit_result);
+			return;
+		}
+		LOG_WRN("Watchdog start returned %d; adopted bootloader IWDG",
+			result);
 	}
 
 	LOG_INF("Watchdog task active (%d ms timeout)",

@@ -12,7 +12,7 @@ elseif(BOARD STREQUAL "nucleo_wb55rg")
 		${CMAKE_CURRENT_LIST_DIR}/boards/nucleo_wb55rg.overlay)
 elseif(BOARD STREQUAL "ef800")
 	set(DTC_OVERLAY_FILE
-		${CMAKE_CURRENT_LIST_DIR}/../ef800-main/app.overlay
+		${CMAKE_CURRENT_LIST_DIR}/../ef800-hwdebug/app.overlay
 		${CMAKE_CURRENT_LIST_DIR}/boards/ef800.overlay)
 endif()
 
@@ -89,4 +89,9 @@ if(CONFIG_EF800_SPIKE_USB_CDC_TEST)
 	target_sources(app PRIVATE ${PM_DUMMY_PACKAGE_SOURCE})
 endif()
 
-zephyr_linker_sources(RAM_SECTIONS ${CMAKE_CURRENT_LIST_DIR}/plugin-sections.ld)
+if(CONFIG_EF800_SPIKE_EXTERNAL_SRAM)
+	zephyr_linker_sources(RAM_SECTIONS
+		${CMAKE_CURRENT_LIST_DIR}/plugin-sections-external.ld)
+else()
+	zephyr_linker_sources(RAM_SECTIONS ${CMAKE_CURRENT_LIST_DIR}/plugin-sections.ld)
+endif()

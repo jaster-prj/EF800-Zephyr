@@ -1,5 +1,7 @@
 /* SPDX-License-Identifier: Apache-2.0 */
 #include <zephyr/kernel.h>
+#include <zephyr/device.h>
+#include <zephyr/devicetree.h>
 #include <zephyr/app_memory/mem_domain.h>
 #include <zephyr/arch/exception.h>
 #include <zephyr/fatal.h>
@@ -63,9 +65,21 @@ extern uint8_t __plugin_text_load_start[];
 #endif
 
 /* Power-of-two regions make the ARMv7-M MPU layout explicit and measurable. */
+#if CONFIG_EF800_SPIKE_EXTERNAL_SRAM
+#define EF800_EXT_SRAM_BASE 0x60000000U
+static uint8_t *const plugin_ro = (uint8_t *)(EF800_EXT_SRAM_BASE + 0x1000U);
+static uint8_t *const plugin_rw = (uint8_t *)(EF800_EXT_SRAM_BASE + 0x2000U);
+static uint8_t *const plugin_unmapped = (uint8_t *)(EF800_EXT_SRAM_BASE + 0x3000U);
+static struct k_heap external_plugin_heap;
+static void *plugin_rw_allocation;
+#define SPIKE_REGION_SIZEOF(array) SPIKE_REGION_SIZE
+#else
 static uint8_t plugin_ro[SPIKE_REGION_SIZE] __aligned(SPIKE_REGION_SIZE);
 static uint8_t plugin_rw[SPIKE_REGION_SIZE] __aligned(SPIKE_REGION_SIZE);
 static uint8_t plugin_unmapped[SPIKE_REGION_SIZE] __aligned(SPIKE_REGION_SIZE);
+static void *plugin_rw_allocation = plugin_rw;
+#define SPIKE_REGION_SIZEOF(array) sizeof(array)
+#endif
 #if CONFIG_EF800_SPIKE_FAULT_MODE == SPIKE_FAULT_USB_CDC_TEST
 static uint8_t plugin_loaded_text[SPIKE_REGION_SIZE] __aligned(SPIKE_REGION_SIZE)
 	__attribute__((section(".plugin_text.pm_image")));
@@ -85,7 +99,11 @@ struct plugin_mailbox_data {
 	volatile uint8_t values[SPIKE_REGION_SIZE - SPIKE_MAILBOX_FIXED_SIZE];
 } __aligned(SPIKE_REGION_SIZE);
 BUILD_ASSERT(sizeof(struct plugin_mailbox_data) == SPIKE_REGION_SIZE);
+#if CONFIG_EF800_SPIKE_EXTERNAL_SRAM
+#define plugin_mailbox (*(struct plugin_mailbox_data *)(EF800_EXT_SRAM_BASE + 0x4000U))
+#else
 static struct plugin_mailbox_data plugin_mailbox __aligned(SPIKE_REGION_SIZE);
+#endif
 
 static struct k_mem_domain plugin_domain;
 static struct k_thread plugin_thread;
@@ -156,8 +174,16 @@ static bool fatal_reboot_marker_matches_mode(void)
 	return false;
 }
 
-K_MEM_PARTITION_DEFINE(plugin_ro_partition, plugin_ro, sizeof(plugin_ro),
+#if CONFIG_EF800_SPIKE_EXTERNAL_SRAM
+static struct k_mem_partition plugin_ro_partition = {
+	.start = (uintptr_t)plugin_ro,
+	.size = SPIKE_REGION_SIZE,
+	.attr = K_MEM_PARTITION_P_RO_U_RO,
+};
+#else
+K_MEM_PARTITION_DEFINE(plugin_ro_partition, plugin_ro, SPIKE_REGION_SIZEOF(plugin_ro),
 	K_MEM_PARTITION_P_RO_U_RO);
+#endif
 static struct k_mem_partition plugin_text_partition = {
 #if CONFIG_EF800_SPIKE_FAULT_MODE == SPIKE_FAULT_USB_CDC_TEST
 	.start = (uintptr_t)plugin_loaded_text,
@@ -167,10 +193,26 @@ static struct k_mem_partition plugin_text_partition = {
 	.size = SPIKE_REGION_SIZE,
 	.attr = K_MEM_PARTITION_P_RX_U_RX,
 };
-K_MEM_PARTITION_DEFINE(plugin_rw_partition, plugin_rw, sizeof(plugin_rw),
+#if CONFIG_EF800_SPIKE_EXTERNAL_SRAM
+static struct k_mem_partition plugin_rw_partition = {
+	.start = (uintptr_t)plugin_rw,
+	.size = SPIKE_REGION_SIZE,
+	.attr = K_MEM_PARTITION_P_RW_U_RW,
+};
+#else
+K_MEM_PARTITION_DEFINE(plugin_rw_partition, plugin_rw, SPIKE_REGION_SIZEOF(plugin_rw),
 	K_MEM_PARTITION_P_RW_U_RW);
+#endif
+#if CONFIG_EF800_SPIKE_EXTERNAL_SRAM
+static struct k_mem_partition plugin_mailbox_partition = {
+	.start = (uintptr_t)&plugin_mailbox,
+	.size = sizeof(plugin_mailbox),
+	.attr = K_MEM_PARTITION_P_RW_U_RW,
+};
+#else
 K_MEM_PARTITION_DEFINE(plugin_mailbox_partition, &plugin_mailbox,
 	sizeof(plugin_mailbox), K_MEM_PARTITION_P_RW_U_RW);
+#endif
 
 #if defined(CONFIG_BOARD_EF800)
 /* USART1 is an assignable EF800 measurement-port route. Keep the L496 spike
@@ -239,7 +281,7 @@ static bool is_expected_fault_pc(uint32_t stacked_pc)
 
 #if CONFIG_EF800_SPIKE_FAULT_MODE == SPIKE_FAULT_EXECUTE_XN
 	start = (uintptr_t)plugin_rw;
-	end = start + sizeof(plugin_rw);
+	end = start + SPIKE_REGION_SIZEOF(plugin_rw);
 #elif CONFIG_EF800_SPIKE_FAULT_MODE == SPIKE_FAULT_MAILBOX_EXECUTE
 	start = (uintptr_t)&plugin_mailbox;
 	end = start + sizeof(plugin_mailbox);
@@ -376,8 +418,13 @@ static void plugin_worker_fault(void)
 #if CONFIG_EF800_SPIKE_FAULT_MODE == SPIKE_FAULT_NONE
 static void plugin_worker_step(void)
 {
-	plugin_rw[0] = 0x5aU;
-	plugin_mailbox.values[0] = plugin_rw[0];
+#if CONFIG_EF800_SPIKE_EXTERNAL_SRAM
+	uint8_t *allocation = (uint8_t *)(uintptr_t)plugin_mailbox.lifecycle_entry;
+#else
+	uint8_t *allocation = plugin_rw_allocation;
+#endif
+	allocation[0] = 0x5aU;
+	plugin_mailbox.values[0] = allocation[0];
 	plugin_mailbox.values[1] = 1U;
 	plugin_mailbox.values[2] = 0xa5U;
 }
@@ -794,9 +841,9 @@ static int start_plugin(void)
 	memset(&plugin_mailbox, 0, sizeof(plugin_mailbox));
 	k_sem_reset(&plugin_fault_sem);
 	ret = spike_pm_dummy_plugin_load(plugin_loaded_text,
-					 sizeof(plugin_loaded_text), plugin_ro,
-					 sizeof(plugin_ro), plugin_rw,
-					 sizeof(plugin_rw), &protected_host_word);
+						 sizeof(plugin_loaded_text), plugin_ro,
+						 SPIKE_REGION_SIZEOF(plugin_ro), plugin_rw,
+						 SPIKE_REGION_SIZEOF(plugin_rw), &protected_host_word);
 	if (ret != PM_OK) {
 		return ret;
 	}
@@ -1072,6 +1119,10 @@ static int run_usb_cdc_console(void)
 
 int main(void)
 {
+#if CONFIG_EF800_SPIKE_EXTERNAL_SRAM
+	const struct device *fmc = DEVICE_DT_GET(DT_NODELABEL(fmc));
+	const struct device *sram_dev = DEVICE_DT_GET(DT_NODELABEL(fmc_sram));
+#endif
 #if CONFIG_EF800_SPIKE_FAULT_MODE != SPIKE_FAULT_USB_CDC_TEST
 	k_tid_t worker;
 	int ret;
@@ -1087,6 +1138,39 @@ int main(void)
 		}
 	}
 
+#if CONFIG_EF800_SPIKE_EXTERNAL_SRAM
+	if (!device_is_ready(fmc) || !device_is_ready(sram_dev)) {
+		printk("external SRAM unavailable: fmc=%u sram=%u\n",
+			(unsigned int)device_is_ready(fmc),
+			(unsigned int)device_is_ready(sram_dev));
+		return -ENODEV;
+	}
+	/* SRAM requires at least 150 us after power-up before first access. */
+	k_sleep(K_USEC(150));
+	memset(plugin_ro, 0, SPIKE_REGION_SIZE);
+	memset(plugin_rw, 0, SPIKE_REGION_SIZE);
+	memset(plugin_unmapped, 0, SPIKE_REGION_SIZE);
+	memset(&plugin_mailbox, 0, sizeof(plugin_mailbox));
+	k_heap_init(&external_plugin_heap, plugin_rw, SPIKE_REGION_SIZE);
+	plugin_rw_allocation = k_heap_alloc(&external_plugin_heap, 32U,
+						    K_NO_WAIT);
+	if (plugin_rw_allocation == NULL) {
+		printk("external SRAM heap allocation failed\n");
+		return -ENOMEM;
+	}
+	((uint8_t *)plugin_rw_allocation)[0] = 0x11U;
+	if (((uint8_t *)plugin_rw_allocation)[0] != 0x11U) {
+		printk("external SRAM heap allocation readback failed\n");
+		return -EIO;
+	}
+	plugin_mailbox.lifecycle_entry = (uintptr_t)plugin_rw_allocation;
+	printk("external SRAM partitions initialized at %p..%p\n",
+		(void *)EF800_EXT_SRAM_BASE,
+		(void *)(EF800_EXT_SRAM_BASE + 0x5000U));
+	printk("external Zephyr heap allocation=%p size=32 readback=0x11\n",
+		plugin_rw_allocation);
+#endif
+
 	printk("EF800 isolation spike\n");
 	aux_uart_write("EF800 isolation auxiliary UART ready\r\n");
 	report_spi_flash();
@@ -1101,23 +1185,23 @@ int main(void)
 #if CONFIG_EF800_SPIKE_FAULT_MODE == SPIKE_FAULT_USB_CDC_TEST
 	printk("pm_text=%p/%u ro=%p/%u rw=%p/%u mailbox=%p/%u stack=%p/%u\n",
 		plugin_loaded_text, (unsigned int)sizeof(plugin_loaded_text),
-		plugin_ro, (unsigned int)sizeof(plugin_ro), plugin_rw,
-		(unsigned int)sizeof(plugin_rw), &plugin_mailbox,
+		plugin_ro, (unsigned int)SPIKE_REGION_SIZEOF(plugin_ro), plugin_rw,
+		(unsigned int)SPIKE_REGION_SIZEOF(plugin_rw), &plugin_mailbox,
 		(unsigned int)sizeof(plugin_mailbox), plugin_stack,
 		(unsigned int)K_THREAD_STACK_SIZEOF(plugin_stack));
 #else
 #if CONFIG_EF800_SPIKE_FAULT_MODE == SPIKE_FAULT_USB_CDC_TEST
 	printk("pm_text=%p/%u ro=%p/%u rw=%p/%u mailbox=%p/%u stack=%p/%u\n",
 		plugin_loaded_text, (unsigned int)sizeof(plugin_loaded_text),
-		plugin_ro, (unsigned int)sizeof(plugin_ro), plugin_rw,
-		(unsigned int)sizeof(plugin_rw), &plugin_mailbox,
+		plugin_ro, (unsigned int)SPIKE_REGION_SIZEOF(plugin_ro), plugin_rw,
+		(unsigned int)SPIKE_REGION_SIZEOF(plugin_rw), &plugin_mailbox,
 		(unsigned int)sizeof(plugin_mailbox), plugin_stack,
 		(unsigned int)K_THREAD_STACK_SIZEOF(plugin_stack));
 #else
 	printk("text=%p/%u ro=%p/%u rw=%p/%u mailbox=%p/%u stack=%p/%u\n",
 		__plugin_text_start, (unsigned int)SPIKE_REGION_SIZE,
-		plugin_ro, (unsigned int)sizeof(plugin_ro), plugin_rw,
-		(unsigned int)sizeof(plugin_rw), &plugin_mailbox,
+		plugin_ro, (unsigned int)SPIKE_REGION_SIZEOF(plugin_ro), plugin_rw,
+		(unsigned int)SPIKE_REGION_SIZEOF(plugin_rw), &plugin_mailbox,
 		(unsigned int)sizeof(plugin_mailbox), plugin_stack,
 		(unsigned int)K_THREAD_STACK_SIZEOF(plugin_stack));
 #endif
@@ -1175,7 +1259,7 @@ int main(void)
 #endif
 #if CONFIG_EF800_SPIKE_FAULT_MODE == SPIKE_FAULT_UNMAPPED_PLUGIN_READ
 	printk("unmapped plugin-sized probe=%p/%u\n", plugin_unmapped,
-		(unsigned int)sizeof(plugin_unmapped));
+		(unsigned int)SPIKE_REGION_SIZEOF(plugin_unmapped));
 #endif
 #if CONFIG_EF800_SPIKE_FAULT_MODE != SPIKE_FAULT_NONE
 	plugin_fault_expected = true;

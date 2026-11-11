@@ -12,6 +12,8 @@
 #include <zephyr/drivers/flash.h>
 #include <zephyr/drivers/gpio.h>
 #include <zephyr/drivers/uart.h>
+#include <stm32_ll_rcc.h>
+#include <stm32_ll_usart.h>
 #include <zephyr/kernel.h>
 #include <zephyr/fs/fs.h>
 #include <zephyr/storage/disk_access.h>
@@ -254,13 +256,45 @@ static int keyboard_wait_initialized(const struct device *uart,
 }
 static const struct device *uart_for_name(const char *name)
 {
-	if (name != NULL && strcmp(name, "port1") == 0) {
+	if (name != NULL && (strcmp(name, "port1") == 0 || strcmp(name, "uart3") == 0)) {
 		return DEVICE_DT_GET(DT_NODELABEL(usart3));
 	}
-	if (name != NULL && strcmp(name, "port2") == 0) {
+	if (name != NULL && (strcmp(name, "port2") == 0 || strcmp(name, "uart1") == 0)) {
 		return DEVICE_DT_GET(DT_NODELABEL(usart1));
 	}
 	return NULL;
+}
+
+static int configure_instrument_uart_clock(const char *uart_name, uint32_t baudrate)
+{
+	bool low_baud = baudrate < 9600U;
+	USART_TypeDef *instance;
+	uint32_t wait_us;
+
+	if (strcmp(uart_name, "uart3") == 0) {
+		instance = USART3;
+	} else if (strcmp(uart_name, "uart1") == 0) {
+		instance = USART1;
+	} else {
+		return -EINVAL;
+	}
+	if (low_baud && LL_RCC_HSI_IsReady() == 0U) {
+		LL_RCC_HSI_Enable();
+		for (wait_us = 0U; wait_us < 1000U; ++wait_us) {
+			if (LL_RCC_HSI_IsReady() != 0U) break;
+			k_busy_wait(1U);
+		}
+		if (LL_RCC_HSI_IsReady() == 0U) return -EIO;
+	}
+	LL_USART_Disable(instance);
+	if (instance == USART3) {
+		LL_RCC_SetUSARTClockSource(low_baud ? LL_RCC_USART3_CLKSOURCE_HSI :
+			LL_RCC_USART3_CLKSOURCE_PCLK1);
+	} else {
+		LL_RCC_SetUSARTClockSource(low_baud ? LL_RCC_USART1_CLKSOURCE_HSI :
+			LL_RCC_USART1_CLKSOURCE_PCLK2);
+	}
+	return 0;
 }
 
 static int configure_uart(const struct device *uart)
@@ -1674,6 +1708,142 @@ void hwdebug_uart_test(const char *port_name)
 	hwdebug_test_pass();
 	hwdebug_console_puts("UART test uses 115200 8O2. Connect the PC RS232 adapter\r\n"
 		"through the approved level converter and connect TX to RX for loopback.\r\n");
+}
+
+void hwdebug_instrument_uart_test(const char *instrument, const char *uart_name)
+{
+	static const uint8_t fts3xx_request[] = {0x11U, '\r', '\n'};
+	static const uint8_t elta3_request[] = {'S', '1', '4', '\r', '\n'};
+	static const uint8_t elta3_data_request[] = {'B', '\r', '\n'};
+	static const uint8_t elta3_quit_request[] = {'Q', '\r', '\n'};
+	const uint8_t *request;
+	size_t request_length;
+	struct uart_config config = {
+		.flow_ctrl = UART_CFG_FLOW_CTRL_NONE,
+	};
+	const bool is_fts3xx = strcmp(instrument, "fts3xx") == 0;
+	uint8_t response[128];
+	size_t length = 0U;
+	uint64_t deadline;
+	int ret;
+
+	config.baudrate = is_fts3xx ? 9600U : 1200U;
+	config.parity = is_fts3xx ? UART_CFG_PARITY_NONE : UART_CFG_PARITY_ODD;
+	config.stop_bits = is_fts3xx ? UART_CFG_STOP_BITS_1 : UART_CFG_STOP_BITS_2;
+	config.data_bits = is_fts3xx ? UART_CFG_DATA_BITS_8 : UART_CFG_DATA_BITS_7;
+	request = is_fts3xx ? fts3xx_request : elta3_request;
+	request_length = is_fts3xx ? sizeof(fts3xx_request) : sizeof(elta3_request);
+	hwdebug_test_begin(is_fts3xx ? "fts3xx-direct-uart-rx" : "elta3-direct-uart-rx");
+	hwdebug_console_printf("UART=%s instrument=%s baud=%u data=%u parity=%s stop=%u\r\n",
+		uart_name, instrument, (unsigned int)config.baudrate,
+		is_fts3xx ? 8U : 7U,
+		is_fts3xx ? "none" : "odd", is_fts3xx ? 1U : 2U);
+	const struct device *const uart = uart_for_name(uart_name);
+	if (uart == NULL || !device_is_ready(uart)) {
+		hwdebug_test_fail("selected USART is not ready", -ENODEV);
+		hwdebug_test_pass();
+		return;
+	}
+	ret = configure_instrument_uart_clock(uart_name, config.baudrate);
+	if (ret != 0) {
+		hwdebug_test_fail("selected USART clock setup failed", ret);
+		hwdebug_test_pass();
+		return;
+	}
+	ret = uart_configure(uart, &config);
+	if (ret != 0) {
+		hwdebug_test_fail("selected USART configuration failed", ret);
+		hwdebug_test_pass();
+		return;
+	}
+	/* uart_configure() calculated BRR from the DTS PCLK rate. Match the
+	 * explicit USART kernel clock just as MainApplication does. */
+	LL_USART_SetBaudRate(strcmp(uart_name, "uart3") == 0 ? USART3 : USART1,
+		config.baudrate < 9600U ? 16000000U : 80000000U,
+		LL_USART_OVERSAMPLING_16, config.baudrate);
+	LL_USART_Enable(strcmp(uart_name, "uart3") == 0 ? USART3 : USART1);
+	USART_TypeDef *const usart = strcmp(uart_name, "uart3") == 0 ? USART3 : USART1;
+	hwdebug_console_printf("USART regs: CCIPR=0x%08x BRR=0x%04x CR1=0x%08x CR2=0x%08x\r\n",
+		(unsigned int)RCC->CCIPR, (unsigned int)usart->BRR,
+		(unsigned int)usart->CR1, (unsigned int)usart->CR2);
+	while (uart_poll_in(uart, &response[0]) == 0) {
+	}
+	for (size_t index = 0U; index < request_length; ++index) {
+		uart_poll_out(uart, request[index]);
+	}
+	deadline = k_uptime_get() + 3000U;
+	while (k_uptime_get() < deadline && length < sizeof(response)) {
+		uint8_t byte;
+
+		if (uart_poll_in(uart, &byte) == 0) {
+			if (!is_fts3xx) byte &= 0x7fU;
+			response[length++] = byte;
+			if (byte == '\n') break;
+		} else {
+			k_sleep(K_MSEC(1));
+		}
+	}
+	if (length == 0U || response[length - 1U] != '\n') {
+		hwdebug_console_printf("%s response timeout/unterminated: bytes=%u\r\n", instrument,
+			(unsigned int)length);
+		if (length != 0U) {
+			hwdebug_console_puts("partial RX:");
+			for (size_t index = 0U; index < length; ++index) {
+				hwdebug_console_printf(" %02x", response[index]);
+			}
+			hwdebug_console_puts("\r\n");
+		}
+		hwdebug_test_fail("no complete instrument response line", -ETIMEDOUT);
+		hwdebug_test_pass();
+		return;
+	}
+	hwdebug_console_printf("%s RX (%u bytes):", instrument, (unsigned int)length);
+	for (size_t index = 0U; index < length; ++index) {
+		hwdebug_console_printf(" %02x", response[index]);
+	}
+	hwdebug_console_puts("\r\n");
+	if (!is_fts3xx) {
+		static const uint8_t acknowledge[] = {'A', '\r', '\n'};
+
+		if (length != sizeof(acknowledge) ||
+			memcmp(response, acknowledge, sizeof(acknowledge)) != 0) {
+			hwdebug_test_fail("ELTA3 S14 acknowledgement mismatch", -EPROTO);
+			hwdebug_test_pass();
+			return;
+		}
+		for (size_t index = 0U; index < sizeof(elta3_data_request); ++index) {
+			uart_poll_out(uart, elta3_data_request[index]);
+		}
+		length = 0U;
+		deadline = k_uptime_get() + 3000U;
+		while (k_uptime_get() < deadline && length < sizeof(response)) {
+			uint8_t byte;
+
+			if (uart_poll_in(uart, &byte) == 0) {
+				byte &= 0x7fU;
+				response[length++] = byte;
+				if (byte == '\n') break;
+			} else {
+				k_sleep(K_MSEC(1));
+			}
+		}
+		for (size_t index = 0U; index < sizeof(elta3_quit_request); ++index) {
+			uart_poll_out(uart, elta3_quit_request[index]);
+		}
+		if (length == 0U || response[length - 1U] != '\n') {
+			hwdebug_console_printf("ELTA3 B response timeout: bytes=%u\r\n",
+				(unsigned int)length);
+			hwdebug_test_fail("no complete ELTA3 data response line", -ETIMEDOUT);
+			hwdebug_test_pass();
+			return;
+		}
+		hwdebug_console_printf("ELTA3 data RX (%u bytes):", (unsigned int)length);
+		for (size_t index = 0U; index < length; ++index) {
+			hwdebug_console_printf(" %02x", response[index]);
+		}
+		hwdebug_console_puts("\r\n");
+	}
+	hwdebug_test_pass();
 }
 
 void hwdebug_storage_test(void)

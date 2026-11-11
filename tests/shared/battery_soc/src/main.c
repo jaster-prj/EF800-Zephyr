@@ -10,6 +10,7 @@
 #include <zephyr/ztest.h>
 
 #include "ef800_battery_soc.h"
+#include "ef800_battery_adc_ring.h"
 #include "ef800_battery_soc_gauge.h"
 #include "ef800_battery_soc_store.h"
 #include "ef800_max17043.h"
@@ -58,6 +59,26 @@ static struct ef800_battery_soc_table sample_table(void)
 
 static const struct adc_dt_spec test_battery_adc =
 	ADC_DT_SPEC_GET_BY_NAME(DT_PATH(zephyr_user), battery);
+
+ZTEST(battery_soc_adc, test_adc_ring_warmup_averages_and_wraps)
+{
+	struct ef800_battery_adc_ring ring = {0};
+	uint16_t average;
+
+	zassert_ok(ef800_battery_adc_ring_push(&ring, 1000U, &average), NULL);
+	zassert_equal(average, 1000U, "warm-up should use available samples");
+	zassert_ok(ef800_battery_adc_ring_push(&ring, 1201U, &average), NULL);
+	zassert_equal(average, 1101U, "mean should round to nearest millivolt");
+
+	for (uint16_t sample = 2000U; sample < 2000U +
+		EF800_BATTERY_ADC_RING_CAPACITY - 2U; ++sample) {
+		zassert_ok(ef800_battery_adc_ring_push(&ring, sample, &average), NULL);
+	}
+	zassert_equal(ring.count, EF800_BATTERY_ADC_RING_CAPACITY, NULL);
+	zassert_ok(ef800_battery_adc_ring_push(&ring, 3000U, &average), NULL);
+	zassert_equal(ring.count, EF800_BATTERY_ADC_RING_CAPACITY, NULL);
+	zassert_equal(average, 2027U, "full ring should discard oldest sample");
+}
 
 ZTEST(battery_soc_table, test_hex_encode_decode_round_trip)
 {

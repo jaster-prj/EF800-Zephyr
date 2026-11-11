@@ -33,6 +33,24 @@ config EF800_MAIN_PLUGIN_USER_WORKER
 	  qualification or package-authenticity verification; those gates remain
 	  separate.
 
+config EF800_MAIN_SRAM_TEST_FAIL
+	bool "Force external SRAM validation failure for fallback testing"
+	default n
+	depends on BOARD_EF800
+	help
+	  Test-only fault injection. Forces the startup validator to reject external
+	  SRAM so the internal-only startup path can be exercised on target. Never
+	  enable in a product image.
+
+config EF800_MAIN_FORCE_CONSOLE_FALLBACK
+	bool "Force fallback console during assignment repair testing"
+	default n
+	depends on BOARD_EF800
+	help
+	  Test-only recovery option. Keeps the console on its configured fallback
+	  UART while persisted port assignments are repaired. Never enable in a
+	  product image.
+
 config EF800_MAIN_PLUGIN_RECOVERY_TEST_DIRECTORY
 	bool "Scan the recovery-test package directory in Shared Data"
 	default n

@@ -227,6 +227,8 @@ static int dispatch_service(struct gateway_session *session,
 			status = 0;
 		} else {
 			status = ret < 0 ? ret : -ETIMEDOUT;
+			LOG_WRN("Plugin UART read failed: result=%d timeout=%u",
+				ret, (unsigned int)message->timeout_ms);
 		}
 		break;
 	case EF800_PLUGIN_WORKER_WORKSPACE_SNAPSHOT:
@@ -317,6 +319,7 @@ static int z_vrfy_ef800_plugin_worker_syscall(
 	if (K_SYSCALL_MEMORY_READ(&mailbox->message, sizeof(message)) ||
 		k_usermode_from_copy(&message, &mailbox->message,
 			sizeof(message)) != 0) {
+		LOG_WRN("Plugin gateway rejected unreadable mailbox message");
 		(void)k_mutex_unlock(&gateway_mutex);
 		return -EFAULT;
 	}
@@ -328,7 +331,13 @@ static int z_vrfy_ef800_plugin_worker_syscall(
 	if (ret != 0 || message.kind != EF800_PLUGIN_WORKER_HOST_SERVICE_REQUEST ||
 		message.capability != active_session.capability ||
 		message.deadline_ms > active_session.deadline_ms ||
-		message.sequence != active_session.last_sequence + 1U) {
+		message.sequence <= active_session.last_sequence) {
+		LOG_WRN("Plugin gateway rejected request: ret=%d kind=%u op=%u seq=%u prev=%u gen=%u active=%u",
+			ret, (unsigned int)message.kind,
+			(unsigned int)message.operation, (unsigned int)message.sequence,
+			(unsigned int)active_session.last_sequence,
+			(unsigned int)message.generation,
+			(unsigned int)active_session.generation);
 		(void)k_mutex_unlock(&gateway_mutex);
 		return ret != 0 ? ret : -EPERM;
 	}
@@ -339,7 +348,13 @@ static int z_vrfy_ef800_plugin_worker_syscall(
 			message.payload_length)) ||
 		(message.response_capacity != 0U &&
 		 K_SYSCALL_MEMORY_WRITE(&mailbox->payload[message.response_offset],
-			message.response_capacity))) {
+			 message.response_capacity))) {
+		LOG_WRN("Plugin gateway rejected payload memory: op=%u in=%u/%u out=%u/%u",
+			(unsigned int)message.operation,
+			(unsigned int)message.payload_offset,
+			(unsigned int)message.payload_length,
+			(unsigned int)message.response_offset,
+			(unsigned int)message.response_capacity);
 		(void)k_mutex_unlock(&gateway_mutex);
 		return -EFAULT;
 	}
@@ -352,6 +367,11 @@ static int z_vrfy_ef800_plugin_worker_syscall(
 	ef800_plugin_host_recovery_service_begin(active_session.generation,
 		message.operation);
 	ret = dispatch_service(&active_session, mailbox, &message);
+	if (ret != 0 || message.status != 0) {
+		LOG_WRN("Plugin gateway service result: op=%u syscall=%d status=%d response=%u",
+			(unsigned int)message.operation, ret, message.status,
+			(unsigned int)message.response_length);
+	}
 	ef800_plugin_host_recovery_service_end(active_session.generation,
 		message.operation);
 	(void)k_mutex_unlock(&gateway_mutex);
