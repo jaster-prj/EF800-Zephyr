@@ -8,8 +8,11 @@ target_sources(app PRIVATE
 	src/main.c
 	${CMAKE_CURRENT_LIST_DIR}/../../../shared/ef800_update/ef800_keyboard_update.c
 	${CMAKE_CURRENT_LIST_DIR}/../../../shared/ef800_update/ef800_update.c
-	${CMAKE_CURRENT_LIST_DIR}/../../../shared/ef800_keyboard_update/ef800_keyboard_update_protocol.c)
+	${CMAKE_CURRENT_LIST_DIR}/../../../shared/ef800_keyboard_update/ef800_keyboard_update_protocol.c
+	${CMAKE_CURRENT_LIST_DIR}/../../../application/ef800-main/src/ef800_keyboard_update_service.c)
 
 target_include_directories(app PRIVATE
 	${CMAKE_CURRENT_LIST_DIR}/../../../shared/ef800_update
-	${CMAKE_CURRENT_LIST_DIR}/../../../shared/ef800_keyboard_update)
+	${CMAKE_CURRENT_LIST_DIR}/../../../shared/ef800_keyboard_update
+	${CMAKE_CURRENT_LIST_DIR}/../../../shared/ef800_keyboard_boot
+	${CMAKE_CURRENT_LIST_DIR}/../../../application/ef800-main/src)

@@ -31,7 +31,8 @@ void ef800_virtual_log_store_record(struct ef800_virtual_log_store *store,
 	}
 	entry.severity = severity;
 	entry.text_length = (uint16_t)MIN(length, sizeof(entry.text));
-	entry.flags = entry.text_length != length ? EF800_VIRTUAL_LOG_TRUNCATED : 0U;
+	entry.flags = length > sizeof(entry.text) ?
+		EF800_VIRTUAL_LOG_TRUNCATED : 0U;
 	memcpy(entry.text, text, entry.text_length);
 	key = k_spin_lock(&store->lock);
 	entry.sequence = ++store->sequence;

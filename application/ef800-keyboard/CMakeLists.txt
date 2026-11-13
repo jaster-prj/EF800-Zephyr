@@ -8,8 +8,13 @@ project(ef800_keyboard)
 
 target_sources(app PRIVATE
 	src/main.c
+	src/keyboard_app_update.c
+	src/keyboard_matrix.c
+	src/keyboard_i2c_service.c
+	src/keyboard_uart_protocol.c
 	src/keyboard_key_names.c
 	${CMAKE_CURRENT_LIST_DIR}/../../shared/keyboard_protocol/keyboard_translation.c
+	${CMAKE_CURRENT_LIST_DIR}/../../shared/keyboard_protocol/keyboard_matrix_debounce.c
 	${CMAKE_CURRENT_LIST_DIR}/../../shared/ef800_keyboard_boot/ef800_keyboard_boot.c
 	${CMAKE_CURRENT_LIST_DIR}/../../shared/ef800_update/ef800_update.c
 	${CMAKE_CURRENT_LIST_DIR}/../../shared/ef800_keyboard_update/ef800_keyboard_update_protocol.c

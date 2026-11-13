@@ -2,8 +2,12 @@ target_compile_options(app PRIVATE -Wno-unused-function)
 target_sources(app PRIVATE
     ${CMAKE_CURRENT_LIST_DIR}/regression/src/main.c
     ${CMAKE_CURRENT_LIST_DIR}/../../shared/keyboard_protocol/keyboard_translation.c
+    ${CMAKE_CURRENT_LIST_DIR}/../../shared/keyboard_protocol/keyboard_matrix_debounce.c
     ${CMAKE_CURRENT_LIST_DIR}/../../application/ef800-keyboard/src/keyboard_key_names.c
+    ${CMAKE_CURRENT_LIST_DIR}/../../application/ef800-keyboard/src/keyboard_uart_protocol.c
     ${CMAKE_CURRENT_LIST_DIR}/../../application/ef800-main/src/keyboard_host.c
+    ${CMAKE_CURRENT_LIST_DIR}/../../application/ef800-main/src/ef800_main_port_workflow.c
+    ${CMAKE_CURRENT_LIST_DIR}/../../application/ef800-main/src/ef800_main_time_editor.c
     ${CMAKE_CURRENT_LIST_DIR}/../../shared/ef800_main/ef800_time.c
     ${CMAKE_CURRENT_LIST_DIR}/../../shared/ef800_persistence/ef800_persistence.c
     ${CMAKE_CURRENT_LIST_DIR}/../../shared/ef800_persistence/ef800_persistence_legacy.c
@@ -17,7 +21,8 @@ target_sources(app PRIVATE
     ${CMAKE_CURRENT_LIST_DIR}/../../shared/ef800_ports/ef800_port_uart.c
     ${CMAKE_CURRENT_LIST_DIR}/../../shared/ef800_ports/ef800_debug.c
     ${CMAKE_CURRENT_LIST_DIR}/../../shared/ef800_update/ef800_update.c
-    ${CMAKE_CURRENT_LIST_DIR}/../../shared/ef800_ports/ef800_usb_personality.c)
+    ${CMAKE_CURRENT_LIST_DIR}/../../shared/ef800_ports/ef800_usb_personality.c
+    ${CMAKE_CURRENT_LIST_DIR}/../../shared/ef800_plugin/ef800_plugin_registry.c)
 target_include_directories(app PRIVATE
     ${CMAKE_CURRENT_LIST_DIR}/../../shared/keyboard_protocol
     ${CMAKE_CURRENT_LIST_DIR}/../../application/ef800-main/src
@@ -27,4 +32,7 @@ target_include_directories(app PRIVATE
     ${CMAKE_CURRENT_LIST_DIR}/../../shared/ef800_position
     ${CMAKE_CURRENT_LIST_DIR}/../../shared/ef800_measurement
     ${CMAKE_CURRENT_LIST_DIR}/../../shared/ef800_ports
-    ${CMAKE_CURRENT_LIST_DIR}/../../shared/ef800_update)
+    ${CMAKE_CURRENT_LIST_DIR}/../../shared/ef800_update
+    ${CMAKE_CURRENT_LIST_DIR}/../../shared/ef800_plugin
+    ${CMAKE_CURRENT_LIST_DIR}/../../shared/ef800_storage
+    ${CMAKE_CURRENT_LIST_DIR}/../../shared/ef800_keyboard_boot)

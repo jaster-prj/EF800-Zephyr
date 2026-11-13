@@ -77,10 +77,12 @@ ZTEST(ef800_plugin, test_bounded_calculation_service)
 		sizeof(snapshot), output, sizeof(output), &length), -EIO, NULL);
 	zassert_equal(ef800_calculation_service_run(&service, NULL,
 		sizeof(snapshot), output, sizeof(output), &length), -EINVAL, NULL);
+	/* cppcheck-suppress redundantAssignment -- callback observes this on the following run */
 	fixture.snapshot_status = 0;
 	fixture.snapshot = "0123456789";
 	zassert_equal(ef800_calculation_service_run(&service, snapshot, 4,
 		output, sizeof(output), &length), -EFBIG, NULL);
+	/* cppcheck-suppress redundantAssignment -- callback observes the shorter input next */
 	fixture.snapshot = "ok";
 	fixture.transform_status = -ERANGE;
 	zassert_equal(ef800_calculation_service_run(&service, snapshot,

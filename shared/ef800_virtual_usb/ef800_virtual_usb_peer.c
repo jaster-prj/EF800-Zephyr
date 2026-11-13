@@ -249,7 +249,7 @@ static int bulk_read(struct usb_device *udev, uint8_t endpoint,
 			     timeout_ms);
 }
 
-static int find_bulk_endpoints(struct usb_device *udev, uint8_t class_code,
+static int find_bulk_endpoints(const struct usb_device *udev, uint8_t class_code,
 			       struct ef800_virtual_usb_endpoints *endpoints)
 {
 	const uint8_t *descriptor = udev->cfg_desc;
@@ -343,6 +343,7 @@ int ef800_virtual_usb_peer_init(void)
 		return ret;
 	}
 	peer_host_initialized = true;
+	/* cppcheck-suppress knownConditionTrueFalse -- Kconfig controls LOG_* expansion */
 	LOG_INF("Native-sim USB host peer enabled");
 	return 0;
 }
@@ -751,8 +752,6 @@ static int mtp_get_storage_ids(struct usb_device *udev,
 static int mtp_ensure_session(struct usb_device *udev,
 			      const struct ef800_virtual_usb_endpoints *endpoints)
 {
-	int ret;
-
 	if (peer_mtp_device != udev) {
 		peer_mtp_device = udev;
 		peer_mtp_session_open = false;
@@ -760,7 +759,8 @@ static int mtp_ensure_session(struct usb_device *udev,
 		peer_transaction_id = 0U;
 	}
 	if (!peer_mtp_session_open) {
-		ret = mtp_open_session(udev, endpoints);
+		int ret = mtp_open_session(udev, endpoints);
+
 		if (ret != 0) {
 			return ret;
 		}
@@ -1282,7 +1282,6 @@ int ef800_virtual_usb_peer_mtp_download(enum ef800_virtual_mtp_storage storage,
 	struct ef800_virtual_usb_object_info info;
 	struct ef800_virtual_usb_mtp_response response;
 	uint32_t storage_id;
-	uint32_t parameters[1];
 	uint32_t transaction_id = 0U;
 	int ret;
 
@@ -1310,6 +1309,8 @@ int ef800_virtual_usb_peer_mtp_download(enum ef800_virtual_mtp_storage storage,
 		ret = -EFBIG;
 	}
 	if (ret == 0) {
+		uint32_t parameters[1];
+
 		parameters[0] = info.handle;
 		transaction_id = mtp_next_transaction();
 		ret = mtp_send_command(udev, &endpoints,

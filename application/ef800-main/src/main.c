@@ -9,7 +9,6 @@
 
 #include <zephyr/device.h>
 #include <zephyr/devicetree.h>
-#include <zephyr/drivers/adc.h>
 #include <zephyr/drivers/uart.h>
 #include <zephyr/drivers/gpio.h>
 #include <zephyr/drivers/i2c.h>
@@ -21,13 +20,8 @@
 #include <zephyr/sys/printk.h>
 #include <zephyr/sys/reboot.h>
 
-#ifdef CONFIG_BOARD_NATIVE_SIM
-#include <zephyr/drivers/adc/adc_emul.h>
-#endif
-
 #include "ef800_max17043.h"
 #include "ef800_battery_soc.h"
-#include "ef800_battery_adc_ring.h"
 #include "ef800_battery_soc_gauge.h"
 #include "ef800_battery_soc_store.h"
 #include "ef800_main.h"
@@ -51,10 +45,20 @@
 #include "ef800_measurement_zephyr.h"
 #include "ef800_t6963.h"
 #include "ef800_workspace.h"
+#include "ef800_workspace_browser.h"
+#include "ef800_workspace_row_editor.h"
+#include "ef800_position_editor.h"
+#include "ef800_main_shell.h"
+#include "ef800_main_display.h"
+#include "ef800_main_port_workflow.h"
+#include "ef800_main_battery_adc.h"
+#include "ef800_main_time_editor.h"
 #include "keyboard_host.h"
+#include "ef800_keyboard_command.h"
 #include "ef800_keyboard_package.h"
 #include "ef800_keyboard_i2c.h"
 #include "ef800_keyboard_update.h"
+#include "ef800_keyboard_update_service.h"
 #include "ef800_keyboard_update_protocol.h"
 #include "ef800_update.h"
 #include "ef800_mcumgr_transport.h"
@@ -79,7 +83,6 @@ LOG_MODULE_REGISTER(ef800_main_app, LOG_LEVEL_INF);
 /* lpuart1 is the EF800 board's PG7/PC0 keyboard link. */
 #define KEYBOARD_UART_NODE DT_CHOSEN(zephyr_keyboard_uart)
 #define KEYBOARD_RX_QUEUE_SIZE 128U
-#define KEYBOARD_COMMAND_TIMEOUT_MS 1000U
 #define EF800_USER_NODE DT_PATH(zephyr_user)
 #define LCD_NODE EF800_USER_NODE
 #define LCD_COLUMNS 40U
@@ -87,6 +90,7 @@ LOG_MODULE_REGISTER(ef800_main_app, LOG_LEVEL_INF);
 #define EF800_KEYBOARD_PACKAGE_PATH "/DATA:/fwu/EF800_KEYBOARD.pkg"
 #define EF800_KEYBOARD_UPLOAD_MAX_SIZE \
 	(EF800_KEYBOARD_PACKAGE_HEADER_SIZE + EF800_KEYBOARD_PACKAGE_LIMIT)
+#define KEYBOARD_UPDATE_RESPONSE_TIMEOUT_MS 30000U
 #define EF800_KEYBOARD_UPLOAD_ACK 0x06U
 
 static const struct device *const keyboard_uart =
@@ -99,11 +103,7 @@ static const struct device *const keyboard_i2c =
 #endif
 static struct ef800_keyboard_host keyboard_host;
 K_MSGQ_DEFINE(keyboard_rx_msgq, sizeof(uint8_t), KEYBOARD_RX_QUEUE_SIZE, 1);
-K_MUTEX_DEFINE(keyboard_command_mutex);
-K_SEM_DEFINE(keyboard_command_complete, 0, 1);
-static volatile bool keyboard_command_pending;
-static volatile uint8_t keyboard_pending_command;
-static bool keyboard_uart_initialized;
+static struct ef800_keyboard_command keyboard_command;
 static atomic_t keyboard_ready_indication;
 static bool keyboard_updater_request_ready;
 static bool keyboard_debug_active;
@@ -116,6 +116,7 @@ static struct ef800_t6963 lcd;
 static struct ef800_max17043 fuel_gauge;
 static struct ef800_battery_soc_gauge battery_gauge_source;
 static struct ef800_battery_soc_store battery_soc_store;
+static struct ef800_main_battery_adc battery_adc_source;
 static struct ef800_runtime_state runtime_state;
 static struct ef800_persistence persistence;
 static struct ef800_composition_service composition_service;
@@ -142,13 +143,30 @@ static const struct ef800_composition_catalog composition_catalog = {
 	.entry_count = ARRAY_SIZE(composition_entries),
 };
 static struct ef800_workspace workspace;
+static int port_uart_check_ready(void *context, uint8_t port_id,
+	uint32_t connection);
+static int initialize_assigned_measurement_transport(void *context,
+	uint8_t port_id, uint32_t plugin_id, uint32_t connection);
+static bool main_port_usb_msd_enabled(void *context);
 static struct ef800_port_assignment_service port_assignments;
 static struct ef800_port_uart_registry port_uart_registry;
 static struct ef800_plugin_registry plugin_registry;
 static struct ef800_measurement_zephyr_transport measurement_transports[EF800_PORT_COUNT];
-static uint8_t measurement_port_ids[EF800_PORT_COUNT];
-static size_t measurement_port_count;
-static uint8_t selected_measurement_port;
+static struct ef800_main_port_workflow main_port_workflow = {
+	.assignments = &port_assignments,
+	.plugins = &plugin_registry,
+	.uart_registry = &port_uart_registry,
+	.measurement_transports = measurement_transports,
+	.port_uart_check_ready = port_uart_check_ready,
+	.initialize_measurement_transport = initialize_assigned_measurement_transport,
+	.usb_msd_enabled = main_port_usb_msd_enabled,
+};
+#define measurement_port_ids main_port_workflow.measurement_port_ids
+#define measurement_port_count main_port_workflow.measurement_port_count
+#define selected_port_index main_port_workflow.selected_port_index
+#define selected_builder_id main_port_workflow.selected_builder_id
+#define selected_plugin_id main_port_workflow.selected_plugin_id
+#define selected_measurement_port main_port_workflow.selected_measurement_port
 static char assigned_plugin_names[EF800_PORT_COUNT][EF800_PLUGIN_MAX_NAME_LENGTH + 1U];
 static bool measurement_pending;
 static bool measurement_fixed;
@@ -156,21 +174,14 @@ static int32_t measurement_number;
 static struct ef800_measurement_record measurement_record;
 static char measurement_code[EF800_MEASUREMENT_TEXT_MAX + 1U] = "02";
 static bool lcd_ready;
+static struct ef800_main_display main_display;
 #ifdef CONFIG_BOARD_NATIVE_SIM
 static bool virtual_power_off;
 #endif
 static bool battery_soc_store_ready;
-static bool battery_adc_ready;
-static struct ef800_battery_adc_ring battery_adc_ring;
 static bool mcumgr_transport_active;
-static const struct adc_dt_spec battery_adc =
-	ADC_DT_SPEC_GET_BY_NAME(DT_PATH(zephyr_user), battery);
 static bool runtime_state_ready;
-static char header_title[17];
 static uint8_t menu_selection;
-static uint8_t selected_port_index;
-static uint8_t selected_builder_id;
-static uint32_t selected_plugin_id;
 static struct ef800_measurement_plugin_session measurement_plugin_session;
 static struct ef800_ui_state ui_state;
 #if CONFIG_EF800_MAIN_PLUGIN_USER_WORKER
@@ -213,6 +224,12 @@ static bool usb_msd_composition_enabled(void)
 #else
 	return true;
 #endif
+}
+
+static bool main_port_usb_msd_enabled(void *context)
+{
+	ARG_UNUSED(context);
+	return usb_msd_composition_enabled();
 }
 
 static enum ef800_lcd_contrast_mode lcd_contrast_composition_mode(void)
@@ -406,6 +423,14 @@ static int virtual_set_composition(void *context, const char *group,
 	return ret;
 }
 #endif
+
+static void main_shell_composition_committed(void *context)
+{
+	ARG_UNUSED(context);
+#ifdef CONFIG_BOARD_NATIVE_SIM
+	publish_virtual_composition_state();
+#endif
+}
 
 static int main_contrast_set_pwm(void *context, uint8_t duty_percent)
 {
@@ -616,36 +641,22 @@ static char workspace_input[EF800_WORKSPACE_NAME_MAX + 1U];
 static uint8_t workspace_input_length;
 static char workspace_names[WORKSPACE_LIST_MAX][EF800_WORKSPACE_NAME_MAX + 1U];
 static size_t workspace_name_count;
-#define WORKSPACE_VIEW_ROWS 4U
-#define WORKSPACE_VIEW_COLUMNS (LCD_COLUMNS)
-#define WORKSPACE_VIEW_SCAN_CHUNK 128U
-static char workspace_view_lines[WORKSPACE_VIEW_ROWS][WORKSPACE_VIEW_COLUMNS + 1U];
-static size_t workspace_view_line_starts[WORKSPACE_VIEW_ROWS];
-static size_t workspace_view_line_ends[WORKSPACE_VIEW_ROWS];
-static size_t workspace_view_line_count;
-static size_t workspace_view_start;
-static size_t workspace_view_end;
-static size_t workspace_view_file_size;
-static size_t workspace_view_selected_row;
-static struct ef800_workspace_version workspace_view_version;
-static bool workspace_view_active;
-static bool workspace_view_position_only;
+static struct ef800_workspace_browser workspace_browser;
+#define WORKSPACE_VIEW_ROWS EF800_WORKSPACE_BROWSER_ROWS
+#define WORKSPACE_VIEW_COLUMNS EF800_WORKSPACE_BROWSER_COLUMNS
+#define workspace_view_lines workspace_browser.lines
+#define workspace_view_line_starts workspace_browser.line_starts
+#define workspace_view_line_ends workspace_browser.line_ends
+#define workspace_view_line_count workspace_browser.line_count
+#define workspace_view_start workspace_browser.start
+#define workspace_view_end workspace_browser.end
+#define workspace_view_file_size workspace_browser.file_size
+#define workspace_view_selected_row workspace_browser.selected_row
+#define workspace_view_version workspace_browser.version
+#define workspace_view_active workspace_browser.active
+#define workspace_view_position_only workspace_browser.position_only
 
-enum position_editor_field {
-	POSITION_EDITOR_STP = 0,
-	POSITION_EDITOR_CODE,
-	POSITION_EDITOR_HEIGHT,
-};
-
-struct position_editor_state {
-	bool active;
-	enum position_editor_field field;
-	uint8_t length;
-	char input[EF800_POSITION_TEXT_MAX + 1U];
-	struct ef800_position_entry entry;
-};
-
-static struct position_editor_state position_editor;
+static struct ef800_position_editor position_editor;
 
 enum measurement_editor_field {
 	MEASUREMENT_EDITOR_CODE = 0,
@@ -661,28 +672,7 @@ struct measurement_editor_state {
 
 static struct measurement_editor_state measurement_editor;
 
-enum time_editor_field {
-	TIME_EDITOR_WEEKDAY,
-	TIME_EDITOR_DATE,
-	TIME_EDITOR_MONTH,
-	TIME_EDITOR_YEAR,
-	TIME_EDITOR_HOUR,
-	TIME_EDITOR_MINUTE,
-	TIME_EDITOR_SECOND,
-	TIME_EDITOR_OFFSET,
-	TIME_EDITOR_DST,
-};
-
-struct time_editor_state {
-	bool active;
-	enum time_editor_field field;
-	uint8_t length;
-	char input[8];
-	struct rtc_time local;
-	struct ef800_time_settings settings;
-};
-
-static struct time_editor_state time_editor;
+static struct ef800_main_time_editor time_editor;
 
 static const char *const menu_items[] = {
 	"Workspace",
@@ -718,17 +708,7 @@ static const char *const workspace_row_action_items[] = {
 };
 static const char *const workspace_row_action_shortcuts[] = {"m", "d", "c"};
 
-#define WORKSPACE_ROW_EDIT_MAX 255U
-struct workspace_row_editor_state {
-	struct ef800_workspace_row row;
-	char text[WORKSPACE_ROW_EDIT_MAX + 1U];
-	size_t length;
-	size_t caret;
-	size_t viewport_start;
-	bool insert_mode;
-};
-
-static struct workspace_row_editor_state workspace_row_editor;
+static struct ef800_workspace_row_editor workspace_row_editor;
 
 static void start_time_editor(void);
 static void display_time_editor(void);
@@ -749,6 +729,7 @@ static void display_measurement_devices(void);
 static void display_measurement_actions(void);
 static void display_measurement_plugin_menu(void);
 static void display_active_menu(void);
+static void main_display_clock_text(char clock_text[6]);
 static void display_measurement_editor(void);
 static const char *measurement_device_title(uint8_t port_id);
 static void display_calculation_menu(void);
@@ -766,9 +747,6 @@ static int submit_plugin_async(
 #endif
 static void start_measurement_editor(void);
 static const struct device *port_uart_device(enum ef800_port_uart_id uart_id);
-static int port_uart_check_ready(uint8_t port_id, uint32_t connection);
-static int claim_loaded_port_assignments(void);
-static int reconcile_plugin_assignments(void);
 #ifndef CONFIG_BOARD_NATIVE_SIM
 static int set_console_for_port(uint8_t port_id);
 #endif
@@ -815,9 +793,16 @@ static int virtual_execute_plugin(void *context, uint8_t port_id);
 
 static void clear_display(void)
 {
-	for (uint8_t row = 0U; row < 8U; ++row) {
-		display_line(row, "");
+	char clock_text[6] = "";
+	struct ef800_runtime_snapshot snapshot;
+
+	if (runtime_state_ready &&
+	    ef800_runtime_state_snapshot(&runtime_state, &snapshot) == 0 &&
+	    snapshot.rtc_has_value) {
+		(void)snprintk(clock_text, 6U, "%02d:%02d",
+			snapshot.local_time.tm_hour, snapshot.local_time.tm_min);
 	}
+	ef800_main_display_clear(&main_display, clock_text);
 }
 
 static size_t ui_menu_count(void *context, enum ef800_ui_menu menu)
@@ -936,7 +921,8 @@ static int reconcile_port_uart_state(void)
 		return result;
 	}
 	LOG_INF("Port UART registry initialized; restoring assignments");
-	result = claim_loaded_port_assignments();
+	result = ef800_main_port_workflow_claim_loaded_assignments(
+		&main_port_workflow);
 	if (result != 0) {
 		LOG_ERR("Port assignment restore failed: %d", result);
 		return result;
@@ -944,158 +930,6 @@ static int reconcile_port_uart_state(void)
 	ef800_port_uart_startup_complete(&port_uart_registry);
 	LOG_INF("Port routing reconcile complete");
 	return 0;
-}
-
-static uint8_t uart_owner_for_plugin(uint32_t plugin_id)
-{
-	const struct ef800_plugin_registry_entry *entry =
-		ef800_plugin_registry_find(&plugin_registry, plugin_id);
-
-	return entry != NULL && entry->info.kind == EF800_PLUGIN_KIND_MEASUREMENT ?
-		EF800_PORT_BUILDER_DEBUG : (uint8_t)plugin_id;
-}
-
-static int clear_stale_plugin_assignment(uint8_t port_id)
-{
-	int result = ef800_port_assignment_remove(&port_assignments, port_id);
-	int runtime_result;
-
-	if (result == 0) {
-		return 0;
-	}
-
-	/* Keep this boot safe even if deleting the persisted record fails. The
-	 * startup cleanup can retry on the next boot. */
-	runtime_result = ef800_port_assignment_import_with_connection(&port_assignments,
-		port_id, EF800_PORT_BUILDER_NONE, EF800_PORT_CONNECTION_NONE);
-	if (runtime_result != 0) {
-		LOG_ERR("Cannot clear stale plugin assignment on port %u: remove=%d runtime=%d",
-			port_id, result, runtime_result);
-		return runtime_result;
-	}
-	LOG_WRN("Port %u stale plugin assignment cleared for this boot; persistence failed: %d",
-		port_id, result);
-	return result;
-}
-
-static int reconcile_plugin_assignments(void)
-{
-	int first_error = 0;
-
-	for (uint8_t port_id = 1U; port_id <= EF800_PORT_COUNT; ++port_id) {
-		uint32_t plugin_id = ef800_port_assignment_get_plugin_id(&port_assignments,
-			port_id);
-		uint8_t builder_id = ef800_port_assignment_get_builder(&port_assignments,
-			port_id);
-		const struct ef800_port_device_descriptor *device =
-			ef800_port_device_get(builder_id);
-		const struct ef800_plugin_registry_entry *entry;
-		bool keep;
-
-		if (!ef800_port_assignment_is_assigned(&port_assignments, port_id) ||
-			plugin_id == EF800_PORT_BUILDER_NONE || device != NULL) {
-			continue;
-		}
-		entry = ef800_plugin_registry_find(&plugin_registry, plugin_id);
-		keep = entry != NULL && entry->state == EF800_PLUGIN_REGISTRY_READY;
-		if (keep && entry->info.kind == EF800_PLUGIN_KIND_MEASUREMENT) {
-			keep = entry->info.required_hardware == EF800_PLUGIN_HARDWARE_SERIAL &&
-				ef800_port_connection_is_valid(port_id,
-					ef800_port_assignment_get_connection(&port_assignments,
-						port_id));
-		}
-		if (keep) {
-			continue;
-		}
-
-		LOG_WRN("Clearing missing or unavailable plugin %u on port %u",
-			(unsigned)plugin_id, port_id);
-		{
-			int result = clear_stale_plugin_assignment(port_id);
-
-			if (result != 0 && first_error == 0) {
-				first_error = result;
-			}
-		}
-	}
-	return first_error;
-}
-
-static int claim_loaded_port_assignments(void)
-{
-	int first_error = 0;
-
-	for (size_t index = 0U; index < ef800_port_count(); ++index) {
-		const struct ef800_port_descriptor *port = ef800_port_at(index);
-		uint32_t plugin_id = ef800_port_assignment_get_plugin_id(
-			&port_assignments, port->id);
-		int result;
-
-		if (plugin_id == EF800_PORT_BUILDER_NONE) {
-			continue;
-		}
-		uint32_t connection = ef800_port_assignment_get_connection(
-			&port_assignments, port->id);
-		LOG_INF("Restoring port assignment: port=%u builder=%u plugin=%u connection=%u",
-			port->id,
-			ef800_port_assignment_get_builder(&port_assignments, port->id),
-			plugin_id, connection);
-
-		result = port_uart_check_ready(port->id, connection);
-		if (result != 0) {
-			LOG_WRN("Port %u UART is not ready: %d", port->id, result);
-			if (first_error == 0) {
-				first_error = result;
-			}
-			continue;
-		}
-		result = ef800_port_uart_claim(&port_uart_registry, port->id,
-						       uart_owner_for_plugin(plugin_id),
-						       ef800_port_assignment_get_connection(
-							&port_assignments, port->id));
-		if (result != 0) {
-			LOG_WRN("Port %u assignment cannot claim UART: %d", port->id,
-				result);
-			if (first_error == 0) {
-				first_error = result;
-			}
-			continue;
-		}
-		if (ef800_plugin_registry_find(&plugin_registry, plugin_id) != NULL &&
-			ef800_plugin_registry_find(&plugin_registry, plugin_id)->info.kind ==
-			EF800_PLUGIN_KIND_MEASUREMENT) {
-			struct ef800_measurement_serial_config config = {0};
-			const struct ef800_port_uart_route *route =
-				ef800_port_uart_for_connection(port->id, connection);
-			const struct device *device = route == NULL ? NULL :
-				port_uart_device(route->uart_id);
-
-			if (route == NULL || device == NULL) {
-				if (first_error == 0) {
-					first_error = -ENODEV;
-				}
-				continue;
-			}
-			result = ef800_plugin_host_serial_config(plugin_id, NULL, &config);
-			LOG_INF("Port %u plugin %u serial metadata result=%d baud=%u data=%u parity=%u stop=%u flow=%u",
-				port->id, plugin_id, result, config.baudrate,
-				config.data_bits, config.parity, config.stop_bits,
-				config.flow_control);
-			if (result == 0) {
-				result = ef800_measurement_zephyr_init_with_config(
-					&measurement_transports[port->id - 1U], device, &config);
-			}
-			LOG_INF("Port %u measurement transport init result=%d", port->id,
-				result);
-			if (result != 0 && first_error == 0) {
-				first_error = result;
-			} else if (result == 0) {
-				LOG_INF("Measurement transport ready: port=%u plugin=%u uart=%s",
-					port->id, plugin_id, route->name);
-			}
-		}
-	}
-	return first_error;
 }
 
 #ifndef CONFIG_BOARD_NATIVE_SIM
@@ -1189,17 +1023,50 @@ static int refresh_measurement_uart_config(uint8_t port_id, uint32_t plugin_id)
 
 #endif
 
-static int port_uart_check_ready(uint8_t port_id, uint32_t connection)
+static int port_uart_check_ready(void *context, uint8_t port_id,
+	uint32_t connection)
 {
 	const struct ef800_port_uart_route *route =
 		ef800_port_uart_for_connection(port_id, connection);
 	const struct device *device;
 
+	ARG_UNUSED(context);
 	if (route == NULL) {
 		return 0;
 	}
 	device = port_uart_device(route->uart_id);
 	return device != NULL && device_is_ready(device) ? 0 : -ENODEV;
+}
+
+static int initialize_assigned_measurement_transport(void *context,
+	uint8_t port_id, uint32_t plugin_id, uint32_t connection)
+{
+	const struct ef800_port_uart_route *route =
+		ef800_port_uart_for_connection(port_id, connection);
+	const struct device *device = route == NULL ? NULL :
+		port_uart_device(route->uart_id);
+	struct ef800_measurement_serial_config config = {0};
+	int result;
+
+	ARG_UNUSED(context);
+	if (route == NULL || device == NULL || port_id == 0U ||
+	    port_id > EF800_PORT_COUNT) {
+		return -ENODEV;
+	}
+	result = ef800_plugin_host_serial_config(plugin_id, NULL, &config);
+	LOG_INF("Port %u plugin %u serial metadata result=%d baud=%u data=%u parity=%u stop=%u flow=%u",
+		port_id, (unsigned int)plugin_id, result, config.baudrate,
+		config.data_bits, config.parity, config.stop_bits,
+		config.flow_control);
+	if (result == 0) {
+		result = ef800_measurement_zephyr_init_with_config(
+			&measurement_transports[port_id - 1U], device, &config);
+	}
+	if (result == 0) {
+		LOG_INF("Measurement transport ready: port=%u plugin=%u uart=%s",
+			port_id, (unsigned int)plugin_id, route->name);
+	}
+	return result;
 }
 
 #if DT_HAS_COMPAT_STATUS_OKAY(maxim_max17048)
@@ -1471,134 +1338,6 @@ done:
 	return result;
 }
 
-static int keyboard_update_read_package(struct fs_file_t *file,
-	struct ef800_keyboard_package_header *header, size_t file_size)
-{
-	uint8_t buffer[1024];
-	uint32_t crc = 0U;
-	uint32_t remaining;
-
-	if (fs_seek(file, 0, FS_SEEK_SET) != 0 ||
-		fs_read(file, header, sizeof(*header)) != sizeof(*header) ||
-		!ef800_keyboard_package_valid(header, file_size)) {
-		return -EINVAL;
-	}
-	if (fs_seek(file, header->header_size, FS_SEEK_SET) != 0) {
-		return -EIO;
-	}
-	remaining = header->image_size;
-	while (remaining != 0U) {
-		size_t count = MIN(sizeof(buffer), remaining);
-		if (fs_read(file, buffer, count) != (ssize_t)count) {
-			return -EIO;
-		}
-		crc = ef800_crc32_update(crc, buffer, count);
-		remaining -= count;
-	}
-	return crc == header->image_crc32 ? 0 : -EBADMSG;
-}
-
-#define KEYBOARD_UPDATE_RESPONSE_TIMEOUT_MS 30000U
-#define KEYBOARD_UPDATE_POLL_MS 10U
-
-static uint32_t keyboard_update_get_le32(const uint8_t *data)
-{
-	return (uint32_t)data[0] | ((uint32_t)data[1] << 8) |
-		((uint32_t)data[2] << 16) | ((uint32_t)data[3] << 24);
-}
-
-static void keyboard_update_put_le16(uint8_t *data, uint16_t value)
-{
-	data[0] = (uint8_t)value;
-	data[1] = (uint8_t)(value >> 8);
-}
-
-static void keyboard_update_put_le32(uint8_t *data, uint32_t value)
-{
-	data[0] = (uint8_t)value;
-	data[1] = (uint8_t)(value >> 8);
-	data[2] = (uint8_t)(value >> 16);
-	data[3] = (uint8_t)(value >> 24);
-}
-
-static int keyboard_update_request(uint16_t address, uint8_t command,
-					   const uint8_t *payload, size_t payload_length,
-					   uint8_t *response, size_t response_length,
-					   uint32_t timeout_ms)
-{
-	uint8_t frame[EF800_KB_UPDATE_REQUEST_MAX];
-	size_t frame_length;
-	int64_t deadline;
-	int result;
-
-	if (!device_is_ready(keyboard_i2c) || response == NULL ||
-	    response_length == 0U) {
-		return -ENODEV;
-	}
-	frame_length = ef800_kb_update_frame_encode(command, payload,
-		payload_length, frame, sizeof(frame));
-	if (frame_length == 0U) {
-		return -EINVAL;
-	}
-	result = i2c_write(keyboard_i2c, frame, frame_length, address);
-	if (result != 0) {
-		return result;
-	}
-	deadline = k_uptime_get() + timeout_ms;
-	do {
-		memset(response, 0xFF, response_length);
-		result = i2c_read(keyboard_i2c, response, response_length, address);
-		if (result == 0) {
-			if (response[0] == EF800_KB_PROTOCOL_BUSY) {
-				k_msleep(KEYBOARD_UPDATE_POLL_MS);
-				continue;
-			}
-			if (response[0] == EF800_KB_PROTOCOL_NACK) {
-				return -EPROTO;
-			}
-			return ef800_kb_update_response_valid(response, response_length) ?
-				0 : -EBADMSG;
-		}
-		k_msleep(KEYBOARD_UPDATE_POLL_MS);
-	} while (k_uptime_get() < deadline);
-	return result != 0 ? result : -ETIMEDOUT;
-}
-
-static int keyboard_update_query_version(uint16_t address, uint8_t *version,
-						uint32_t timeout_ms)
-{
-	uint8_t command = EF800_KB_UPDATE_VERSION_COMMAND;
-	int64_t deadline = k_uptime_get() + timeout_ms;
-	int result = -EIO;
-
-	/* The bootloader may acknowledge the probe just before the updater has
-	 * registered its target address. Retry command writes as well as reads. */
-	do {
-		result = i2c_write(keyboard_i2c, &command, sizeof(command), address);
-		if (result == 0) {
-			break;
-		}
-		k_msleep(KEYBOARD_UPDATE_POLL_MS);
-	} while (k_uptime_get() < deadline);
-	if (result != 0) {
-		return result;
-	}
-	do {
-		result = i2c_read(keyboard_i2c, version,
-			EF800_KB_UPDATE_VERSION_SIZE, address);
-		if (result == 0) {
-			if (version[0] == EF800_KB_PROTOCOL_BUSY) {
-				k_msleep(KEYBOARD_UPDATE_POLL_MS);
-				continue;
-			}
-			return version[0] == command &&
-				version[4] == EF800_KB_UPDATE_VERSION_ACK ? 0 : -EBADMSG;
-		}
-		k_msleep(KEYBOARD_UPDATE_POLL_MS);
-	} while (k_uptime_get() < deadline);
-	return result != 0 ? result : -ETIMEDOUT;
-}
-
 static int keyboard_update_enter_bootloader_fallback(uint8_t *version)
 {
 	int result;
@@ -1618,7 +1357,7 @@ static int keyboard_update_enter_bootloader_fallback(uint8_t *version)
 		result = gpio_pin_set_dt(&keyboard_reset, 1);
 	}
 	if (result == 0) {
-		result = keyboard_update_query_version(
+		result = ef800_keyboard_update_query_version(keyboard_i2c,
 			EF800_KEYBOARD_UPDATER_I2C_ADDRESS, version, 2000U);
 	}
 	release_result = gpio_pin_set_dt(&keyboard_updater_request, 0);
@@ -1648,7 +1387,7 @@ static int keyboard_update_enter_resident(void)
 		 * previous request, even if the controller reported an I/O error
 		 * while that transaction was completing. Prefer the updater's live
 		 * VERSION response before retrying the idempotent entry command. */
-		updater_result = keyboard_update_query_version(
+		updater_result = ef800_keyboard_update_query_version(keyboard_i2c,
 			EF800_KEYBOARD_UPDATER_I2C_ADDRESS, version, 100U);
 		if (updater_result == 0) {
 			return 0;
@@ -1694,7 +1433,7 @@ static int keyboard_update_identify(uint16_t address)
 	bool found_id = false;
 	int result;
 
-	result = keyboard_update_request(address, EF800_KB_UPDATE_CMD_GET,
+	result = ef800_keyboard_update_request(keyboard_i2c, address, EF800_KB_UPDATE_CMD_GET,
 		NULL, 0U, get, get_length, 2000U);
 	if (result != 0) {
 		LOG_ERR("keyboard update identify GET at 0x%02x failed: %d "
@@ -1716,7 +1455,7 @@ static int keyboard_update_identify(uint16_t address)
 	if (!found_id) {
 		return -ENOTSUP;
 	}
-	result = keyboard_update_request(address, EF800_KB_UPDATE_CMD_GET_ID,
+	result = ef800_keyboard_update_request(keyboard_i2c, address, EF800_KB_UPDATE_CMD_GET_ID,
 		NULL, 0U, id, sizeof(id), 2000U);
 	if (result != 0) {
 		LOG_ERR("keyboard update identify GET_ID at 0x%02x failed: %d "
@@ -1772,357 +1511,102 @@ static int keyboard_update_wait_application_service(void)
 	return atomic_get(&keyboard_ready_indication) != 0 ? 0 : -ETIMEDOUT;
 }
 
+static bool keyboard_update_storage_mounted(void *context)
+{
+	ARG_UNUSED(context);
+	return ef800_storage_is_mounted();
+}
+
+static bool keyboard_update_usb_msd_requested(void *context)
+{
+	ARG_UNUSED(context);
+	return ef800_main_usb_msd_requested();
+}
+
+static int keyboard_update_enter_resident_adapter(void *context)
+{
+	ARG_UNUSED(context);
+	return keyboard_update_enter_resident();
+}
+
+static int keyboard_update_wait_service_adapter(void *context)
+{
+	ARG_UNUSED(context);
+	return keyboard_update_wait_application_service();
+}
+
+static int keyboard_update_identify_adapter(void *context, uint16_t address)
+{
+	ARG_UNUSED(context);
+	return keyboard_update_identify(address);
+}
+
+static int keyboard_update_fallback_adapter(void *context, uint8_t *version)
+{
+	ARG_UNUSED(context);
+	return keyboard_update_enter_bootloader_fallback(version);
+}
+
+static int keyboard_update_wait_application_adapter(void *context,
+	const struct ef800_keyboard_package_header *header)
+{
+	ARG_UNUSED(context);
+	return keyboard_update_wait_app(header);
+}
+
 static int keyboard_update_run(void)
 {
-	struct fs_dirent entry;
-	struct fs_file_t file;
-	struct ef800_keyboard_package_header header;
-	uint8_t data[EF800_KB_UPDATE_BLOCK_MAX];
-	uint8_t payload[EF800_KB_UPDATE_BLOCK_MAX + 7U];
-	uint8_t response[EF800_KB_UPDATE_RESPONSE_MAX];
-	uint32_t vector[2];
-	uint32_t image_base;
-	size_t image_limit;
-	uint32_t source_crc = 0U;
-	uint16_t target;
-	uint16_t service_address;
-	int result;
-	bool package_invalid = false;
+	const struct ef800_keyboard_update_transaction transaction = {
+		.i2c = keyboard_i2c,
+		.package_path = EF800_KEYBOARD_PACKAGE_PATH,
+		.active = &keyboard_update_active,
+		.storage_mounted = keyboard_update_storage_mounted,
+		.usb_msd_requested = keyboard_update_usb_msd_requested,
+		.enter_resident_updater = keyboard_update_enter_resident_adapter,
+		.wait_application_service = keyboard_update_wait_service_adapter,
+		.identify = keyboard_update_identify_adapter,
+		.enter_updater_fallback = keyboard_update_fallback_adapter,
+		.wait_application = keyboard_update_wait_application_adapter,
+	};
 
-	if (keyboard_update_active || !ef800_storage_is_mounted() ||
-		ef800_main_usb_msd_requested()) {
-		return -EAGAIN;
-	}
-	result = fs_stat(EF800_KEYBOARD_PACKAGE_PATH, &entry);
-	if (result == -ENOENT) {
-		return 0;
-	}
-	if (result != 0 || entry.type != FS_DIR_ENTRY_FILE) {
-		return result != 0 ? result : -EINVAL;
-	}
-	fs_file_t_init(&file);
-	result = fs_open(&file, EF800_KEYBOARD_PACKAGE_PATH, FS_O_READ);
-	if (result != 0) {
-		return result;
-	}
-	keyboard_update_active = true;
-	result = keyboard_update_read_package(&file, &header, entry.size);
-	if (result != 0) {
-		package_invalid = true;
-		goto cleanup;
-	}
-	switch (header.image_kind) {
-	case EF800_KEYBOARD_IMAGE_APPLICATION:
-		image_base = EF800_KEYBOARD_PACKAGE_BASE;
-		image_limit = EF800_KEYBOARD_PACKAGE_LIMIT;
-		target = EF800_KB_UPDATE_TARGET_APPLICATION;
-		service_address = EF800_KEYBOARD_UPDATER_I2C_ADDRESS;
-		break;
-	case EF800_KEYBOARD_IMAGE_BOOTLOADER:
-		image_base = EF800_KEYBOARD_BOOT_BASE;
-		image_limit = EF800_KEYBOARD_BOOT_LIMIT;
-		target = EF800_KB_UPDATE_TARGET_BOOTLOADER;
-		service_address = EF800_KEYBOARD_UPDATER_I2C_ADDRESS;
-		break;
-	case EF800_KEYBOARD_IMAGE_UPDATER:
-		image_base = EF800_KEYBOARD_UPDATER_BASE;
-		image_limit = EF800_KEYBOARD_UPDATER_LIMIT;
-		target = EF800_KB_UPDATE_TARGET_UPDATER;
-		service_address = EF800_KEYBOARD_I2C_ADDRESS;
-		break;
-	default:
-		result = -EINVAL;
-		package_invalid = true;
-		goto cleanup;
-	}
-	if (header.image_size > image_limit ||
-	    fs_seek(&file, header.header_size, FS_SEEK_SET) != 0 ||
-	    fs_read(&file, vector, sizeof(vector)) != sizeof(vector) ||
-	    !ef800_vector_table_valid((const uint32_t *)vector, image_base,
-				      header.image_size, 0x20000000U, 0x0000F000U)) {
-		result = -EINVAL;
-		package_invalid = true;
-		goto cleanup;
-	}
-	if (header.image_kind != EF800_KEYBOARD_IMAGE_UPDATER) {
-		result = keyboard_update_enter_resident();
-		if (result != 0) {
-			LOG_ERR("keyboard update: resident updater handoff failed: %d", result);
-			goto cleanup;
-		}
-	} else {
-		/* The app services updater-slot writes at 0x2a. This worker runs
-		 * just after reset release, so wait for its 0xaa startup indication
-		 * (emitted after I2C target registration) before framed GET. */
-		result = keyboard_update_wait_application_service();
-		if (result != 0) {
-			LOG_ERR("keyboard update: application service not ready: %d",
-				result);
-			goto cleanup;
-		}
-	}
-	result = keyboard_update_identify(service_address);
-	if (result != 0) {
-		LOG_ERR("keyboard update: identify failed: %d", result);
-		goto cleanup;
-	}
-	{
-		uint8_t begin[9];
-		uint8_t erase[2] = {(uint8_t)target,
-			EF800_KB_UPDATE_ERASE_PARTITION};
-
-		begin[0] = (uint8_t)target;
-		keyboard_update_put_le32(&begin[1], header.image_size);
-		keyboard_update_put_le32(&begin[5], header.image_crc32);
-		result = keyboard_update_request(service_address,
-			EF800_KB_UPDATE_CMD_BEGIN, begin, sizeof(begin), response,
-			2U, 2000U);
-		if (result == 0) {
-			LOG_INF("keyboard update: partition ERASE started target=0x%02x",
-				target);
-			result = keyboard_update_request(service_address,
-				EF800_KB_UPDATE_CMD_ERASE, erase, sizeof(erase),
-				response, 2U, 30000U);
-		}
-		if (result != 0) {
-			LOG_ERR("keyboard update: BEGIN/ERASE failed: %d", result);
-			goto cleanup;
-		}
-	}
-	for (uint32_t offset = 0U; offset < header.image_size;) {
-		size_t length = MIN(sizeof(data), header.image_size - offset);
-
-		if (fs_seek(&file, header.header_size + offset, FS_SEEK_SET) != 0 ||
-		    fs_read(&file, data, length) != (ssize_t)length) {
-			result = -EIO;
-			goto cleanup;
-		}
-		source_crc = ef800_crc32_update(source_crc, data, length);
-		payload[0] = (uint8_t)target;
-		keyboard_update_put_le32(&payload[1], offset);
-		keyboard_update_put_le16(&payload[5], (uint16_t)length);
-		memcpy(&payload[7], data, length);
-		result = keyboard_update_request(service_address,
-			EF800_KB_UPDATE_CMD_WRITE_MEMORY, payload, length + 7U,
-			response, 2U, 5000U);
-		if (result != 0) {
-			LOG_ERR("keyboard update: WRITE offset 0x%x failed: %d",
-				offset, result);
-			goto cleanup;
-		}
-		offset += length;
-		if ((offset % 4096U) == 0U || offset == header.image_size) {
-			LOG_INF("keyboard update: streamed %u/%u bytes", offset,
-				header.image_size);
-		}
-	}
-	if (source_crc != header.image_crc32) {
-		result = -EBADMSG;
-		goto cleanup;
-	}
-	{
-		uint8_t check_target = (uint8_t)target;
-
-		LOG_INF("keyboard update: Flash CHECK started target=0x%02x",
-			target);
-		result = keyboard_update_request(service_address,
-			EF800_KB_UPDATE_CMD_CHECK, &check_target, 1U, response,
-			7U, 30000U);
-		if (result != 0 || keyboard_update_get_le32(&response[1]) !=
-		    header.image_crc32 || response[5] != 1U) {
-			result = result != 0 ? result : -EBADMSG;
-			LOG_ERR("keyboard update: Flash CHECK failed: %d", result);
-			goto cleanup;
-		}
-	}
-	if (header.image_kind == EF800_KEYBOARD_IMAGE_UPDATER) {
-		uint8_t version[EF800_KB_UPDATE_VERSION_SIZE];
-		/* A direct application-to-updater branch leaves stale STM32 I2C
-		 * peripheral state behind: CHECK can pass, but the updater's 0x48
-		 * target then never answers. Reset through the resident bootloader
-		 * with JP7 asserted so it performs a clean updater startup. */
-		result = keyboard_update_enter_bootloader_fallback(version);
-		if (result == 0 &&
-		    (version[1] != header.version_major ||
-		     version[2] != header.version_minor ||
-		     version[3] != header.version_patch)) {
-			LOG_ERR("keyboard updater version mismatch: expected %u.%u.%u, "
-				"got %u.%u.%u", header.version_major,
-				header.version_minor, header.version_patch,
-				version[1], version[2], version[3]);
-			result = -EBADMSG;
-		}
-	} else {
-		result = keyboard_update_request(service_address,
-			EF800_KB_UPDATE_CMD_RUN, NULL, 0U, response, 2U, 2000U);
-		if (result == 0) {
-			result = keyboard_update_wait_app(&header);
-		}
-	}
-	if (result == 0) {
-		result = fs_unlink(EF800_KEYBOARD_PACKAGE_PATH);
-	}
-	if (result == 0) {
-		LOG_INF("keyboard update: transfer and verification complete");
-	}
-cleanup:
-	(void)fs_close(&file);
-	if (package_invalid) {
-		(void)fs_unlink(EF800_KEYBOARD_PACKAGE_PATH);
-	}
-	keyboard_update_active = false;
-	if (result != 0) {
-		LOG_ERR("keyboard update: failed: %d", result);
-	}
-	return result;
+	return ef800_keyboard_update_transaction_run(&transaction);
 }
 
-static void keyboard_uart_send(const uint8_t *data, size_t length)
+static int main_shell_keyboard_boot_probe(uint8_t *version)
 {
-	size_t index;
-
-	for (index = 0U; index < length; ++index) {
-		uart_poll_out(keyboard_uart, data[index]);
-	}
-}
-
-static int keyboard_send_command_locked(uint8_t command,
-					const uint8_t *payload, size_t payload_length)
-{
-	uint8_t status;
-	int result;
-
-	if (!keyboard_uart_initialized || !ef800_keyboard_host_is_ready(&keyboard_host)) {
-		return -ENODEV;
-	}
-
-	k_sem_reset(&keyboard_command_complete);
-	keyboard_pending_command = command;
-	keyboard_command_pending = true;
-	if (command == CMD_KEYBOARD_VERSION) {
-		LOG_INF("Keyboard version query: TX command 0x%02x", command);
-	}
-	keyboard_uart_send(&command, 1U);
-	if (payload != NULL && payload_length != 0U) {
-		keyboard_uart_send(payload, payload_length);
-	}
-	result = k_sem_take(&keyboard_command_complete,
-		K_MSEC(KEYBOARD_COMMAND_TIMEOUT_MS));
-	keyboard_command_pending = false;
-	if (result != 0) {
-		if (command == CMD_KEYBOARD_VERSION) {
-			LOG_WRN("Keyboard version query timed out; RX response incomplete or absent");
-		}
-		return -ETIMEDOUT;
-	}
-	if (command == CMD_KEYBOARD_VERSION) {
-		uint8_t version[3];
-
-		return ef800_keyboard_host_get_version(&keyboard_host, version) ?
-			0 : -EBADMSG;
-	}
-	status = keyboard_host.last_command_status;
-	return status == CMD_ACK ? 0 : -EIO;
-}
-
-static int keyboard_send_command(uint8_t command,
-				 const uint8_t *payload, size_t payload_length)
-{
-	int result;
-
-	k_mutex_lock(&keyboard_command_mutex, K_FOREVER);
-	result = keyboard_send_command_locked(command, payload, payload_length);
-	k_mutex_unlock(&keyboard_command_mutex);
-	return result;
-}
-
-static int keyboard_send_virtual_key(uint8_t action, const char *name)
-{
-	uint8_t packet[3U + KB_DEBUG_KEY_NAME_MAX];
-	size_t length;
-	int result;
-
-	if (!keyboard_debug_active || name == NULL) {
-		return -EACCES;
-	}
-	length = strlen(name);
-	if (length == 0U || length > KB_DEBUG_KEY_NAME_MAX) {
-		return -EINVAL;
-	}
-
-	packet[0] = CMD_KEYBOARD_DEBUG;
-	packet[1] = action;
-	packet[2] = (uint8_t)length;
-	memcpy(&packet[3], name, length);
-
-	k_mutex_lock(&keyboard_command_mutex, K_FOREVER);
-	if (!keyboard_uart_initialized || !ef800_keyboard_host_is_ready(&keyboard_host)) {
-		result = -ENODEV;
-	} else {
-		keyboard_uart_send(packet, 3U + length);
-		result = 0;
-	}
-	k_mutex_unlock(&keyboard_command_mutex);
-	return result;
-}
-
-static void display_raw_line(uint8_t row, const char *text)
-{
-	char line[STATUS_LINE_SIZE];
-	int length;
-
-	if (!lcd_ready) {
-		return;
-	}
-
-	length = snprintf(line, sizeof(line), "%-40.40s", text == NULL ? "" : text);
-	if (length < 0) {
-		return;
-	}
-	(void)ef800_t6963_text_cursor(&lcd, 0U, row);
-	(void)ef800_t6963_write_string(&lcd, line);
-}
-
-static void display_header(const char *title)
-{
-	struct ef800_runtime_snapshot snapshot;
-	char line[LCD_COLUMNS + 1U];
-	char clock_text[6];
-
-	memset(line, ' ', sizeof(line) - 1U);
-	line[sizeof(line) - 1U] = '\0';
-	if (title != NULL) {
-		snprintk(header_title, sizeof(header_title), "%.16s", title);
-	}
-	memcpy(line, header_title, strlen(header_title));
-	if (runtime_state_ready &&
-		ef800_runtime_state_snapshot(&runtime_state, &snapshot) == 0 &&
-		snapshot.rtc_has_value) {
-		snprintk(clock_text, sizeof(clock_text), "%02d:%02d",
-			snapshot.local_time.tm_hour, snapshot.local_time.tm_min);
-		memcpy(&line[17], clock_text, sizeof(clock_text) - 1U);
-	}
-	display_raw_line(0U, line);
+	return keyboard_update_enter_bootloader_fallback(version);
 }
 
 static int draw_header_separator(void)
 {
-	return ef800_t6963_draw_horizontal_line(&lcd, 8U);
+	return ef800_main_display_draw_header_separator(&main_display);
+}
+
+static void main_display_clock_text(char clock_text[6])
+{
+	struct ef800_runtime_snapshot snapshot;
+
+	clock_text[0] = '\0';
+	if (runtime_state_ready &&
+	    ef800_runtime_state_snapshot(&runtime_state, &snapshot) == 0 &&
+	    snapshot.rtc_has_value) {
+		(void)snprintk(clock_text, 6U, "%02d:%02d",
+		snapshot.local_time.tm_hour, snapshot.local_time.tm_min);
+	}
 }
 
 static void display_line(uint8_t row, const char *text)
 {
-	if (row == 0U) {
-		display_header(text);
-		return;
-	}
-	display_raw_line(row, text);
+	char clock_text[6];
+
+	main_display_clock_text(clock_text);
+	ef800_main_display_line(&main_display, row, text, clock_text);
 }
 
 static void display_banner(void)
 {
 	clear_display();
-	display_header("EF800");
+	display_line(0U, "EF800");
 	display_line(1U, "MainApplication");
 	display_line(6U, "Keyboard startup...");
 }
@@ -2131,28 +1615,24 @@ static void display_menu_entries(const char *title, const char *const *items,
 				 const char *const *shortcuts, size_t count)
 {
 	char line[STATUS_LINE_SIZE];
+	char clock_text[6] = "";
+	struct ef800_runtime_snapshot snapshot;
 
-	clear_display();
-
-	display_line(0U, title);
 	if (ef800_workspace_is_selected(&workspace)) {
 		snprintk(line, sizeof(line), "Workspace: %s",
 			ef800_workspace_get_name(&workspace));
 	} else {
-		snprintk(line, sizeof(line), "Workspace: none");
+		line[0] = '\0';
 	}
-	display_line(1U, line);
-	display_line(2U, "");
-	for (size_t index = 0U; index < 5U; ++index) {
-		if (index < count) {
-			snprintk(line, sizeof(line), "%c %s [%s]",
-				index == menu_selection ? '>' : ' ', items[index],
-				shortcuts[index]);
-		} else {
-			line[0] = '\0';
-		}
-		display_line((uint8_t)(3U + index), line);
+	if (runtime_state_ready &&
+	    ef800_runtime_state_snapshot(&runtime_state, &snapshot) == 0 &&
+	    snapshot.rtc_has_value) {
+		(void)snprintk(clock_text, sizeof(clock_text), "%02d:%02d",
+			snapshot.local_time.tm_hour, snapshot.local_time.tm_min);
 	}
+	ef800_main_display_menu(&main_display, title,
+		line[0] == '\0' ? NULL : line, items, shortcuts, count,
+		menu_selection, clock_text);
 }
 
 static void display_menu(void)
@@ -2237,406 +1717,42 @@ static void display_workspace_management_menu(void)
 
 static void workspace_view_reset(void)
 {
-	memset(workspace_view_lines, 0, sizeof(workspace_view_lines));
-	memset(workspace_view_line_starts, 0, sizeof(workspace_view_line_starts));
-	memset(workspace_view_line_ends, 0, sizeof(workspace_view_line_ends));
-	workspace_view_line_count = 0U;
-	workspace_view_start = 0U;
-	workspace_view_end = 0U;
-	workspace_view_file_size = 0U;
-	workspace_view_selected_row = 0U;
-	memset(&workspace_view_version, 0, sizeof(workspace_view_version));
-	workspace_view_active = false;
-	workspace_view_position_only = false;
-}
-
-static int workspace_view_set_row(size_t index,
-				  const struct ef800_workspace_row *row)
-{
-	size_t text_length = row->text_end - row->start;
-	size_t copy_length = MIN(text_length, WORKSPACE_VIEW_COLUMNS);
-	size_t length = 0U;
-	int result;
-
-	if (index >= WORKSPACE_VIEW_ROWS || row->text_end < row->start) {
-		return -EINVAL;
-	}
-	if (copy_length != 0U) {
-		result = ef800_workspace_read_range(&workspace, row->start,
-			row->start + copy_length, workspace_view_lines[index],
-			WORKSPACE_VIEW_COLUMNS, &length);
-		if (result != 0) {
-			return result;
-		}
-		if (length != copy_length) {
-			return -EIO;
-		}
-	}
-	workspace_view_lines[index][copy_length] = '\0';
-	workspace_view_line_starts[index] = row->start;
-	workspace_view_line_ends[index] = row->end;
-	return 0;
-}
-
-static void workspace_view_reverse_rows(void)
-{
-	for (size_t left = 0U; left < workspace_view_line_count / 2U; ++left) {
-		size_t right = workspace_view_line_count - left - 1U;
-		char line[WORKSPACE_VIEW_COLUMNS + 1U];
-		size_t offset;
-
-		memcpy(line, workspace_view_lines[left], sizeof(line));
-		memcpy(workspace_view_lines[left], workspace_view_lines[right], sizeof(line));
-		memcpy(workspace_view_lines[right], line, sizeof(line));
-		offset = workspace_view_line_starts[left];
-		workspace_view_line_starts[left] = workspace_view_line_starts[right];
-		workspace_view_line_starts[right] = offset;
-		offset = workspace_view_line_ends[left];
-		workspace_view_line_ends[left] = workspace_view_line_ends[right];
-		workspace_view_line_ends[right] = offset;
-	}
-}
-
-static int workspace_view_find_last_row(struct ef800_workspace_row *row)
-{
-	uint8_t buffer[WORKSPACE_VIEW_SCAN_CHUNK];
-	uint8_t last;
-	size_t length;
-	size_t search_end = workspace_view_file_size;
-	int result;
-
-	if (row == NULL || workspace_view_file_size == 0U) {
-		return -ENODATA;
-	}
-	result = ef800_workspace_read_range(&workspace, workspace_view_file_size - 1U,
-		workspace_view_file_size, &last, 1U, &length);
-	if (result != 0) {
-		return result;
-	}
-	if (length != 1U) {
-		return -EIO;
-	}
-	if (last == '\r' || last == '\n') {
-		return ef800_workspace_row_before(&workspace, workspace_view_file_size, row);
-	}
-	while (search_end > 0U) {
-		size_t chunk_start = search_end > sizeof(buffer) ?
-			search_end - sizeof(buffer) : 0U;
-
-		result = ef800_workspace_read_range(&workspace, chunk_start, search_end,
-			buffer, sizeof(buffer), &length);
-		if (result != 0) {
-			return result;
-		}
-		if (length != search_end - chunk_start) {
-			return -EIO;
-		}
-		for (size_t index = length; index > 0U; --index) {
-			if (buffer[index - 1U] == '\r' || buffer[index - 1U] == '\n') {
-				return ef800_workspace_row_at(&workspace,
-					chunk_start + index, row);
-			}
-		}
-		search_end = chunk_start;
-	}
-	return ef800_workspace_row_at(&workspace, 0U, row);
-}
-
-static int workspace_view_add_older_rows(const struct ef800_workspace_row *last_row)
-{
-	struct ef800_workspace_row row = *last_row;
-	int result;
-
-	workspace_view_line_count = 0U;
-	memset(workspace_view_lines, 0, sizeof(workspace_view_lines));
-	memset(workspace_view_line_starts, 0, sizeof(workspace_view_line_starts));
-	memset(workspace_view_line_ends, 0, sizeof(workspace_view_line_ends));
-	for (size_t count = 0U; count < WORKSPACE_VIEW_ROWS; ++count) {
-		result = workspace_view_set_row(workspace_view_line_count, &row);
-		if (result != 0) {
-			return result;
-		}
-		++workspace_view_line_count;
-		if (row.start == 0U) {
-			break;
-		}
-		result = ef800_workspace_row_before(&workspace, row.start, &row);
-		if (result == -ENOENT) {
-			break;
-		}
-		if (result != 0) {
-			return result;
-		}
-	}
-	if (workspace_view_line_count == 0U) {
-		return -ENODATA;
-	}
-	workspace_view_reverse_rows();
-	workspace_view_start = workspace_view_line_starts[0];
-	workspace_view_end = workspace_view_line_ends[workspace_view_line_count - 1U];
-	workspace_view_selected_row = workspace_view_line_count - 1U;
-	return 0;
+	ef800_workspace_browser_reset(&workspace_browser);
 }
 
 static int workspace_view_refresh_at(size_t anchor)
 {
-	struct ef800_workspace_row row;
-	int result;
-
-	result = ef800_workspace_get_version(&workspace, &workspace_view_version);
-	if (result != 0) {
-		return result;
-	}
-	result = ef800_workspace_size(&workspace, &workspace_view_file_size);
-	if (result != 0) {
-		return result;
-	}
-	workspace_view_line_count = 0U;
-	workspace_view_selected_row = 0U;
-	memset(workspace_view_lines, 0, sizeof(workspace_view_lines));
-	memset(workspace_view_line_starts, 0, sizeof(workspace_view_line_starts));
-	memset(workspace_view_line_ends, 0, sizeof(workspace_view_line_ends));
-	if (workspace_view_file_size == 0U) {
-		workspace_view_start = 0U;
-		workspace_view_end = 0U;
-		workspace_view_active = false;
-		return -ENODATA;
-	}
-	if (anchor >= workspace_view_file_size) {
-		result = workspace_view_find_last_row(&row);
-	} else {
-		result = ef800_workspace_row_at(&workspace, anchor, &row);
-	}
-	if (result != 0) {
-		return result;
-	}
-	workspace_view_active = true;
-	workspace_view_position_only = false;
-	for (size_t index = 0U; index < WORKSPACE_VIEW_ROWS; ++index) {
-		result = workspace_view_set_row(index, &row);
-		if (result != 0) {
-			return result;
-		}
-		++workspace_view_line_count;
-		if (row.end >= workspace_view_file_size) {
-			break;
-		}
-		result = ef800_workspace_row_at(&workspace, row.end, &row);
-		if (result == -ENOENT) {
-			break;
-		}
-		if (result != 0) {
-			return result;
-		}
-	}
-	workspace_view_start = workspace_view_line_starts[0];
-	workspace_view_end = workspace_view_line_ends[workspace_view_line_count - 1U];
-	return 0;
+	return ef800_workspace_browser_refresh_at(&workspace_browser, &workspace,
+		anchor);
 }
 
 static int workspace_view_open_measurements(void)
 {
-	struct ef800_workspace_row last_row;
-	int result;
-
-	workspace_view_reset();
-	if (!ef800_workspace_is_selected(&workspace)) {
-		return -ENODEV;
-	}
-	result = ef800_workspace_get_version(&workspace, &workspace_view_version);
-	if (result != 0) {
-		return result;
-	}
-	result = ef800_workspace_size(&workspace, &workspace_view_file_size);
-	if (result != 0 || workspace_view_file_size == 0U) {
-		return result != 0 ? result : -ENODATA;
-	}
-	result = workspace_view_find_last_row(&last_row);
-	if (result == 0) {
-		result = workspace_view_add_older_rows(&last_row);
-	}
-	if (result == 0) {
-		workspace_view_active = true;
-	}
-	return result;
+	return ef800_workspace_browser_open_measurements(&workspace_browser,
+		&workspace);
 }
 
 static int workspace_view_move(int direction)
 {
-	struct ef800_workspace_row adjacent;
-	size_t last_index;
-	int result;
-
-	if (!workspace_view_active || workspace_view_line_count == 0U ||
-	    workspace_view_position_only) {
-		return -EINVAL;
-	}
-	last_index = workspace_view_line_count - 1U;
-	if (direction < 0) {
-		if (workspace_view_selected_row > 0U) {
-			--workspace_view_selected_row;
-			return 0;
-		}
-		result = ef800_workspace_row_before(&workspace,
-			workspace_view_line_starts[0], &adjacent);
-		if (result != 0) {
-			return result;
-		}
-		if (workspace_view_line_count < WORKSPACE_VIEW_ROWS) {
-			++workspace_view_line_count;
-		}
-		for (size_t index = workspace_view_line_count - 1U; index > 0U; --index) {
-			memcpy(workspace_view_lines[index], workspace_view_lines[index - 1U],
-			       sizeof(workspace_view_lines[0]));
-			workspace_view_line_starts[index] = workspace_view_line_starts[index - 1U];
-			workspace_view_line_ends[index] = workspace_view_line_ends[index - 1U];
-		}
-		result = workspace_view_set_row(0U, &adjacent);
-		if (result != 0) {
-			return result;
-		}
-		workspace_view_selected_row = 0U;
-	} else {
-		if (workspace_view_selected_row < last_index) {
-			++workspace_view_selected_row;
-			return 0;
-		}
-		if (workspace_view_line_ends[last_index] >= workspace_view_file_size) {
-			return -ENOENT;
-		}
-		result = ef800_workspace_row_at(&workspace,
-			workspace_view_line_ends[last_index], &adjacent);
-		if (result != 0) {
-			return result;
-		}
-		if (workspace_view_line_count == WORKSPACE_VIEW_ROWS) {
-			for (size_t index = 1U; index < WORKSPACE_VIEW_ROWS; ++index) {
-				memcpy(workspace_view_lines[index - 1U],
-					workspace_view_lines[index],
-					sizeof(workspace_view_lines[0]));
-				workspace_view_line_starts[index - 1U] =
-					workspace_view_line_starts[index];
-				workspace_view_line_ends[index - 1U] =
-					workspace_view_line_ends[index];
-			}
-		} else {
-			++workspace_view_line_count;
-		}
-		last_index = workspace_view_line_count - 1U;
-		result = workspace_view_set_row(last_index, &adjacent);
-		if (result != 0) {
-			return result;
-		}
-		workspace_view_selected_row = last_index;
-	}
-	workspace_view_start = workspace_view_line_starts[0];
-	workspace_view_end = workspace_view_line_ends[workspace_view_line_count - 1U];
-	return 0;
+	return ef800_workspace_browser_move(&workspace_browser, &workspace,
+		direction);
 }
 
 static int workspace_view_find_position(void)
 {
-	struct ef800_workspace_row row;
-	uint8_t first_character;
-	char line[WORKSPACE_VIEW_COLUMNS + 1U];
-	size_t offset = 0U;
-	size_t file_size;
-	int result;
-
-	workspace_view_reset();
-	if (!ef800_workspace_is_selected(&workspace)) {
-		return -ENODEV;
-	}
-	result = ef800_workspace_size(&workspace, &workspace_view_file_size);
-	if (result != 0) {
-		return result;
-	}
-	file_size = workspace_view_file_size;
-	while (offset < file_size) {
-		size_t text_length;
-		size_t copy_length;
-		size_t length;
-
-		result = ef800_workspace_row_at(&workspace, offset, &row);
-		if (result != 0) {
-			return result;
-		}
-		text_length = row.text_end - row.start;
-		if (text_length != 0U) {
-			result = ef800_workspace_read_range(&workspace, row.start,
-				row.start + 1U, &first_character, 1U, &length);
-			if (result != 0) {
-				return result;
-			}
-			if (length != 1U) {
-				return -EIO;
-			}
-			if (first_character == '-') {
-				copy_length = MIN(text_length, WORKSPACE_VIEW_COLUMNS);
-				result = ef800_workspace_read_range(&workspace, row.start,
-					row.start + copy_length, line, sizeof(line), &length);
-				if (result != 0) {
-					return result;
-				}
-				if (length != copy_length) {
-					return -EIO;
-				}
-				line[copy_length] = '\0';
-				memcpy(workspace_view_lines[0], line, copy_length + 1U);
-				workspace_view_line_count = 1U;
-		}
-		}
-		if (row.end <= offset) {
-			return -EIO;
-		}
-		offset = row.end;
-	}
-	workspace_view_active = true;
-	workspace_view_position_only = true;
-	return 0;
+	return ef800_workspace_browser_find_position(&workspace_browser, &workspace);
 }
 
 static void display_workspace_view(void)
 {
-	char workspace_line[STATUS_LINE_SIZE];
-	char selected_line[WORKSPACE_VIEW_COLUMNS + 1U];
+	char clock_text[6];
+	const char *name = ef800_workspace_is_selected(&workspace) ?
+		ef800_workspace_get_name(&workspace) : NULL;
 
-	clear_display();
-
-	display_line(0U, workspace_view_position_only ? "Current Position" :
-								"Show Measurements");
-	if (ef800_workspace_is_selected(&workspace)) {
-		snprintk(workspace_line, sizeof(workspace_line), "Workspace: %s",
-				 ef800_workspace_get_name(&workspace));
-		display_line(1U, workspace_line);
-	} else {
-		display_line(1U, "Workspace: none");
-	}
-	if (!workspace_view_active) {
-		display_line(3U, workspace_view_file_size == 0U ?
-			"No workspace data" : "Workspace unavailable");
-		display_line(7U, "ESC back");
-		return;
-	}
-	if (workspace_view_position_only) {
-		display_line(3U, workspace_view_line_count == 0U ?
-					"No position" : workspace_view_lines[0]);
-		display_line(7U, "ESC back");
-		return;
-	}
-	for (size_t row = 0U; row < WORKSPACE_VIEW_ROWS; ++row) {
-		if (row >= workspace_view_line_count) {
-			display_line((uint8_t)(3U + row), "");
-			continue;
-		}
-		selected_line[0] = row == workspace_view_selected_row ? '>' : ' ';
-		selected_line[1] = ' ';
-		strncpy(&selected_line[2], workspace_view_lines[row],
-			WORKSPACE_VIEW_COLUMNS - 2U);
-		selected_line[WORKSPACE_VIEW_COLUMNS] = '\0';
-		display_line((uint8_t)(3U + row), selected_line);
-	}
-	display_line(7U, "UP/DOWN select ENTER actions");
+	main_display_clock_text(clock_text);
+	ef800_main_display_workspace_view(&main_display, &workspace_browser,
+		ef800_workspace_is_selected(&workspace), name,
+		workspace_view_position_only, clock_text);
 }
 
 static void display_workspace_row_actions(void)
@@ -2655,63 +1771,29 @@ static void display_workspace_row_actions(void)
 
 static void display_workspace_row_delete_confirmation(void)
 {
-	char line[WORKSPACE_VIEW_COLUMNS + 1U];
+	char clock_text[6];
+	char selected_line[WORKSPACE_VIEW_COLUMNS + 1U];
+	const char *selected = NULL;
 
-	clear_display();
-	display_line(0U, "Delete selected row?");
 	if (workspace_view_selected_row < workspace_view_line_count) {
-		snprintk(line, sizeof(line), "%.*s",
-			(int)sizeof(line) - 1,
+		(void)snprintf(selected_line, sizeof(selected_line), "%.*s",
+			(int)sizeof(selected_line) - 1,
 			workspace_view_lines[workspace_view_selected_row]);
-		display_line(2U, line);
+		selected = selected_line;
 	}
-	display_line(5U, "ENTER confirm delete");
-	display_line(6U, "ESC cancel");
+	main_display_clock_text(clock_text);
+	ef800_main_display_workspace_row_confirmation(&main_display, selected,
+		clock_text);
 }
 
 static void display_workspace_row_editor(void)
 {
-	char mode[WORKSPACE_VIEW_COLUMNS + 1U];
-	char text_line[WORKSPACE_VIEW_COLUMNS + 1U];
-	char caret_line[WORKSPACE_VIEW_COLUMNS + 1U];
-	size_t view_width = WORKSPACE_VIEW_COLUMNS - 1U;
-	size_t caret_column;
-	size_t visible_length;
+	char clock_text[6];
 
-	if (workspace_row_editor.caret < workspace_row_editor.viewport_start) {
-		workspace_row_editor.viewport_start = workspace_row_editor.caret;
-	} else if (workspace_row_editor.caret >
-		   workspace_row_editor.viewport_start + view_width) {
-		workspace_row_editor.viewport_start =
-			workspace_row_editor.caret - view_width;
-	}
-	clear_display();
-	display_line(0U, "Modify workspace row");
-	snprintk(mode, sizeof(mode), "Workspace: %s",
-		ef800_workspace_get_name(&workspace));
-	display_line(1U, mode);
-	display_line(2U, workspace_row_editor.insert_mode ?
-		"INSERT (INS toggles)" : "OVERWRITE (INS toggles)");
-	visible_length = workspace_row_editor.length > workspace_row_editor.viewport_start ?
-		MIN(view_width, workspace_row_editor.length -
-			workspace_row_editor.viewport_start) : 0U;
-	if (visible_length != 0U) {
-		memcpy(text_line, &workspace_row_editor.text[
-			workspace_row_editor.viewport_start], visible_length);
-	}
-	text_line[visible_length] = '\0';
-	display_line(3U, text_line);
-	memset(caret_line, ' ', view_width);
-	caret_column = workspace_row_editor.caret -
-		workspace_row_editor.viewport_start;
-	if (caret_column > view_width) {
-		caret_column = view_width;
-	}
-	caret_line[caret_column] = '^';
-	caret_line[view_width] = '\0';
-	display_line(4U, caret_line);
-	display_line(6U, "BACKSPACE/DEL remove");
-	display_line(7U, "ENTER save  ESC cancel");
+	main_display_clock_text(clock_text);
+	ef800_main_display_workspace_row_editor(&main_display,
+		&workspace_row_editor, ef800_workspace_get_name(&workspace),
+		clock_text);
 }
 
 static void workspace_row_editor_cancel(void)
@@ -2724,26 +1806,16 @@ static void workspace_row_editor_cancel(void)
 static void workspace_row_editor_start(void)
 {
 	struct ef800_workspace_row row;
-	struct ef800_workspace_version current_version;
+	char row_text[EF800_WORKSPACE_ROW_EDIT_MAX];
 	size_t length;
 	int result;
 
 	if (workspace_view_selected_row >= workspace_view_line_count) {
 		return;
 	}
-	result = ef800_workspace_get_version(&workspace, &current_version);
-	if (result != 0 || current_version.size != workspace_view_version.size ||
-	    current_version.fingerprint != workspace_view_version.fingerprint) {
-		active_menu = APPLICATION_MENU_WORKSPACE_VIEW;
-		result = workspace_view_open_measurements();
-		display_workspace_view();
-		display_line(6U, "Workspace changed; reloaded");
-		return;
-	}
-	result = ef800_workspace_row_at(&workspace,
-		workspace_view_line_starts[workspace_view_selected_row], &row);
-	if (result != 0 || row.end !=
-	    workspace_view_line_ends[workspace_view_selected_row]) {
+	result = ef800_workspace_browser_selected_row(&workspace_browser,
+		&workspace, &row);
+	if (result != 0) {
 		active_menu = APPLICATION_MENU_WORKSPACE_VIEW;
 		(void)workspace_view_open_measurements();
 		display_workspace_view();
@@ -2751,28 +1823,24 @@ static void workspace_row_editor_start(void)
 		return;
 	}
 	length = row.text_end - row.start;
-	if (length > WORKSPACE_ROW_EDIT_MAX) {
+	if (length > EF800_WORKSPACE_ROW_EDIT_MAX) {
 		active_menu = APPLICATION_MENU_WORKSPACE_ROW_ACTIONS;
 		display_workspace_row_actions();
 		display_line(6U, "Row too long to modify");
 		return;
 	}
-	memset(&workspace_row_editor, 0, sizeof(workspace_row_editor));
-	workspace_row_editor.row = row;
-	workspace_row_editor.length = length;
-	workspace_row_editor.caret = length;
-	workspace_row_editor.insert_mode = true;
 	result = ef800_workspace_read_range(&workspace, row.start, row.text_end,
-		workspace_row_editor.text, WORKSPACE_ROW_EDIT_MAX, &length);
-	if (result != 0 || length != workspace_row_editor.length ||
-	    memchr(workspace_row_editor.text, '\0', length) != NULL) {
+		row_text, sizeof(row_text), &length);
+	if (result != 0 || length != row.text_end - row.start ||
+	    memchr(row_text, '\0', length) != NULL) {
 		memset(&workspace_row_editor, 0, sizeof(workspace_row_editor));
 		active_menu = APPLICATION_MENU_WORKSPACE_ROW_ACTIONS;
 		display_workspace_row_actions();
 		display_line(6U, "Row cannot be edited");
 		return;
 	}
-	workspace_row_editor.text[workspace_row_editor.length] = '\0';
+	ef800_workspace_row_editor_init(&workspace_row_editor, &row,
+		row_text, length);
 	active_menu = APPLICATION_MENU_WORKSPACE_ROW_EDITOR;
 	display_workspace_row_editor();
 }
@@ -2780,8 +1848,8 @@ static void workspace_row_editor_start(void)
 static void workspace_row_editor_save(void)
 {
 	size_t anchor = workspace_row_editor.row.start;
-	int result = ef800_workspace_replace_row(&workspace, &workspace_view_version,
-		&workspace_row_editor.row, workspace_row_editor.text,
+	int result = ef800_workspace_browser_commit_row(&workspace_browser,
+		&workspace, &workspace_row_editor.row, workspace_row_editor.text,
 		workspace_row_editor.length, false);
 
 	if (result == 0) {
@@ -2816,46 +1884,22 @@ static void workspace_row_editor_key(uint8_t key)
 	}
 	if (key == 0x08U) {
 		if (workspace_row_editor.caret > 0U) {
-			memmove(&workspace_row_editor.text[workspace_row_editor.caret - 1U],
-				&workspace_row_editor.text[workspace_row_editor.caret],
-				workspace_row_editor.length - workspace_row_editor.caret + 1U);
-			--workspace_row_editor.caret;
-			--workspace_row_editor.length;
+			(void)ef800_workspace_row_editor_erase(&workspace_row_editor, true);
 		}
 		display_workspace_row_editor();
 		return;
 	}
 	if (key == 0x7FU) {
-		if (workspace_row_editor.caret < workspace_row_editor.length) {
-			memmove(&workspace_row_editor.text[workspace_row_editor.caret],
-				&workspace_row_editor.text[workspace_row_editor.caret + 1U],
-				workspace_row_editor.length - workspace_row_editor.caret);
-			--workspace_row_editor.length;
-		}
+		(void)ef800_workspace_row_editor_erase(&workspace_row_editor, false);
 		display_workspace_row_editor();
 		return;
 	}
-	if (key < 0x20U || key >= 0x7FU) {
-		return;
-	}
-	if (workspace_row_editor.insert_mode) {
-		if (workspace_row_editor.length >= WORKSPACE_ROW_EDIT_MAX) {
+	if (!ef800_workspace_row_editor_put(&workspace_row_editor, key)) {
+		if (key >= 0x20U && key < 0x7FU &&
+		    workspace_row_editor.length >= EF800_WORKSPACE_ROW_EDIT_MAX) {
 			display_line(6U, "Editor limit 255 bytes");
 			return;
 		}
-		memmove(&workspace_row_editor.text[workspace_row_editor.caret + 1U],
-			&workspace_row_editor.text[workspace_row_editor.caret],
-			workspace_row_editor.length - workspace_row_editor.caret + 1U);
-		workspace_row_editor.text[workspace_row_editor.caret++] = (char)key;
-		++workspace_row_editor.length;
-	} else if (workspace_row_editor.caret < workspace_row_editor.length) {
-		workspace_row_editor.text[workspace_row_editor.caret++] = (char)key;
-	} else if (workspace_row_editor.length < WORKSPACE_ROW_EDIT_MAX) {
-		workspace_row_editor.text[workspace_row_editor.length++] = (char)key;
-		workspace_row_editor.text[workspace_row_editor.length] = '\0';
-		workspace_row_editor.caret = workspace_row_editor.length;
-	} else {
-		display_line(6U, "Editor limit 255 bytes");
 		return;
 	}
 	display_workspace_row_editor();
@@ -2883,15 +1927,11 @@ static void workspace_view_delete_selected_row(void)
 		result = -EINVAL;
 	} else {
 		anchor = workspace_view_line_starts[workspace_view_selected_row];
-		result = ef800_workspace_row_at(&workspace,
-			anchor, &row);
-		if (result == 0 && row.end !=
-		    workspace_view_line_ends[workspace_view_selected_row]) {
-			result = -EAGAIN;
-		}
+		result = ef800_workspace_browser_selected_row(&workspace_browser,
+			&workspace, &row);
 		if (result == 0) {
-			result = ef800_workspace_replace_row(&workspace,
-				&workspace_view_version, &row, NULL, 0U, true);
+			result = ef800_workspace_browser_commit_row(&workspace_browser,
+				&workspace, &row, NULL, 0U, true);
 		}
 	}
 	if (result == 0) {
@@ -2918,15 +1958,14 @@ static void workspace_view_delete_selected_row(void)
 
 static void display_port_assignment_ports(void)
 {
-	char line[STATUS_LINE_SIZE];
+	char rows[4U][STATUS_LINE_SIZE] = {{0}};
+	const char *row_text[4U] = {NULL};
+	char subtitle[STATUS_LINE_SIZE];
+	char clock_text[6];
 	size_t first = menu_selection >= 3U ? menu_selection - 3U : 0U;
 
-	clear_display();
-
-	display_line(0U, "Port assignment");
-	snprintk(line, sizeof(line), "Ports %u-%u of %u", (unsigned)(first + 1U),
+	snprintk(subtitle, sizeof(subtitle), "Ports %u-%u of %u", (unsigned)(first + 1U),
 		(unsigned)MIN(first + 4U, EF800_PORT_COUNT), (unsigned)EF800_PORT_COUNT);
-	display_line(1U, line);
 	for (size_t row = 0U; row < 4U; ++row) {
 		size_t index = first + row;
 		const struct ef800_port_descriptor *port = ef800_port_at(index);
@@ -2936,7 +1975,6 @@ static void display_port_assignment_ports(void)
 		uint32_t plugin_id = EF800_PORT_BUILDER_NONE;
 
 		if (port == NULL) {
-			display_line((uint8_t)(3U + row), "");
 			continue;
 		}
 		if (ef800_port_assignment_is_assigned(&port_assignments, port->id)) {
@@ -2962,7 +2000,7 @@ static void display_port_assignment_ports(void)
 				}
 			}
 		}
-		snprintk(line, sizeof(line), "%c %c %s: %s%s%s%s",
+		snprintk(rows[row], sizeof(rows[row]), "%c %c %s: %s%s%s%s",
 			index == menu_selection ? '>' : ' ', port->shortcut, port->title,
 			device != NULL ? device->title :
 			plugin_assigned ? measurement_device_title(port->id) : "none",
@@ -2974,9 +2012,16 @@ static void display_port_assignment_ports(void)
 				ef800_port_assignment_get_connection(&port_assignments,
 								     port->id)) != 0 ?
 				" (UART unavailable)" : "");
-		display_line((uint8_t)(3U + row), line);
+		row_text[row] = rows[row];
 	}
-	display_line(7U, "ENTER edit  ESC back");
+	for (size_t row = 0U; row < ARRAY_SIZE(row_text); ++row) {
+		if (row_text[row] == NULL) {
+			row_text[row] = "";
+		}
+	}
+	main_display_clock_text(clock_text);
+	ef800_main_display_list_page(&main_display, "Port assignment", subtitle,
+		row_text, ARRAY_SIZE(row_text), "ENTER edit  ESC back", clock_text);
 }
 
 static size_t compatible_device_count(const struct ef800_port_descriptor *port)
@@ -3306,35 +2351,6 @@ static const char *measurement_device_title(uint8_t port_id)
 		"assigned plugin" : assigned_plugin_names[port_id - 1U];
 }
 
-static int load_measurement_ports(void)
-{
-	measurement_port_count = 0U;
-	for (uint8_t port_id = 1U; port_id <= EF800_PORT_COUNT; ++port_id) {
-		/* Built-in assignments also store their builder ID in plugin_id. They
-		 * are not measurement packages and must not be reported as unavailable
-		 * external plugins by this menu. */
-		if (ef800_port_assignment_get_builder(&port_assignments, port_id) !=
-			EF800_PORT_BUILDER_NONE) {
-			continue;
-		}
-		uint32_t plugin_id = ef800_port_assignment_get_plugin_id(&port_assignments, port_id);
-
-		if (ef800_plugin_registry_find(&plugin_registry, plugin_id) != NULL &&
-			ef800_plugin_registry_state_for(&plugin_registry, plugin_id) ==
-			EF800_PLUGIN_REGISTRY_READY &&
-			measurement_transports[port_id - 1U].uart != NULL) {
-			measurement_port_ids[measurement_port_count++] = port_id;
-		} else if (ef800_port_assignment_is_assigned(&port_assignments, port_id) &&
-			plugin_id != EF800_PORT_BUILDER_NONE) {
-			LOG_WRN("Measurement assignment not ready: port=%u plugin=%u registry=%u transport=%u",
-				port_id, plugin_id,
-				ef800_plugin_registry_state_for(&plugin_registry, plugin_id),
-				measurement_transports[port_id - 1U].uart != NULL);
-		}
-	}
-	return measurement_port_count == 0U ? -ENODEV : 0;
-}
-
 static void display_measurement_devices(void)
 {
 	char line[STATUS_LINE_SIZE];
@@ -3474,58 +2490,33 @@ static void append_plugin_workspace_record(void)
 
 static void display_measurement_plugin_menu(void)
 {
-#if CONFIG_EF800_MAIN_PLUGIN_USER_WORKER
-	struct ef800_measurement_display *display = &plugin_display_cache;
-	char line[STATUS_LINE_SIZE];
+	const struct ef800_measurement_display *model;
+	char clock_text[6];
 
-	clear_display();
+#if CONFIG_EF800_MAIN_PLUGIN_USER_WORKER
 	if (!plugin_display_valid) {
-		display_line(0U, "Measurement plugin");
-		display_line(6U, plugin_async_ui_pending ? "Plugin working..." :
-			"Plugin display unavailable");
+		main_display_clock_text(clock_text);
+		ef800_main_display_plugin_unavailable(&main_display, true,
+			plugin_async_ui_pending, clock_text);
 		return;
 	}
+	model = &plugin_display_cache;
 #else
 	struct ef800_measurement_display display;
-	char line[STATUS_LINE_SIZE];
 
-	clear_display();
 	if (ef800_plugin_host_measurement_session_render(
 		&measurement_plugin_session, &display) != 0) {
-		display_line(6U, "Plugin display unavailable");
+		main_display_clock_text(clock_text);
+		ef800_main_display_plugin_unavailable(&main_display, false, false,
+			clock_text);
 		return;
 	}
+	model = &display;
 #endif
-#if CONFIG_EF800_MAIN_PLUGIN_USER_WORKER
-	display_line(0U, display->title);
-#else
-	display_line(0U, display.title);
-#endif
-	snprintk(line, sizeof(line), "Port %u: %s", selected_measurement_port,
-		measurement_device_title(selected_measurement_port));
-	display_line(1U, line);
-	display_line(2U, "Select action");
-	for (size_t index = 0U;
-#if CONFIG_EF800_MAIN_PLUGIN_USER_WORKER
-		index < display->row_count && index < 4U;
-#else
-		index < display.row_count && index < 4U;
-#endif
-		++index) {
-#if CONFIG_EF800_MAIN_PLUGIN_USER_WORKER
-		snprintk(line, sizeof(line), "%c %s", index == display->selected_action ? '>' : ' ',
-			display->rows[index]);
-#else
-		snprintk(line, sizeof(line), "%c %s", index == display.selected_action ? '>' : ' ',
-			display.rows[index]);
-#endif
-		display_line((uint8_t)(3U + index), line);
-	}
-#if CONFIG_EF800_MAIN_PLUGIN_USER_WORKER
-	display_line(7U, display->footer);
-#else
-	display_line(7U, display.footer);
-#endif
+	main_display_clock_text(clock_text);
+	ef800_main_display_plugin_menu(&main_display, model,
+		selected_measurement_port,
+		measurement_device_title(selected_measurement_port), clock_text);
 }
 
 static void display_measurement_editor(void)
@@ -3598,7 +2589,8 @@ static int recover_plugin_uart_route(void *context,
 		return ret;
 	}
 	ret = ef800_port_uart_release(&port_uart_registry, port_id,
-		uart_owner_for_plugin(ledger->plugin_id), ledger->route_connection);
+		ef800_main_port_workflow_uart_owner(&main_port_workflow,
+			ledger->plugin_id), ledger->route_connection);
 	if (ret == 0) {
 		ef800_plugin_host_recovery_route_released(port_id,
 			ledger->route_connection);
@@ -4470,14 +3462,14 @@ static void display_workspace_list(void)
 			"ENTER select  ESC back" : "ESC back");
 }
 
-static const char *position_editor_prompt(enum position_editor_field field)
+static const char *position_editor_prompt(enum ef800_position_editor_field field)
 {
 	switch (field) {
-	case POSITION_EDITOR_STP:
+	case EF800_POSITION_EDITOR_STP:
 		return "STP";
-	case POSITION_EDITOR_CODE:
+	case EF800_POSITION_EDITOR_CODE:
 		return "Code";
-	case POSITION_EDITOR_HEIGHT:
+	case EF800_POSITION_EDITOR_HEIGHT:
 		return "Height metres";
 	default:
 		return "";
@@ -4505,87 +3497,31 @@ static void display_position_editor(void)
 
 static void start_position_editor(void)
 {
-	memset(&position_editor, 0, sizeof(position_editor));
-	position_editor.active = true;
-	position_editor.field = POSITION_EDITOR_STP;
+	ef800_position_editor_start(&position_editor);
 	display_position_editor();
-}
-
-static void copy_position_field(void)
-{
-	switch (position_editor.field) {
-	case POSITION_EDITOR_STP:
-		strcpy(position_editor.entry.stp, position_editor.input);
-		break;
-	case POSITION_EDITOR_CODE:
-		strcpy(position_editor.entry.code, position_editor.input);
-		break;
-	default:
-		break;
-	}
 }
 
 static void handle_position_editor_key(uint8_t key)
 {
-	int32_t height;
 	int result;
 
 	if (key == 0x1BU) {
 		return_from_position_editor();
 		return;
 	}
-	if (key == 0x08U || key == 0x7FU) {
-		if (position_editor.length > 0U) {
-			position_editor.input[--position_editor.length] = '\0';
-			display_position_editor();
-		}
-		return;
-	}
-	if (key == '\r' || key == '\n') {
-		if (position_editor.length == 0U) {
-			display_line(6U, "Value is empty");
-			return;
-		}
-		if (position_editor.field == POSITION_EDITOR_HEIGHT) {
-			result = ef800_position_parse_height(position_editor.input, &height);
-			if (result != 0) {
-				display_line(6U, "Invalid height");
-				return;
-			}
-			position_editor.entry.height_millimeters = height;
-			result = ef800_position_append(&workspace, &position_editor.entry);
-			if (result != 0) {
-				display_line(6U, result == -ENODEV ?
-					"Workspace not selected" : "Position save failed");
-				LOG_WRN("Position append failed: %d", result);
-				return;
-			}
-			display_line(6U, "Position saved");
-			return_from_position_editor();
-			return;
-		}
-		copy_position_field();
-		position_editor.field++;
-		position_editor.length = 0U;
-		position_editor.input[0] = '\0';
-		display_position_editor();
-		return;
-	}
-	if (position_editor.field == POSITION_EDITOR_HEIGHT) {
-		if ((key >= '0' && key <= '9') ||
-		    ((key == '+' || key == '-') && position_editor.length == 0U) ||
-		    (key == '.' && position_editor.length > 0U &&
-		     strchr(position_editor.input, '.') == NULL)) {
-			if (position_editor.length + 1U < sizeof(position_editor.input)) {
-				position_editor.input[position_editor.length++] = (char)key;
-				position_editor.input[position_editor.length] = '\0';
-				display_position_editor();
-			}
-		}
-	} else if (ef800_position_text_char_valid((char)key) &&
-		   position_editor.length + 1U < sizeof(position_editor.input)) {
-		position_editor.input[position_editor.length++] = (char)key;
-		position_editor.input[position_editor.length] = '\0';
+	result = ef800_position_editor_handle_key(&position_editor, &workspace, key);
+	if (result == -ENODATA) {
+		display_line(6U, "Value is empty");
+	} else if (result == -EBADMSG) {
+		display_line(6U, "Invalid height");
+	} else if (result < 0) {
+		display_line(6U, result == -ENODEV ?
+			"Workspace not selected" : "Position save failed");
+		LOG_WRN("Position append failed: %d", result);
+	} else if (result == EF800_POSITION_EDITOR_SAVED) {
+		display_line(6U, "Position saved");
+		return_from_position_editor();
+	} else if (result == EF800_POSITION_EDITOR_UPDATED) {
 		display_position_editor();
 	}
 }
@@ -4773,24 +3709,6 @@ static void display_usb_reboot_hint(void)
 	sys_reboot(SYS_REBOOT_COLD);
 }
 
-static int set_port_assignment_runtime(uint8_t port_id, uint8_t builder_id,
-						uint32_t connection)
-{
-	int result;
-
-	if (builder_id == EF800_PORT_BUILDER_MSD &&
-		!usb_msd_composition_enabled()) {
-		return -ENOTSUP;
-	}
-
-	result = builder_id == EF800_PORT_BUILDER_DEBUG ?
-		ef800_port_assignment_move_debug(&port_assignments, port_id,
-									connection) :
-		ef800_port_assignment_set_with_connection(&port_assignments, port_id,
-									builder_id, connection);
-	return result;
-}
-
 #ifdef CONFIG_BOARD_NATIVE_SIM
 static int virtual_assign_plugin(void *context, uint8_t port_id,
 	uint32_t plugin_id, uint32_t connection)
@@ -4815,14 +3733,15 @@ static int virtual_assign_plugin(void *context, uint8_t port_id,
 		 entry->info.required_hardware)) {
 		return -ENOENT;
 	}
-	builder_id = uart_owner_for_plugin(plugin_id);
+	builder_id = ef800_main_port_workflow_uart_owner(&main_port_workflow,
+		plugin_id);
 	result = ef800_port_uart_claim(&port_uart_registry, port_id, builder_id,
 		connection);
 	if (result != 0) {
 		LOG_WRN("Native plugin UART claim failed: %d", result);
 		return result;
 	}
-	result = ef800_port_assignment_set_plugin_with_connection(&port_assignments,
+	result = ef800_main_port_workflow_set_plugin_assignment(&main_port_workflow,
 		port_id, plugin_id, connection);
 	LOG_INF("Native plugin assignment record result: %d", result);
 	if (result == 0) {
@@ -4886,27 +3805,6 @@ static int virtual_execute_plugin(void *context, uint8_t port_id)
 }
 #endif
 
-static int remove_port_assignment_runtime(uint8_t port_id)
-{
-	int result = ef800_port_assignment_remove(&port_assignments, port_id);
-
-	if (result == -ENOTSUP) {
-		result = ef800_port_assignment_import_with_connection(&port_assignments,
-													 port_id,
-													 EF800_PORT_BUILDER_NONE,
-													 EF800_PORT_CONNECTION_NONE);
-	}
-	return result;
-}
-
-static int restore_port_assignment(uint8_t port_id, uint8_t builder_id,
-					   uint32_t connection)
-{
-	return builder_id == EF800_PORT_BUILDER_NONE ?
-		remove_port_assignment_runtime(port_id) :
-		set_port_assignment_runtime(port_id, builder_id, connection);
-}
-
 static void activate_port_assignment_entry(void)
 {
 	const struct ef800_port_descriptor *port =
@@ -4933,7 +3831,8 @@ static void activate_port_assignment_entry(void)
 				return;
 			}
 		}
-		result = remove_port_assignment_runtime(port->id);
+		result = ef800_main_port_workflow_remove_assignment(
+			&main_port_workflow, port->id);
 		if (result == 0) {
 			result = reconcile_port_uart_state();
 		}
@@ -4943,7 +3842,9 @@ static void activate_port_assignment_entry(void)
 				&usb_restart_required);
 		}
 		if (result != 0 && old_builder_id != EF800_PORT_BUILDER_NONE) {
-			(void)restore_port_assignment(port->id, old_builder_id, old_connection);
+			(void)ef800_main_port_workflow_restore_assignment(
+				&main_port_workflow, port->id, old_builder_id,
+				old_connection);
 			(void)ef800_port_uart_claim(&port_uart_registry, port->id,
 							     old_builder_id, old_connection);
 		}
@@ -5022,8 +3923,9 @@ static void commit_port_assignment_connection(void)
 		}
 	}
 	if (selected_builder_id == EF800_PORT_BUILDER_DEBUG) {
-		result = set_port_assignment_runtime(port->id, selected_builder_id,
-							 connection->capability);
+		result = ef800_main_port_workflow_set_assignment(
+			&main_port_workflow, port->id, selected_builder_id,
+			connection->capability);
 		if (result == 0) {
 			result = reconcile_port_uart_state();
 		}
@@ -5033,9 +3935,12 @@ static void commit_port_assignment_connection(void)
 				&usb_restart_required);
 		}
 		if (result != 0) {
-			(void)restore_port_assignment(port->id, old_builder_id, old_connection);
+			(void)ef800_main_port_workflow_restore_assignment(
+				&main_port_workflow, port->id, old_builder_id,
+				old_connection);
 			if (old_debug_port != 0U && old_debug_port != port->id) {
-				(void)restore_port_assignment(old_debug_port,
+				(void)ef800_main_port_workflow_restore_assignment(
+					&main_port_workflow, old_debug_port,
 					EF800_PORT_BUILDER_DEBUG, old_debug_connection);
 			}
 		}
@@ -5057,7 +3962,8 @@ static void commit_port_assignment_connection(void)
 	 * reinterpret that plugin ID as a built-in device builder such as MSD;
 	 * measurement plugins claim the DebugDevice-compatible serial route. */
 	claim_builder_id = selected_builder_id == 0U ?
-		uart_owner_for_plugin(selected_plugin_id) : selected_builder_id;
+			ef800_main_port_workflow_uart_owner(&main_port_workflow,
+				selected_plugin_id) : selected_builder_id;
 	if (old_builder_id != EF800_PORT_BUILDER_NONE) {
 		result = ef800_port_uart_release(&port_uart_registry, port->id,
 							 old_builder_id, old_connection);
@@ -5078,9 +3984,10 @@ static void commit_port_assignment_connection(void)
 		return;
 	}
 	result = selected_builder_id == 0U ?
-		ef800_port_assignment_set_plugin_with_connection(&port_assignments,
-			port->id, selected_plugin_id, connection->capability) :
-		set_port_assignment_runtime(port->id, selected_builder_id,
+		ef800_main_port_workflow_set_plugin_assignment(&main_port_workflow,
+		port->id, selected_plugin_id, connection->capability) :
+		ef800_main_port_workflow_set_assignment(&main_port_workflow,
+			port->id, selected_builder_id,
 			connection->capability);
 	LOG_INF("Port 4 assignment set builder=%u connection=%u result=%d",
 		(unsigned)selected_builder_id, (unsigned)connection->capability, result);
@@ -5181,7 +4088,8 @@ static void activate_menu_entry(void)
 			}
 			break;
 		case 2U:
-			if (load_measurement_ports() != 0) {
+			if (ef800_main_port_workflow_load_measurement_ports(
+				&main_port_workflow) != 0) {
 				display_line(6U, "No measurement device ready");
 				LOG_INF("No assigned measurement device is ready");
 			} else {
@@ -5747,146 +4655,40 @@ static bool handle_application_key(uint8_t key)
 	return false;
 }
 
-static int read_adc_battery(void *context,
-	struct ef800_max17043_status *status)
-{
-	struct ef800_battery_soc_table table;
-	struct adc_sequence sequence = {0};
-	int16_t raw_sample;
-	int32_t pin_mv;
-	uint16_t filtered_pin_mv;
-#ifdef CONFIG_BOARD_NATIVE_SIM
-	uint16_t pin_mv_input;
-#endif
-	int result;
-
-	ARG_UNUSED(context);
-	if (status == NULL || !battery_adc_ready || !battery_soc_store_ready) {
-		return -ENODEV;
-	}
-	result = ef800_battery_soc_store_get_table(&battery_soc_store, &table);
-	if (result != 0) {
-		return result;
-	}
-#ifdef CONFIG_BOARD_NATIVE_SIM
-	if (!ef800_virtual_profile_available(4U)) {
-		return -ENODEV;
-	}
-	result = ef800_battery_pin_mv_from_soc(&table,
-		ef800_virtual_profile_battery_soc(), &pin_mv_input);
-	if (result != 0) {
-		return result;
-	}
-	result = adc_emul_const_value_set(battery_adc.dev,
-		battery_adc.channel_id, pin_mv_input);
-	if (result != 0) {
-		return result;
-	}
-#endif
-	result = adc_sequence_init_dt(&battery_adc, &sequence);
-	if (result != 0) {
-		return result;
-	}
-	sequence.buffer = &raw_sample;
-	sequence.buffer_size = sizeof(raw_sample);
-	result = adc_read_dt(&battery_adc, &sequence);
-	if (result != 0) {
-		return result;
-	}
-	pin_mv = raw_sample;
-	result = adc_raw_to_millivolts_dt(&battery_adc, &pin_mv);
-	if (result != 0 || pin_mv < 0 ||
-	    pin_mv > (int32_t)EF800_BATTERY_SOC_ADC_MAX_MV) {
-		return result != 0 ? result : -ERANGE;
-	}
-	result = ef800_battery_adc_ring_push(&battery_adc_ring,
-		(uint16_t)pin_mv, &filtered_pin_mv);
-	if (result != 0) {
-		return result;
-	}
-	result = ef800_battery_soc_from_pin_mv(&table, filtered_pin_mv,
-		&status->soc_percent);
-	if (result == 0) {
-		status->voltage_uv = (uint32_t)filtered_pin_mv * 1000U;
-	}
-	return result;
-}
-
-static void draw_battery_icon(uint8_t soc)
-{
-	static const uint16_t outline[][2] = {
-		{228U, 1U}, {229U, 1U}, {230U, 1U}, {231U, 1U},
-		{232U, 1U}, {233U, 1U}, {228U, 2U}, {233U, 2U},
-		{234U, 2U}, {228U, 3U}, {234U, 3U}, {228U, 4U},
-		{233U, 4U}, {234U, 4U}, {228U, 5U}, {229U, 5U},
-		{230U, 5U}, {231U, 5U}, {232U, 5U}, {233U, 5U},
-	};
-
-	for (size_t index = 0U; index < ARRAY_SIZE(outline); ++index) {
-		(void)ef800_t6963_write_pixel(&lcd, outline[index][0],
-						      outline[index][1], true);
-	}
-			for (uint16_t x = 229U; x <= 233U; ++x) {
-		bool filled = soc > (uint8_t)((x - 228U) * 20U);
-				for (uint16_t y = 2U; y <= 4U; ++y) {
-					(void)ef800_t6963_write_pixel(&lcd, x, y, filled);
-				}
-			}
-			for (uint16_t y = 2U; y <= 4U; ++y) {
-				(void)ef800_t6963_write_pixel(&lcd, 233U, y, soc > 95U);
-			}
-}
-
-static void clear_battery_icon(void)
-{
-	for (uint16_t x = 228U; x <= 234U; ++x) {
-		for (uint16_t y = 1U; y <= 5U; ++y) {
-			(void)ef800_t6963_write_pixel(&lcd, x, y, false);
-		}
-	}
-}
-
 static void update_lcd_status(void)
 {
 	struct ef800_runtime_snapshot snapshot;
-	static uint8_t last_soc = UINT8_MAX;
 
 	if (!lcd_ready || !runtime_state_ready ||
 		ef800_runtime_state_snapshot(&runtime_state, &snapshot) != 0) {
 		return;
 	}
 
-	display_header(NULL);
-	if (snapshot.battery_has_value &&
-		snapshot.battery_soc_percent != last_soc) {
-		draw_battery_icon(snapshot.battery_soc_percent);
-		last_soc = snapshot.battery_soc_percent;
-	} else if (!snapshot.battery_has_value && last_soc != UINT8_MAX) {
-		clear_battery_icon();
-		last_soc = UINT8_MAX;
-	}
+	display_line(0U, NULL);
+	ef800_main_display_battery_status(&main_display,
+		snapshot.battery_has_value, snapshot.battery_soc_percent);
 }
 
-static const char *time_editor_prompt(enum time_editor_field field)
+static const char *time_editor_prompt(enum ef800_main_time_editor_field field)
 {
 	switch (field) {
-	case TIME_EDITOR_WEEKDAY:
+	case EF800_TIME_EDITOR_WEEKDAY:
 		return "Weekday Mon-Sun";
-	case TIME_EDITOR_DATE:
+	case EF800_TIME_EDITOR_DATE:
 		return "Date 1-31";
-	case TIME_EDITOR_MONTH:
+	case EF800_TIME_EDITOR_MONTH:
 		return "Month 1-12";
-	case TIME_EDITOR_YEAR:
+	case EF800_TIME_EDITOR_YEAR:
 		return "Year 2000-2099";
-	case TIME_EDITOR_HOUR:
+	case EF800_TIME_EDITOR_HOUR:
 		return "Hour 0-23";
-	case TIME_EDITOR_MINUTE:
+	case EF800_TIME_EDITOR_MINUTE:
 		return "Minute 0-59";
-	case TIME_EDITOR_SECOND:
+	case EF800_TIME_EDITOR_SECOND:
 		return "Second 0-59";
-	case TIME_EDITOR_OFFSET:
+	case EF800_TIME_EDITOR_OFFSET:
 		return "UTC offset hours or HH:MM";
-	case TIME_EDITOR_DST:
+	case EF800_TIME_EDITOR_DST:
 		return "DST 0=off 1=on";
 	default:
 		return "";
@@ -5907,10 +4709,7 @@ static const char *time_editor_weekday_name(int weekday)
 
 static void time_editor_adjust_weekday(int direction)
 {
-	int weekday = time_editor.local.tm_wday;
-
-	weekday = (weekday + direction + 7) % 7;
-	time_editor.local.tm_wday = weekday;
+	ef800_main_time_editor_adjust_weekday(&time_editor, direction);
 	display_time_editor();
 }
 
@@ -5922,7 +4721,7 @@ static void display_time_editor(void)
 		return;
 	}
 	(void)ef800_t6963_clear_text_body(&lcd);
-	display_header("RTC setup");
+	display_line(0U, "RTC setup");
 	snprintk(line, sizeof(line), "%04d-%02d-%02d %02d:%02d:%02d",
 		time_editor.local.tm_year + 1900, time_editor.local.tm_mon + 1,
 		time_editor.local.tm_mday, time_editor.local.tm_hour,
@@ -5933,29 +4732,24 @@ static void display_time_editor(void)
 		time_editor.settings.daylight_saving ? 1 : 0);
 	display_line(3U, line);
 	display_line(5U, time_editor_prompt(time_editor.field));
-	if (time_editor.field == TIME_EDITOR_WEEKDAY) {
+	if (time_editor.field == EF800_TIME_EDITOR_WEEKDAY) {
 		snprintk(line, sizeof(line), "> %s",
 			time_editor_weekday_name(time_editor.local.tm_wday));
 	} else {
 		snprintk(line, sizeof(line), "> %s", time_editor.input);
 	}
 	display_line(6U, line);
-	display_line(7U, time_editor.field == TIME_EDITOR_WEEKDAY ?
+	display_line(7U, time_editor.field == EF800_TIME_EDITOR_WEEKDAY ?
 		"UP/DOWN change ENTER next" : "ENTER next  ESC cancel");
 }
 
 static void start_time_editor(void)
 {
 	struct rtc_time current;
+	struct ef800_time_settings settings = *ef800_main_get_time_settings();
 
-	memset(&time_editor, 0, sizeof(time_editor));
-	time_editor.active = true;
-	time_editor.field = TIME_EDITOR_WEEKDAY;
-	time_editor.settings = *ef800_main_get_time_settings();
-	if (ef800_main_rtc_get_local_time(&current) == 0) {
-		time_editor.local = current;
-	} else {
-		time_editor.local = (struct rtc_time){
+	if (ef800_main_rtc_get_local_time(&current) != 0) {
+		current = (struct rtc_time){
 			.tm_year = 124,
 			.tm_mon = 0,
 			.tm_mday = 1,
@@ -5967,87 +4761,8 @@ static void start_time_editor(void)
 			.tm_isdst = -1,
 		};
 	}
+	ef800_main_time_editor_init(&time_editor, &current, &settings);
 	display_time_editor();
-}
-
-static int parse_time_editor_value(int *value)
-{
-	char *end;
-	long parsed;
-
-	if (time_editor.length == 0U) {
-		return -EINVAL;
-	}
-	if (time_editor.field == TIME_EDITOR_OFFSET &&
-		strchr(time_editor.input, ':') != NULL) {
-		int32_t offset_minutes;
-		if (ef800_parse_utc_offset(time_editor.input, &offset_minutes) != 0) {
-			return -EINVAL;
-		}
-		*value = offset_minutes;
-		return 0;
-	}
-	parsed = strtol(time_editor.input, &end, 10);
-	if (*end != '\0' || parsed < INT_MIN || parsed > INT_MAX) {
-		return -EINVAL;
-	}
-	*value = time_editor.field == TIME_EDITOR_OFFSET ? (int)parsed * 60 :
-		(int)parsed;
-	return 0;
-}
-
-static int commit_time_editor_value(void)
-{
-	int value;
-	int ret;
-
-	if (time_editor.field == TIME_EDITOR_WEEKDAY) {
-		return time_editor.local.tm_wday >= 0 &&
-			time_editor.local.tm_wday <= 6 ? 0 : -ERANGE;
-	}
-	ret = parse_time_editor_value(&value);
-
-	if (ret != 0) {
-		return ret;
-	}
-	switch (time_editor.field) {
-	case TIME_EDITOR_DATE:
-		time_editor.local.tm_mday = value;
-		break;
-	case TIME_EDITOR_MONTH:
-		if (value < 1 || value > 12) return -ERANGE;
-		time_editor.local.tm_mon = value - 1;
-		break;
-	case TIME_EDITOR_YEAR:
-		if (value < 2000 || value > 2099) return -ERANGE;
-		time_editor.local.tm_year = value - 1900;
-		break;
-	case TIME_EDITOR_HOUR:
-		if (value < 0 || value > 23) return -ERANGE;
-		time_editor.local.tm_hour = value;
-		break;
-	case TIME_EDITOR_MINUTE:
-		if (value < 0 || value > 59) return -ERANGE;
-		time_editor.local.tm_min = value;
-		break;
-	case TIME_EDITOR_SECOND:
-		if (value < 0 || value > 59) return -ERANGE;
-		time_editor.local.tm_sec = value;
-		break;
-	case TIME_EDITOR_OFFSET:
-		if (value < -24 * 60 || value > 24 * 60) return -ERANGE;
-		time_editor.settings.utc_offset_minutes = value;
-		break;
-	case TIME_EDITOR_DST:
-		if (value != 0 && value != 1) return -ERANGE;
-		time_editor.settings.daylight_saving = value != 0;
-		break;
-	default:
-		return -EINVAL;
-	}
-	/* The complete date is checked when the final DST field is submitted.
-	 * This allows the user to change month and day in either order. */
-	return 0;
 }
 
 static void finish_time_editor(void)
@@ -6075,10 +4790,10 @@ static void finish_time_editor(void)
 
 static void handle_time_editor_key(uint8_t key)
 {
-	int ret;
+	enum ef800_main_time_editor_event event =
+		ef800_main_time_editor_handle_key(&time_editor, key);
 
-	if (key == 0x1BU) {
-		time_editor.active = false;
+	if (event == EF800_TIME_EDITOR_CANCELLED) {
 		(void)ef800_t6963_clear_text_body(&lcd);
 		display_banner();
 		active_menu = APPLICATION_MENU_SETTINGS;
@@ -6086,650 +4801,15 @@ static void handle_time_editor_key(uint8_t key)
 		display_settings_menu();
 		return;
 	}
-	if (key == 0x08U || key == 0x7FU) {
-		if (time_editor.length != 0U) {
-			time_editor.input[--time_editor.length] = '\0';
-			display_time_editor();
-		}
-		return;
-	}
-	if (key == '\r' || key == '\n') {
-		ret = commit_time_editor_value();
-		if (ret != 0) {
-			display_line(6U, "Invalid value, try again");
-			time_editor.length = 0U;
-			time_editor.input[0] = '\0';
-			return;
-		}
-		if (time_editor.field == TIME_EDITOR_DST) {
-			finish_time_editor();
-			return;
-		}
-		time_editor.field++;
-		time_editor.length = 0U;
-		time_editor.input[0] = '\0';
+	if (event == EF800_TIME_EDITOR_INVALID) {
+		display_line(6U, "Invalid value, try again");
+	} else if (event == EF800_TIME_EDITOR_COMPLETE) {
+		finish_time_editor();
+	} else if (event == EF800_TIME_EDITOR_REDRAW ||
+		 event == EF800_TIME_EDITOR_ADVANCED) {
 		display_time_editor();
-		return;
-	}
-	if (time_editor.field == TIME_EDITOR_WEEKDAY) {
-		return;
-	}
-	if ((key >= '0' && key <= '9') ||
-		(time_editor.field == TIME_EDITOR_OFFSET && key == '+' &&
-		 time_editor.length == 0U) ||
-		(time_editor.field == TIME_EDITOR_OFFSET && key == ':' &&
-		 time_editor.length > 0U &&
-		 strchr(time_editor.input, ':') == NULL) ||
-		(time_editor.field == TIME_EDITOR_OFFSET && key == '-' &&
-		 time_editor.length == 0U)) {
-		if (time_editor.length + 1U < sizeof(time_editor.input)) {
-			time_editor.input[time_editor.length++] = (char)key;
-			time_editor.input[time_editor.length] = '\0';
-			display_time_editor();
-		}
 	}
 }
-
-static int cmd_rtc_get(const struct shell *shell, size_t argc, char **argv)
-{
-	struct rtc_time local;
-	const struct ef800_time_settings *settings;
-
-	ARG_UNUSED(argc);
-	ARG_UNUSED(argv);
-	if (ef800_main_rtc_get_local_time(&local) != 0) {
-		shell_error(shell, "RTC unavailable");
-		return -ENODEV;
-	}
-	settings = ef800_main_get_time_settings();
-	shell_print(shell, "%04d-%02d-%02dT%02d:%02d:%02d offset=%d dst=%d",
-		local.tm_year + 1900, local.tm_mon + 1, local.tm_mday,
-		local.tm_hour, local.tm_min, local.tm_sec,
-		settings->utc_offset_minutes, settings->daylight_saving ? 1 : 0);
-	return 0;
-}
-
-static int cmd_rtc_set(const struct shell *shell, size_t argc, char **argv)
-{
-	struct rtc_time local = {
-		.tm_wday = 0,
-		.tm_yday = -1,
-		.tm_isdst = -1,
-	};
-	struct ef800_time_settings settings;
-	int year;
-	int month;
-	int offset;
-	int dst;
-	char *offset_end;
-	int time_fields;
-
-	if (argc != 4) {
-		shell_error(shell,
-			"usage: rtc set YYYY-MM-DDTHH:MM:SS offset_hours_or_HH:MM dst");
-		return -EINVAL;
-	}
-	time_fields = sscanf(argv[1], "%d-%d-%dT%d:%d:%d",
-		&year, &month, &local.tm_mday, &local.tm_hour,
-		&local.tm_min, &local.tm_sec);
-	offset = (int)strtol(argv[2], &offset_end, 10);
-	if (time_fields != 6 ||
-		(*offset_end != '\0' && strchr(argv[2], ':') == NULL) ||
-		sscanf(argv[3], "%d", &dst) != 1) {
-		shell_error(shell,
-			"usage: rtc set YYYY-MM-DDTHH:MM:SS offset_hours_or_HH:MM dst");
-		return -EINVAL;
-	}
-	local.tm_year = year - 1900;
-	local.tm_mon = month - 1;
-	if (strchr(argv[2], ':') != NULL) {
-		int32_t parsed_offset;
-		if (ef800_parse_utc_offset(argv[2], &parsed_offset) != 0) {
-			shell_error(shell, "invalid UTC offset");
-			return -EINVAL;
-		}
-		offset = parsed_offset;
-	} else {
-		if (offset < -24 || offset > 24) {
-			shell_error(shell, "UTC offset hours must be between -24 and 24");
-			return -EINVAL;
-		}
-		offset *= 60;
-	}
-	settings.utc_offset_minutes = offset;
-	settings.daylight_saving = dst != 0;
-	if ((dst != 0 && dst != 1) ||
-		!ef800_rtc_time_valid(&local) ||
-		offset < -24 * 60 || offset > 24 * 60) {
-		shell_error(shell, "invalid date/time, offset, or DST value");
-		return -EINVAL;
-	}
-	if (ef800_main_rtc_set_local_time(&local, &settings) != 0) {
-		shell_error(shell, "RTC update failed");
-		return -EIO;
-	}
-	shell_print(shell, "RTC updated");
-	return 0;
-}
-
-static int cmd_keyboard_version(const struct shell *shell, size_t argc,
-				const char *argv[])
-{
-	uint8_t request = EF800_KEYBOARD_I2C_CMD_STATUS;
-	uint8_t response[EF800_KEYBOARD_I2C_STATUS_SIZE];
-	int result;
-
-	ARG_UNUSED(argc);
-	ARG_UNUSED(argv);
-	k_mutex_lock(&keyboard_command_mutex, K_FOREVER);
-	if (!device_is_ready(keyboard_i2c)) {
-		result = -ENODEV;
-	} else {
-		result = i2c_write_read(keyboard_i2c,
-			EF800_KEYBOARD_I2C_ADDRESS, &request, sizeof(request),
-			response, sizeof(response));
-	}
-	if (result == 0 && response[0] == EF800_KEYBOARD_I2C_CMD_STATUS &&
-	    response[4] == EF800_KEYBOARD_I2C_MODE_APPLICATION &&
-	    response[5] == EF800_KEYBOARD_I2C_ACK) {
-		shell_print(shell, "Keyboard firmware version %u.%u.%u",
-			response[1], response[2], response[3]);
-	} else {
-		result = result != 0 ? result : -EBADMSG;
-		shell_error(shell, "Keyboard I2C version query failed: %d", result);
-	}
-	k_mutex_unlock(&keyboard_command_mutex);
-	return result;
-}
-
-static int cmd_keyboard_updater_version(const struct shell *shell, size_t argc,
-					       const char *argv[])
-{
-	uint8_t response[EF800_KB_UPDATE_VERSION_SIZE];
-	int result;
-
-	ARG_UNUSED(argc);
-	ARG_UNUSED(argv);
-	if (!device_is_ready(keyboard_i2c)) {
-		result = -ENODEV;
-	} else {
-		result = keyboard_update_query_version(
-			EF800_KEYBOARD_UPDATER_I2C_ADDRESS, response, 2000U);
-	}
-	if (result == 0) {
-		shell_print(shell, "Keyboard updater version %u.%u.%u",
-			response[1], response[2], response[3]);
-		return 0;
-	}
-	result = result != 0 ? result : -EBADMSG;
-	shell_error(shell, "Keyboard updater I2C version query failed: %d", result);
-	return result;
-}
-
-static int cmd_keyboard_boot_probe(const struct shell *shell, size_t argc,
-				  const char *argv[])
-{
-	uint8_t version[EF800_KB_UPDATE_VERSION_SIZE] = {0};
-	int result;
-
-	ARG_UNUSED(argc);
-	ARG_UNUSED(argv);
-	shell_print(shell, "Asserting JP7 updater request and resetting keyboard");
-	result = keyboard_update_enter_bootloader_fallback(version);
-	if (result == 0) {
-		shell_print(shell, "Bootloader strap PASS; updater version %u.%u.%u",
-			version[1], version[2], version[3]);
-		return 0;
-	}
-	shell_error(shell, "bootloader strap handoff failed: %d", result);
-	return result;
-}
-
-static int cmd_keyboard_debug_start(const struct shell *shell,
-					    size_t argc, char **argv)
-{
-	uint8_t enabled = 1U;
-	int result;
-
-	ARG_UNUSED(argc);
-	ARG_UNUSED(argv);
-	if (keyboard_debug_active) {
-		shell_print(shell, "keyboard debug already active");
-		return 0;
-	}
-	result = keyboard_send_command(CMD_KEYBOARD_DEACTIVATE, NULL, 0U);
-	if (result != 0) {
-		shell_error(shell, "keyboard deactivate failed: %d", result);
-		return result;
-	}
-	result = keyboard_send_command(CMD_KEYBOARD_SET_DEBUG, &enabled, 1U);
-	if (result != 0) {
-		shell_error(shell, "keyboard debug enable failed: %d", result);
-		return result;
-	}
-	keyboard_debug_active = true;
-	shell_print(shell, "keyboard debug active");
-	return 0;
-}
-
-static int cmd_keyboard_debug_key(const struct shell *shell,
-					 size_t argc, char **argv, uint8_t action)
-{
-	int result;
-
-	if (argc != 2U) {
-		shell_error(shell, "usage: keyboard debug %s <key-name>",
-			action == KB_DEBUG_ACTION_PRESS ? "press" : "release");
-		return -EINVAL;
-	}
-	result = keyboard_send_virtual_key(action, argv[1]);
-	if (result != 0) {
-		shell_error(shell, "keyboard debug request failed: %d", result);
-	}
-	return result;
-}
-
-static int cmd_keyboard_debug_press(const struct shell *shell,
-					    size_t argc, char **argv)
-{
-	return cmd_keyboard_debug_key(shell, argc, argv, KB_DEBUG_ACTION_PRESS);
-}
-
-static int cmd_keyboard_debug_release(const struct shell *shell,
-					      size_t argc, char **argv)
-{
-	return cmd_keyboard_debug_key(shell, argc, argv, KB_DEBUG_ACTION_RELEASE);
-}
-
-static int cmd_keyboard_debug_stop(const struct shell *shell,
-					   size_t argc, char **argv)
-{
-	uint8_t disabled = 0U;
-	int result;
-
-	ARG_UNUSED(argc);
-	ARG_UNUSED(argv);
-	if (!keyboard_debug_active) {
-		shell_print(shell, "keyboard debug is not active");
-		return 0;
-	}
-	result = keyboard_send_command(CMD_KEYBOARD_SET_DEBUG, &disabled, 1U);
-	if (result != 0) {
-		shell_error(shell, "keyboard debug disable failed: %d", result);
-		return result;
-	}
-	result = keyboard_send_command(CMD_KEYBOARD_ACTIVATE, NULL, 0U);
-	if (result != 0) {
-		shell_error(shell, "keyboard activate failed: %d", result);
-		return result;
-	}
-	keyboard_debug_active = false;
-	shell_print(shell, "keyboard debug stopped");
-	return 0;
-}
-
-static int cmd_battery_soc_table_show(const struct shell *shell, size_t argc,
-	char **argv)
-{
-	struct ef800_battery_soc_table table;
-	char hex[EF800_BATTERY_SOC_TABLE_MAX_HEX_LENGTH + 1U];
-	size_t hex_length;
-	int ret;
-
-	ARG_UNUSED(argc);
-	ARG_UNUSED(argv);
-	if (!battery_soc_store_ready) {
-		shell_error(shell, "battery SOC calibration storage unavailable");
-		return -ENOTSUP;
-	}
-	ret = ef800_battery_soc_store_get_table(&battery_soc_store, &table);
-	if (ret == -ENOENT) {
-		shell_print(shell, "no battery SOC calibration table is installed");
-		return 0;
-	}
-	if (ret != 0) {
-		shell_error(shell, "battery SOC table read failed: %d", ret);
-		return ret;
-	}
-	ret = ef800_battery_soc_store_get_hex(&battery_soc_store, hex, sizeof(hex),
-		&hex_length);
-	if (ret != 0) {
-		shell_error(shell, "battery SOC table encoding failed: %d", ret);
-		return ret;
-	}
-	shell_print(shell, "battery SOC table chemistry=%u points=%u",
-		(unsigned int)table.chemistry, (unsigned int)table.point_count);
-	for (size_t index = 0U; index < table.point_count; ++index) {
-		shell_print(shell, "%u mV -> %u%%",
-			(unsigned int)table.points[index].pin_mv,
-			(unsigned int)table.points[index].soc_percent);
-	}
-	shell_print(shell, "hex=%s", hex);
-	ARG_UNUSED(hex_length);
-	return 0;
-}
-
-static int cmd_mcumgr_start(const struct shell *shell, size_t argc, char **argv)
-{
-	int ret;
-
-	ARG_UNUSED(argv);
-	if (argc != 1U) {
-		shell_error(shell, "usage: mcumgr start");
-		return -EINVAL;
-	}
-	if (mcumgr_transport_active) {
-		shell_print(shell, "MCUmgr raw FS transport is already active");
-		return 0;
-	}
-	if (!ef800_storage_is_mounted()) {
-		shell_error(shell, "MCUmgr requires mounted EF800 storage");
-		return -ENOTSUP;
-	}
-	ret = ef800_mcumgr_transport_init();
-	if (ret != 0) {
-		shell_error(shell, "MCUmgr transport start failed: %d", ret);
-		return ret;
-	}
-	mcumgr_transport_active = true;
-	shell_print(shell,
-		"MCUmgr raw FS transport active; reset MainApplication to restore shell input");
-	return 0;
-}
-
-SHELL_STATIC_SUBCMD_SET_CREATE(mcumgr_commands,
-	SHELL_CMD_ARG(start, NULL, "Start raw serial FS transport (shell pauses)",
-		cmd_mcumgr_start, 1, 0),
-	SHELL_SUBCMD_SET_END
-);
-
-SHELL_CMD_REGISTER(mcumgr, &mcumgr_commands,
-	"Raw serial filesystem transport", NULL);
-
-#if defined(CONFIG_THREAD_MONITOR) && defined(CONFIG_THREAD_STACK_INFO) && \
-	defined(CONFIG_INIT_STACKS)
-static void report_thread_stack_usage(const struct k_thread *thread,
-					      void *user_data)
-{
-	const struct shell *shell = user_data;
-	size_t unused = 0U;
-	const char *name = k_thread_name_get((k_tid_t)thread);
-	int ret = k_thread_stack_space_get(thread, &unused);
-
-	if (ret != 0) {
-		shell_print(shell, "stack name=%s error=%d size=%u",
-			    name != NULL ? name : "(unnamed)", ret,
-			    (unsigned int)thread->stack_info.size);
-		return;
-	}
-
-	shell_print(shell, "stack name=%s size=%u used=%u unused=%u",
-		    name != NULL ? name : "(unnamed)",
-		    (unsigned int)thread->stack_info.size,
-		    (unsigned int)(thread->stack_info.size - unused),
-		    (unsigned int)unused);
-}
-#endif
-
-static int cmd_memory_stacks(const struct shell *shell, size_t argc, char **argv)
-{
-	ARG_UNUSED(argv);
-	if (argc != 1U) {
-		shell_error(shell, "usage: memory stacks");
-		return -EINVAL;
-	}
-
-#if defined(CONFIG_THREAD_MONITOR) && defined(CONFIG_THREAD_STACK_INFO) && \
-	defined(CONFIG_INIT_STACKS)
-	shell_print(shell, "stack watermark bytes; sample after normal startup/workload");
-	k_thread_foreach_unlocked(report_thread_stack_usage, (void *)shell);
-	return 0;
-#else
-	shell_error(shell, "stack watermark support not configured");
-	return -ENOTSUP;
-#endif
-}
-
-static int cmd_memory_pool(const struct shell *shell, size_t argc, char **argv)
-{
-	uint32_t *probe;
-
-	ARG_UNUSED(argv);
-	if (argc != 1U) {
-		shell_error(shell, "usage: memory pool");
-		return -EINVAL;
-	}
-	if (!ef800_memory_pool_external_ready()) {
-		shell_print(shell,
-			"profile=internal-only external=unavailable internal-malloc=%u",
-			(unsigned int)ef800_memory_pool_internal_capacity());
-		return -ENODEV;
-	}
-	probe = ef800_memory_pool_external_alloc(32U, 32U);
-	if (probe == NULL) {
-		shell_error(shell, "external pool allocation failed");
-		return -ENOMEM;
-	}
-	probe[0] = 0xEF800123U;
-	if (probe[0] != 0xEF800123U) {
-		ef800_memory_pool_external_free(probe);
-		shell_error(shell, "external pool readback failed at %p", probe);
-		return -EIO;
-	}
-	shell_print(shell,
-		    "profile=external-enabled ext=%u used=%u internal-malloc=%u probe=%p size=32 readback=PASS",
-		    (unsigned int)ef800_memory_pool_external_capacity(),
-		    (unsigned int)ef800_memory_pool_external_used(),
-		    (unsigned int)ef800_memory_pool_internal_capacity(), probe);
-	ef800_memory_pool_external_free(probe);
-	return 0;
-}
-
-SHELL_STATIC_SUBCMD_SET_CREATE(memory_commands,
-	SHELL_CMD(stacks, NULL, "Report per-thread stack high-water marks", cmd_memory_stacks),
-	SHELL_CMD(pool, NULL, "Report pool profile and test an external allocation", cmd_memory_pool),
-	SHELL_SUBCMD_SET_END
-);
-
-SHELL_CMD_REGISTER(memory, &memory_commands, "Memory diagnostics", NULL);
-
-static int cmd_battery_soc_table_set(const struct shell *shell, size_t argc,
-	char **argv)
-{
-	int ret;
-
-	if (argc != 2U) {
-		shell_error(shell, "usage: battery table set <hex-string>");
-		return -EINVAL;
-	}
-	if (!battery_soc_store_ready || !ef800_storage_configuration_is_mounted()) {
-		shell_error(shell, "battery SOC calibration storage unavailable");
-		return -ENOTSUP;
-	}
-	ret = ef800_battery_soc_store_set_hex(&battery_soc_store, argv[1],
-		strlen(argv[1]));
-	if (ret != 0) {
-		shell_error(shell, "battery SOC table rejected or not stored: %d", ret);
-		return ret;
-	}
-	shell_print(shell, "battery SOC table verified and stored");
-	return 0;
-}
-
-static int cmd_battery_soc_source_get(const struct shell *shell, size_t argc,
-	char **argv)
-{
-	const struct ef800_composition_catalog_entry *entry;
-
-	ARG_UNUSED(argc);
-	ARG_UNUSED(argv);
-	if (!composition_service_ready) {
-		shell_error(shell, "COMPOSITION service unavailable");
-		return -ENOTSUP;
-	}
-	entry = battery_soc_composition_entry();
-	shell_print(shell, "active BATSOC source: %s%s",
-		entry != NULL ? entry->token : "BATSOC2",
-		ef800_composition_service_restart_required(&composition_service) ?
-			" (restart required for committed selection)" : "");
-	return 0;
-}
-
-static int cmd_battery_soc_source_set(const struct shell *shell, size_t argc,
-	char **argv)
-{
-	const struct ef800_composition_catalog_entry *active;
-	int ret;
-
-	if (argc != 2U || (strcmp(argv[1], "BATSOC0") != 0 &&
-		strcmp(argv[1], "BATSOC1") != 0 &&
-		strcmp(argv[1], "BATSOC2") != 0)) {
-		shell_error(shell, "usage: battery source set <BATSOC0|BATSOC1|BATSOC2>");
-		return -EINVAL;
-	}
-	if (!composition_service_ready ||
-	    !ef800_storage_configuration_is_mounted()) {
-		shell_error(shell, "COMPOSITION Configuration storage unavailable");
-		return -ENOTSUP;
-	}
-	if (ef800_composition_service_restart_required(&composition_service)) {
-		shell_error(shell, "a COMPOSITION change is already committed; restart first");
-		return -EALREADY;
-	}
-	active = battery_soc_composition_entry();
-	if (active != NULL && strcmp(active->token, argv[1]) == 0) {
-		shell_print(shell, "%s is already active", argv[1]);
-		return 0;
-	}
-	ret = ef800_composition_service_stage_group_selection(&composition_service,
-		"BATSOC", argv[1]);
-	if (ret == 0) {
-		ret = ef800_composition_service_commit(&composition_service);
-	}
-	if (ret != 0) {
-		ef800_composition_service_discard(&composition_service);
-		shell_error(shell, "BATSOC source selection failed: %d", ret);
-		return ret;
-	}
-#ifdef CONFIG_BOARD_NATIVE_SIM
-	publish_virtual_composition_state();
-#endif
-	shell_print(shell, "%s committed; restart required", argv[1]);
-	return 0;
-}
-
-SHELL_STATIC_SUBCMD_SET_CREATE(battery_source_commands,
-	SHELL_CMD_ARG(get, NULL, "Show active BATSOC source",
-		cmd_battery_soc_source_get, 1, 0),
-	SHELL_CMD_ARG(set, NULL, "Stage and commit a BATSOC source",
-		cmd_battery_soc_source_set, 2, 0),
-	SHELL_SUBCMD_SET_END
-);
-
-SHELL_STATIC_SUBCMD_SET_CREATE(battery_table_commands,
-	SHELL_CMD_ARG(show, NULL, "Show active battery SOC calibration table",
-		cmd_battery_soc_table_show, 1, 0),
-	SHELL_CMD_ARG(set, NULL, "Set battery SOC calibration from a hex string",
-		cmd_battery_soc_table_set, 2, 0),
-	SHELL_SUBCMD_SET_END
-);
-
-SHELL_STATIC_SUBCMD_SET_CREATE(battery_commands,
-	SHELL_CMD(table, &battery_table_commands, "ADC SOC lookup-table calibration", NULL),
-	SHELL_CMD(source, &battery_source_commands, "BATSOC COMPOSITION selection", NULL),
-	SHELL_SUBCMD_SET_END
-);
-
-SHELL_CMD_REGISTER(battery, &battery_commands, "Battery configuration", NULL);
-
-static int cmd_usb_msd_get(const struct shell *shell, size_t argc, char **argv)
-{
-	const struct ef800_composition_snapshot *snapshot;
-
-	ARG_UNUSED(argc);
-	ARG_UNUSED(argv);
-	if (!composition_service_ready) {
-		shell_error(shell, "COMPOSITION service unavailable");
-		return -ENOTSUP;
-	}
-	snapshot = ef800_composition_service_active(&composition_service);
-	if (snapshot != NULL) {
-		for (size_t index = 0U; index < snapshot->effective_count; ++index) {
-			const struct ef800_composition_catalog_entry *entry =
-				snapshot->effective[index].catalog_entry;
-
-			if (entry != NULL && strcmp(entry->group, "USBMSD") == 0) {
-				shell_print(shell, "active USBMSD mode: %s%s", entry->token,
-					ef800_composition_service_restart_required(
-						&composition_service) ? " (restart required)" : "");
-				return 0;
-			}
-		}
-	}
-	shell_error(shell, "USBMSD composition selection unavailable");
-	return -ENODEV;
-}
-
-static int cmd_usb_msd_mode_set(const struct shell *shell, size_t argc,
-	char **argv)
-{
-	const struct ef800_composition_snapshot *snapshot;
-	int ret;
-
-	if (argc != 2U || (strcmp(argv[1], "USBMSD0") != 0 &&
-		strcmp(argv[1], "USBMSD1") != 0)) {
-		shell_error(shell, "usage: usbmsd mode <USBMSD0|USBMSD1>");
-		return -EINVAL;
-	}
-	if (!composition_service_ready ||
-	    !ef800_storage_configuration_is_mounted()) {
-		shell_error(shell, "COMPOSITION Configuration storage unavailable");
-		return -ENOTSUP;
-	}
-	if (ef800_composition_service_restart_required(&composition_service)) {
-		shell_error(shell, "a COMPOSITION change is already committed; restart first");
-		return -EALREADY;
-	}
-	snapshot = ef800_composition_service_active(&composition_service);
-	if (snapshot != NULL) {
-		for (size_t index = 0U; index < snapshot->effective_count; ++index) {
-			const struct ef800_composition_catalog_entry *entry =
-				snapshot->effective[index].catalog_entry;
-
-			if (entry != NULL && strcmp(entry->group, "USBMSD") == 0 &&
-			    strcmp(entry->token, argv[1]) == 0) {
-				shell_print(shell, "%s is already active", argv[1]);
-				return 0;
-			}
-		}
-	}
-	ret = ef800_composition_service_stage_group_selection(&composition_service,
-		"USBMSD", argv[1]);
-	if (ret == 0) {
-		ret = ef800_composition_service_commit(&composition_service);
-	}
-	if (ret != 0) {
-		ef800_composition_service_discard(&composition_service);
-		shell_error(shell, "USBMSD composition commit failed: %d", ret);
-		return ret;
-	}
-#ifdef CONFIG_BOARD_NATIVE_SIM
-	publish_virtual_composition_state();
-#endif
-	shell_print(shell, "%s committed; restart required", argv[1]);
-	return 0;
-}
-
-SHELL_STATIC_SUBCMD_SET_CREATE(usb_msd_commands,
-	SHELL_CMD_ARG(get, NULL, "Show active USB MSD composition mode",
-		cmd_usb_msd_get, 1, 0),
-	SHELL_CMD_ARG(mode, NULL, "Select USBMSD0 (off) or USBMSD1 (on)",
-		cmd_usb_msd_mode_set, 2, 0),
-	SHELL_SUBCMD_SET_END
-);
-
-SHELL_CMD_REGISTER(usbmsd, &usb_msd_commands,
-	"USB Mass Storage COMPOSITION selection", NULL);
 
 static int cmd_storage_format_qspi(const struct shell *shell, size_t argc,
 	char **argv)
@@ -6909,42 +4989,7 @@ SHELL_STATIC_SUBCMD_SET_CREATE(lcdcontrast_commands,
 SHELL_CMD_REGISTER(lcdcontrast, &lcdcontrast_commands,
 	"LCD contrast controls", NULL);
 
-SHELL_STATIC_SUBCMD_SET_CREATE(keyboard_debug_commands,
-	SHELL_CMD_ARG(start, NULL, "Disable physical scanning and enable debug input",
-			cmd_keyboard_debug_start, 1, 0),
-	SHELL_CMD_ARG(press, NULL, "Press a named virtual key",
-			cmd_keyboard_debug_press, 2, 0),
-	SHELL_CMD_ARG(release, NULL, "Release a named virtual key",
-			cmd_keyboard_debug_release, 2, 0),
-	SHELL_CMD_ARG(stop, NULL, "Release held virtual keys and restore scanning",
-			cmd_keyboard_debug_stop, 1, 0),
-	SHELL_SUBCMD_SET_END
-);
 
-SHELL_STATIC_SUBCMD_SET_CREATE(keyboard_commands,
-	SHELL_CMD_ARG(version, NULL, "Read keyboard firmware version",
-			cmd_keyboard_version, 1, 0),
-	SHELL_CMD_ARG(updater-version, NULL, "Read live updater version at 0x48",
-			cmd_keyboard_updater_version, 1, 0),
-	SHELL_CMD_ARG(boot-probe, NULL,
-			"Reset keyboard and test bootloader 0x48 updater entry",
-			cmd_keyboard_boot_probe, 1, 0),
-	SHELL_CMD_ARG(upload, NULL, "Upload EF800_KEYBOARD.pkg via DebugConsole",
-			cmd_keyboard_upload, 1, 0),
-	SHELL_CMD(debug, &keyboard_debug_commands, "Keyboard debug input", NULL),
-	SHELL_SUBCMD_SET_END
-);
-
-SHELL_CMD_REGISTER(keyboard, &keyboard_commands, "Keyboard commands", NULL);
-
-SHELL_STATIC_SUBCMD_SET_CREATE(rtc_commands,
-	SHELL_CMD_ARG(get, NULL, "Read local RTC time", cmd_rtc_get, 1, 0),
-	SHELL_CMD_ARG(set, NULL,
-		"Set local time, offset hours/minutes, and DST flag",
-		cmd_rtc_set, 4, 0),
-	SHELL_SUBCMD_SET_END
-);
-SHELL_CMD_REGISTER(rtc, &rtc_commands, "EF800 RTC commands", NULL);
 
 static void handle_keyboard_event(uint32_t event)
 {
@@ -7028,15 +5073,13 @@ static void handle_keyboard_event(uint32_t event)
 	}
 	if (active_menu == APPLICATION_MENU_WORKSPACE_ROW_EDITOR) {
 		if ((event & KB_EVENT_INSERT) != 0U) {
-			workspace_row_editor.insert_mode = !workspace_row_editor.insert_mode;
+			ef800_workspace_row_editor_toggle_mode(&workspace_row_editor);
 		}
-		if ((event & KB_EVENT_ARROWLEFT) != 0U &&
-			workspace_row_editor.caret > 0U) {
-			--workspace_row_editor.caret;
+		if ((event & KB_EVENT_ARROWLEFT) != 0U) {
+			ef800_workspace_row_editor_move(&workspace_row_editor, -1);
 		}
-		if ((event & KB_EVENT_ARROWRIGHT) != 0U &&
-			workspace_row_editor.caret < workspace_row_editor.length) {
-			++workspace_row_editor.caret;
+		if ((event & KB_EVENT_ARROWRIGHT) != 0U) {
+			ef800_workspace_row_editor_move(&workspace_row_editor, 1);
 		}
 		if ((event & (KB_EVENT_INSERT | KB_EVENT_ARROWLEFT |
 			KB_EVENT_ARROWRIGHT)) != 0U) {
@@ -7046,7 +5089,7 @@ static void handle_keyboard_event(uint32_t event)
 		return;
 	}
 	if (time_editor.active) {
-		if (time_editor.field == TIME_EDITOR_WEEKDAY) {
+		if (time_editor.field == EF800_TIME_EDITOR_WEEKDAY) {
 			if ((event & KB_EVENT_ARROWUP) != 0U) {
 				time_editor_adjust_weekday(-1);
 			} else if ((event & KB_EVENT_ARROWDOWN) != 0U) {
@@ -7210,8 +5253,7 @@ static void process_keyboard_byte(uint8_t byte, uint32_t now_ms)
 {
 	enum ef800_host_feed_result result;
 
-	if (keyboard_command_pending &&
-	    keyboard_pending_command == CMD_KEYBOARD_VERSION) {
+	if (ef800_keyboard_command_waiting_for_version(&keyboard_command)) {
 		LOG_INF("Keyboard version query: RX byte 0x%02x", byte);
 	}
 	result = ef800_keyboard_host_feed_at(&keyboard_host, byte, now_ms);
@@ -7223,10 +5265,8 @@ static void process_keyboard_byte(uint8_t byte, uint32_t now_ms)
 		LOG_DBG("Keyboard command 0x%02x status 0x%02x",
 			keyboard_host.last_command,
 			keyboard_host.last_command_status);
-		if (keyboard_command_pending &&
-			keyboard_host.last_command == keyboard_pending_command) {
-			k_sem_give(&keyboard_command_complete);
-		}
+		ef800_keyboard_command_response(&keyboard_command,
+			keyboard_host.last_command);
 		break;
 	case EF800_HOST_FEED_ECHO:
 		LOG_DBG("Keyboard echo indication received");
@@ -7267,6 +5307,7 @@ static bool wait_for_keyboard_startup(void)
 
 int main(void)
 {
+	static struct ef800_main_shell_context shell_context;
 	uint8_t byte;
 	bool mcp_controls_ready = false;
 	bool keyboard_rx_armed = false;
@@ -7285,6 +5326,24 @@ int main(void)
 		static const char diagnostic[] = "console initial target selected\r\n";
 		(void)ef800_console_write((const uint8_t *)diagnostic, sizeof(diagnostic) - 1U);
 	}
+	shell_context = (struct ef800_main_shell_context) {
+		.battery_soc_store = &battery_soc_store,
+		.battery_soc_store_ready = &battery_soc_store_ready,
+		.composition_service = &composition_service,
+		.composition_service_ready = &composition_service_ready,
+		.mcumgr_transport_active = &mcumgr_transport_active,
+		.keyboard_i2c = keyboard_i2c,
+		.keyboard_command = &keyboard_command,
+		.keyboard_debug_active = &keyboard_debug_active,
+		.keyboard_boot_probe = main_shell_keyboard_boot_probe,
+		.keyboard_upload = cmd_keyboard_upload,
+		.composition_committed = main_shell_composition_committed,
+	};
+	result = ef800_main_shell_init(&shell_context);
+	if (result != 0) {
+		LOG_ERR("MainApplication shell context initialization failed: %d", result);
+	}
+	ef800_keyboard_command_init(&keyboard_command, keyboard_uart, &keyboard_host);
 	(void)ef800_shell_init();
 	printk("ef800 main application: entry\r\n");
 	result = ef800_memory_pool_init();
@@ -7295,6 +5354,7 @@ int main(void)
 		LOG_INF("External SRAM validated: %u bytes available for explicit pool use",
 			(unsigned int)ef800_memory_pool_external_capacity());
 	}
+#if CONFIG_EF800_MAIN_PLUGIN_USER_WORKER
 	{
 		char *external_snapshot = ef800_memory_pool_external_alloc(
 			EF800_PLUGIN_WORKER_MAX_WORKSPACE_SNAPSHOT, 32U);
@@ -7309,6 +5369,7 @@ int main(void)
 				(unsigned)sizeof(calculation_snapshot_internal));
 		}
 	}
+#endif
 
 	(void)ef800_main_foundation_init();
 #ifdef CONFIG_BOARD_NATIVE_SIM
@@ -7431,7 +5492,8 @@ int main(void)
 			}
 			if (plugin_discovery_ready) {
 				LOG_INF("Reconciling plugin assignments");
-				result = reconcile_plugin_assignments();
+				result = ef800_main_port_workflow_reconcile_plugins(
+					&main_port_workflow);
 				LOG_INF("Plugin assignment reconciliation result=%d", result);
 				if (result != 0) {
 					LOG_WRN("Plugin assignment reconciliation incomplete: %d",
@@ -7558,8 +5620,10 @@ result = ef800_mcp23017_open(&mcp23017,
 	}
 	if (result == 0) {
 		ef800_keyboard_host_init(&keyboard_host);
+		ef800_keyboard_command_init(&keyboard_command, keyboard_uart,
+			&keyboard_host);
 		k_msgq_purge(&keyboard_rx_msgq);
-		keyboard_uart_initialized = true;
+		ef800_keyboard_command_set_uart_ready(&keyboard_command, true);
 		uart_irq_callback_user_data_set(keyboard_uart, keyboard_uart_isr, NULL);
 		uart_irq_rx_enable(keyboard_uart);
 		/* RX is live before reset release so the controller's one-shot 0xaa is kept. */
@@ -7606,11 +5670,13 @@ result = ef800_mcp23017_open(&mcp23017,
 			LOG_WRN("T6963 LCD unavailable; continuing without display: %d", result);
 		} else {
 			lcd_ready = true;
+			ef800_main_display_init(&main_display, &lcd, true);
 			result = draw_header_separator();
 			if (result == 0) {
 				display_banner();
 			} else {
 				lcd_ready = false;
+				ef800_main_display_set_ready(&main_display, false);
 				LOG_WRN("T6963 header unavailable; continuing without display: %d",
 					result);
 			}
@@ -7641,12 +5707,13 @@ result = ef800_mcp23017_open(&mcp23017,
 		LOG_INF("MAX17048-compatible fuel gauge disabled: no enabled I2C node");
 #endif
 	} else if (battery_source == EF800_BATTERY_SOC_SOURCE_ADC) {
-		result = adc_channel_setup_dt(&battery_adc);
+		result = ef800_main_battery_adc_init(&battery_adc_source,
+			&battery_soc_store, battery_soc_store_ready);
 		if (result != 0) {
 			LOG_WRN("Battery ADC unavailable on PC1: %d", result);
 		} else {
-			battery_adc_ready = true;
-			battery_reader = read_adc_battery;
+			battery_reader = ef800_main_battery_adc_read;
+			battery_reader_context = &battery_adc_source;
 		}
 	} else {
 		LOG_INF("BATSOC0 active; battery SOC is disabled by composition");

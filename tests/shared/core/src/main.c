@@ -28,17 +28,25 @@ ZTEST(shared_core, test_boot_decision_priority)
 	zassert_equal(ef800_boot_decide(NULL), EF800_BOOT_DECISION_NONE, NULL);
 }
 
+static bool main_msd_requested(bool stale_assignment, bool vbus_present,
+			       bool usbmsd0_effective)
+{
+	return stale_assignment && vbus_present && !usbmsd0_effective;
+}
+
 ZTEST(shared_core, test_main_msd_ownership_requires_composition_request)
 {
 	bool stale_msd_assignment = true;
 	bool vbus_present = true;
 	bool usbmsd0_effective = true;
-	bool requested = stale_msd_assignment && vbus_present && !usbmsd0_effective;
+	bool requested = main_msd_requested(stale_msd_assignment, vbus_present,
+					    usbmsd0_effective);
 
 	zassert_equal(ef800_storage_owner_action(EF800_STORAGE_OWNER_FAT, requested),
 		      EF800_STORAGE_ACTION_NONE, NULL);
 	usbmsd0_effective = false;
-	requested = stale_msd_assignment && vbus_present && !usbmsd0_effective;
+	requested = main_msd_requested(stale_msd_assignment, vbus_present,
+				       usbmsd0_effective);
 	zassert_equal(ef800_storage_owner_action(EF800_STORAGE_OWNER_FAT, requested),
 			      EF800_STORAGE_ACTION_FAT_TO_MSC, NULL);
 	zassert_equal(ef800_storage_owner_action(EF800_STORAGE_OWNER_MSC, requested),

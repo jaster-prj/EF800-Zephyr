@@ -28,8 +28,7 @@ void ef800_measurement_display_init(struct ef800_measurement_display *display,
     const char *title, uint32_t actions)
 {
     if (display == 0) return;
-    for (size_t index = 0u; index < sizeof(*display); ++index)
-        ((uint8_t *)display)[index] = 0u;
+    memset(display, 0, sizeof(*display));
     display->struct_size = sizeof(*display);
     display->actions = actions;
     (void)text_copy(display->title, sizeof(display->title), title);
@@ -42,8 +41,6 @@ int ef800_measurement_display_number(char *output, uint32_t capacity,
 {
     char digits[12];
     uint32_t magnitude;
-    uint32_t quotient;
-    uint32_t remainder;
     size_t label_length = text_length(label, capacity);
     size_t digit_count = 0u;
     size_t position;
@@ -55,8 +52,8 @@ int ef800_measurement_display_number(char *output, uint32_t capacity,
     output[position++] = ' ';
     magnitude = value < 0 ? (uint32_t)(0u - (uint32_t)value) : (uint32_t)value;
     do {
-        quotient = 0u;
-        remainder = 0u;
+        uint32_t quotient = 0u;
+        uint32_t remainder = 0u;
         for (int bit = 31; bit >= 0; --bit) {
             remainder = (remainder << 1) | ((magnitude >> (uint32_t)bit) & 1u);
             if (remainder >= 10u) {
@@ -120,6 +117,7 @@ int pm_plugin_create(const struct pm_service_table *services, void **instance)
     return PM_OK;
 }
 
+/* cppcheck-suppress constParameterPointer -- plugin manager ABI requires void * */
 int pm_plugin_destroy(void *instance)
 {
     if (instance != &ef800_runtime.public_instance || ef800_runtime.active == 0u)

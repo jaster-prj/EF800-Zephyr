@@ -46,6 +46,7 @@ static int metadata_nvs_mount(const struct flash_area *area)
 		return ret;
 	}
 	if (legacy_layout) {
+		/* cppcheck-suppress knownConditionTrueFalse -- Kconfig controls LOG_* expansion */
 		LOG_WRN("legacy monolithic QSPI FAT detected; boot-state NVS left untouched");
 		return -ENOTSUP;
 	}
@@ -122,7 +123,6 @@ static int metadata_reset_record(const struct flash_area *area,
 				struct ef800_boot_metadata *metadata, bool *valid)
 {
 	uint8_t buffer[EF800_BOOT_METADATA_SIZE];
-	uint8_t verify_buffer[EF800_BOOT_METADATA_SIZE];
 	int ret;
 
 	ef800_boot_metadata_init(metadata);
@@ -131,6 +131,8 @@ static int metadata_reset_record(const struct flash_area *area,
 		ret = nvs_write(&metadata_nvs, EF800_METADATA_NVS_ID, buffer,
 				 sizeof(buffer));
 		if (ret >= 0) {
+			uint8_t verify_buffer[EF800_BOOT_METADATA_SIZE];
+
 			ret = nvs_read(&metadata_nvs, EF800_METADATA_NVS_ID,
 					verify_buffer, sizeof(verify_buffer));
 			if (ret == sizeof(verify_buffer) &&
@@ -143,6 +145,7 @@ static int metadata_reset_record(const struct flash_area *area,
 	}
 	*valid = ret == 0;
 	if (ret == 0) {
+		/* cppcheck-suppress knownConditionTrueFalse -- Kconfig controls LOG_* expansion */
 		LOG_WRN("invalid or missing boot-state record reset to defaults");
 	}
 	return ret == 0 ? EF800_METADATA_RESET : ret;

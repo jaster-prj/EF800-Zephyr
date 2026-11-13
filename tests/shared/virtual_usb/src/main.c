@@ -221,7 +221,7 @@ ZTEST(ef800_virtual_usb, test_real_main_cdc_acm_exchanges_bytes)
 	static const uint8_t device_to_host[] = {0x44, 0x45, 0x56, 0x31};
 	uint8_t received[sizeof(host_to_device)];
 	uint8_t usb_data[512];
-	size_t usb_length = 0U;
+	size_t usb_length;
 	bool host_received_output = false;
 	int64_t deadline;
 

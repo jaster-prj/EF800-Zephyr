@@ -73,6 +73,7 @@ int ef800_max17043_init(struct ef800_max17043 *gauge,
 	if (gauge == NULL || spec == NULL || !i2c_is_ready_dt(spec)) {
 		return -ENODEV;
 	}
+	/* cppcheck-suppress knownConditionTrueFalse -- weak hook has target overrides */
 	if (!ef800_virtual_battery_available()) {
 		return -ENODEV;
 	}
@@ -87,6 +88,7 @@ int ef800_max17043_init(struct ef800_max17043 *gauge,
 	}
 
 	gauge->ready = true;
+	/* cppcheck-suppress knownConditionTrueFalse -- Kconfig controls LOG_* expansion */
 	LOG_INF("MAX17043 ready at 0x%02x (version 0x%04x)",
 		spec->addr, version);
 	return 0;
@@ -102,6 +104,7 @@ int ef800_max17043_read(struct ef800_max17043 *gauge,
 	if (gauge == NULL || status == NULL || !gauge->ready) {
 		return -ENODEV;
 	}
+	/* cppcheck-suppress knownConditionTrueFalse -- weak hook has target overrides */
 	if (!ef800_virtual_battery_available()) {
 		return -ENODEV;
 	}

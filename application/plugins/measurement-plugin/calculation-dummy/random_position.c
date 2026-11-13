@@ -35,6 +35,7 @@ static uint32_t next_random(uint32_t *state)
 	return value;
 }
 
+/* cppcheck-suppress constParameterCallback -- calculation API v1 callback fixes void * */
 static int32_t transform(void *opaque, const char *snapshot, size_t length,
 	char *output, size_t capacity, size_t *written)
 {
@@ -97,6 +98,7 @@ int pm_plugin_create(const struct pm_service_table *services, void **created)
 	return PM_OK;
 }
 
+/* cppcheck-suppress constParameterPointer -- plugin manager ABI requires void * */
 int pm_plugin_destroy(void *created)
 {
 	if (created != &instance || instance.api != &api) {

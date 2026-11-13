@@ -7,6 +7,7 @@ project(ef800_bootloader)
 
 target_sources(app PRIVATE
 	src/main.c
+	src/boot_handoff.c
 	src/boot_update.c
 	src/boot_watchdog_early.c
 	src/boot_watchdog_reset.c

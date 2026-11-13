@@ -8,6 +8,9 @@ project(ef800_keyboard_updater)
 
 target_sources(app PRIVATE
 	src/main.c
+	src/keyboard_updater_flash.c
+	src/keyboard_updater_session.c
+	src/keyboard_updater_transport.c
 	${CMAKE_CURRENT_LIST_DIR}/../../shared/ef800_keyboard_update/ef800_keyboard_update_protocol.c
 	${CMAKE_CURRENT_LIST_DIR}/../../shared/ef800_update/ef800_update.c
 	${CMAKE_CURRENT_LIST_DIR}/../../shared/ef800_watchdog/ef800_watchdog.c

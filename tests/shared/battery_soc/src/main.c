@@ -350,7 +350,7 @@ ZTEST(battery_runtime, test_soc_stays_visible_until_third_failure)
 	zassert_true(snapshot.battery_has_value, NULL);
 	zassert_equal(snapshot.battery_soc_percent, 73U, NULL);
 
-	reader.failures_remaining = 2U;
+	reader.failures_remaining = 3U;
 	ef800_runtime_state_refresh_battery(&state);
 	zassert_ok(ef800_runtime_state_snapshot(&state, &snapshot), NULL);
 	zassert_true(snapshot.battery_has_value, NULL);
@@ -359,7 +359,6 @@ ZTEST(battery_runtime, test_soc_stays_visible_until_third_failure)
 	zassert_ok(ef800_runtime_state_snapshot(&state, &snapshot), NULL);
 	zassert_true(snapshot.battery_has_value, NULL);
 	zassert_equal(snapshot.battery_soc_percent, 73U, NULL);
-	reader.failures_remaining = 1U;
 	ef800_runtime_state_refresh_battery(&state);
 	zassert_ok(ef800_runtime_state_snapshot(&state, &snapshot), NULL);
 	zassert_false(snapshot.battery_has_value, NULL);

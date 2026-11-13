@@ -126,6 +126,11 @@ static size_t plugin_rodata_capacity = EF800_PLUGIN_INTERNAL_ARENA_SIZE;
 static bool plugin_arenas_external;
 BUILD_ASSERT(sizeof(plugin_text_internal) == EF800_PLUGIN_INTERNAL_ARENA_SIZE);
 BUILD_ASSERT(sizeof(plugin_rodata_internal) == EF800_PLUGIN_INTERNAL_ARENA_SIZE);
+#else
+/* Native-sim loads each package into its own mmap-backed image slot. These
+ * capacities still bound admission, but are not addresses in shared arenas. */
+static const size_t plugin_text_capacity = EF800_PLUGIN_TEXT_SIZE;
+static const size_t plugin_rodata_capacity = EF800_PLUGIN_RODATA_SIZE;
 #endif
 
 #if CONFIG_BOARD_NATIVE_SIM
@@ -2854,13 +2859,16 @@ static void recovery_ledger_set_route(uint32_t plugin_id, uint8_t port_id,
 
 int ef800_plugin_host_init(struct ef800_plugin_registry *registry)
 {
+	#if CONFIG_EF800_MAIN_PLUGIN_USER_WORKER
 	char *external_output;
+	#endif
 	struct pm_manager_config config = {
 		.contract = &contract,
 		.max_plugins = EF800_PLUGIN_MAX_ENTRIES,
 		.lock = host_lock,
 		.unlock = host_unlock,
 	};
+#if CONFIG_EF800_MAIN_PLUGIN_USER_WORKER
 	external_output = ef800_memory_pool_external_alloc(
 		EF800_PLUGIN_ASYNC_CALCULATION_OUTPUT_SIZE, 32U);
 	if (external_output != NULL) {
@@ -2872,6 +2880,7 @@ int ef800_plugin_host_init(struct ef800_plugin_registry *registry)
 		LOG_INF("Calculation output scratch uses internal fallback (%u bytes)",
 			(unsigned)sizeof(plugin_async_calculation_output_internal));
 	}
+#endif
 	plugin_filesystem = (struct pm_zephyr_filesystem){
 		.mount = ef800_storage_mount_descriptor(),
 		.plugin_directory = EF800_PLUGIN_DIRECTORY,

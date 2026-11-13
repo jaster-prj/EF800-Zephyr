@@ -57,7 +57,7 @@ bool ef800_persistence_valid_name(const char *name)
 	return true;
 }
 
-static int validate_operation(struct ef800_persistence *storage,
+static int validate_operation(const struct ef800_persistence *storage,
 			      enum ef800_persistence_root root, const char *name)
 {
 	if (storage == NULL || storage->backend == NULL ||

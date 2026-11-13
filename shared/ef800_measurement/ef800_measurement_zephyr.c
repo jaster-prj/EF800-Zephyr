@@ -3,8 +3,10 @@
 #include "ef800_measurement_zephyr.h"
 
 #include <errno.h>
+#if !defined(CONFIG_BOARD_NATIVE_SIM) && defined(CONFIG_SOC_SERIES_STM32L4X)
 #include <stm32_ll_rcc.h>
 #include <stm32_ll_usart.h>
+#endif
 #include <zephyr/devicetree.h>
 #include <zephyr/drivers/uart.h>
 #include <zephyr/kernel.h>

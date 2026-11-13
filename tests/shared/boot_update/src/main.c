@@ -75,14 +75,16 @@ static uint32_t flash_area_crc32(const struct flash_area *area)
 	return crc;
 }
 
-static int write_update_package(bool valid_crc, bool truncated)
+static int write_update_package(bool valid_crc, bool truncated,
+				bool valid_load_address)
 {
 	struct ef800_update_header header = {
 		.magic = EF800_UPDATE_MAGIC,
 		.format_version = EF800_UPDATE_FORMAT_VERSION,
 		.header_size = sizeof(struct ef800_update_header),
 		.image_size = TEST_IMAGE_SIZE,
-		.load_address = TEST_MAIN_ADDRESS,
+		.load_address = valid_load_address ? TEST_MAIN_ADDRESS :
+			TEST_MAIN_ADDRESS + 0x10000U,
 	};
 	uint8_t image[TEST_IMAGE_SIZE];
 	struct fs_file_t file;
@@ -152,7 +154,7 @@ ZTEST(ef800_boot_update, test_valid_update_changes_only_main_partition)
 	zassert_ok(flash_area_open(PARTITION_ID(ef800_main_partition), &main), NULL);
 	prepare_internal_flash(boot, backup, main);
 	build_test_image(expected);
-	zassert_ok(write_update_package(true, false), NULL);
+	zassert_ok(write_update_package(true, false, true), NULL);
 	boot_crc = flash_area_crc32(boot);
 	backup_crc = flash_area_crc32(backup);
 
@@ -171,20 +173,24 @@ ZTEST(ef800_boot_update, test_bad_crc_is_rejected_before_main_erase)
 	const struct flash_area *boot;
 	const struct flash_area *backup;
 	const struct flash_area *main;
-	uint8_t before[sizeof(main_marker)];
-	uint8_t after[sizeof(main_marker)];
+	uint32_t main_crc;
+	uint32_t backup_crc;
+	uint32_t boot_crc;
 
 	zassert_ok(flash_area_open(PARTITION_ID(ef800_boot_partition), &boot), NULL);
 	zassert_ok(flash_area_open(PARTITION_ID(ef800_backup_partition), &backup), NULL);
 	zassert_ok(flash_area_open(PARTITION_ID(ef800_main_partition), &main), NULL);
 	prepare_internal_flash(boot, backup, main);
-	zassert_ok(write_update_package(false, false), NULL);
-	zassert_equal(flash_area_read(main, 0, before, sizeof(before)), 0, NULL);
+	zassert_ok(write_update_package(false, false, true), NULL);
+	main_crc = flash_area_crc32(main);
+	backup_crc = flash_area_crc32(backup);
+	boot_crc = flash_area_crc32(boot);
 
 	zassert_equal(ef800_boot_install_update(main, TEST_MAIN_ADDRESS,
 						TEST_SRAM_ADDRESS, TEST_SRAM_SIZE), -EBADMSG, NULL);
-	zassert_equal(flash_area_read(main, 0, after, sizeof(after)), 0, NULL);
-	zassert_mem_equal(after, before, sizeof(after), NULL);
+	zassert_equal(flash_area_crc32(main), main_crc, NULL);
+	zassert_equal(flash_area_crc32(backup), backup_crc, NULL);
+	zassert_equal(flash_area_crc32(boot), boot_crc, NULL);
 	assert_region_marker(boot, boot_marker);
 	assert_region_marker(backup, backup_marker);
 }
@@ -194,20 +200,51 @@ ZTEST(ef800_boot_update, test_truncated_update_is_rejected_without_internal_writ
 	const struct flash_area *boot;
 	const struct flash_area *backup;
 	const struct flash_area *main;
-	uint8_t before[sizeof(main_marker)];
-	uint8_t after[sizeof(main_marker)];
+	uint32_t main_crc;
+	uint32_t backup_crc;
+	uint32_t boot_crc;
 
 	zassert_ok(flash_area_open(PARTITION_ID(ef800_boot_partition), &boot), NULL);
 	zassert_ok(flash_area_open(PARTITION_ID(ef800_backup_partition), &backup), NULL);
 	zassert_ok(flash_area_open(PARTITION_ID(ef800_main_partition), &main), NULL);
 	prepare_internal_flash(boot, backup, main);
-	zassert_ok(write_update_package(true, true), NULL);
-	zassert_equal(flash_area_read(main, 0, before, sizeof(before)), 0, NULL);
+	zassert_ok(write_update_package(true, true, true), NULL);
+	main_crc = flash_area_crc32(main);
+	backup_crc = flash_area_crc32(backup);
+	boot_crc = flash_area_crc32(boot);
 
 	zassert_equal(ef800_boot_install_update(main, TEST_MAIN_ADDRESS,
 						TEST_SRAM_ADDRESS, TEST_SRAM_SIZE), -EINVAL, NULL);
-	zassert_equal(flash_area_read(main, 0, after, sizeof(after)), 0, NULL);
-	zassert_mem_equal(after, before, sizeof(after), NULL);
+	zassert_equal(flash_area_crc32(main), main_crc, NULL);
+	zassert_equal(flash_area_crc32(backup), backup_crc, NULL);
+	zassert_equal(flash_area_crc32(boot), boot_crc, NULL);
+	assert_region_marker(boot, boot_marker);
+	assert_region_marker(backup, backup_marker);
+}
+
+ZTEST(ef800_boot_update, test_wrong_load_address_is_rejected_without_internal_writes)
+{
+	const struct flash_area *boot;
+	const struct flash_area *backup;
+	const struct flash_area *main;
+	uint32_t main_crc;
+	uint32_t backup_crc;
+	uint32_t boot_crc;
+
+	zassert_ok(flash_area_open(PARTITION_ID(ef800_boot_partition), &boot), NULL);
+	zassert_ok(flash_area_open(PARTITION_ID(ef800_backup_partition), &backup), NULL);
+	zassert_ok(flash_area_open(PARTITION_ID(ef800_main_partition), &main), NULL);
+	prepare_internal_flash(boot, backup, main);
+	zassert_ok(write_update_package(true, false, false), NULL);
+	main_crc = flash_area_crc32(main);
+	backup_crc = flash_area_crc32(backup);
+	boot_crc = flash_area_crc32(boot);
+
+	zassert_equal(ef800_boot_install_update(main, TEST_MAIN_ADDRESS,
+						TEST_SRAM_ADDRESS, TEST_SRAM_SIZE), -EINVAL, NULL);
+	zassert_equal(flash_area_crc32(main), main_crc, NULL);
+	zassert_equal(flash_area_crc32(backup), backup_crc, NULL);
+	zassert_equal(flash_area_crc32(boot), boot_crc, NULL);
 	assert_region_marker(boot, boot_marker);
 	assert_region_marker(backup, backup_marker);
 }

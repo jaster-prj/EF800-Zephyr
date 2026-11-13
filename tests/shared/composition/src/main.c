@@ -573,6 +573,7 @@ ZTEST(composition_service, test_write_and_readback_failures_keep_predecessor)
 	zassert_ok(ef800_composition_service_stage_replace(&service, second, 1U), NULL);
 	controlled.fail_write = true;
 	zassert_equal(ef800_composition_service_commit(&service), -EIO, NULL);
+	/* cppcheck-suppress redundantAssignment -- reset fault injection before later recovery checks */
 	controlled.fail_write = false;
 	zassert_ok(ef800_composition_service_init(&restarted, &persistence,
 		&empty_catalog), NULL);
@@ -603,6 +604,7 @@ ZTEST(composition_service, test_torn_record_recovers_previous_valid_slot)
 	zassert_ok(ef800_composition_service_stage_replace(&service, second, 1U), NULL);
 	controlled.torn_write = true;
 	zassert_equal(ef800_composition_service_commit(&service), -EIO, NULL);
+	/* cppcheck-suppress redundantAssignment -- allow recovery after torn-write injection */
 	controlled.torn_write = false;
 	zassert_ok(ef800_composition_service_init(&restarted, &persistence,
 		&empty_catalog), NULL);

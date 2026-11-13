@@ -46,6 +46,7 @@ static int append_scaled(char *buffer, uint32_t capacity, uint32_t *offset,
     return PM_OK;
 }
 
+/* cppcheck-suppress constParameterCallback -- plugin ABI callback type is fixed as void * */
 static int32_t set_context(void *instance,
     const struct ef800_measurement_context *context)
 {
@@ -66,6 +67,7 @@ static int32_t set_context(void *instance,
     return PM_OK;
 }
 
+/* cppcheck-suppress constParameterCallback -- plugin ABI callback type is fixed as void * */
 static int32_t get_workspace_record(void *instance, char *buffer,
     uint32_t capacity, uint32_t *length)
 {
@@ -121,6 +123,7 @@ static int32_t workspace_record_result(void *instance, int32_t status)
     return PM_OK;
 }
 
+/* cppcheck-suppress constParameterCallback -- plugin ABI callback type is fixed as void * */
 static int32_t defaults(void *instance, struct ef800_serial_defaults *value)
 {
     uint32_t index;
@@ -141,6 +144,7 @@ static int32_t send(const char *text)
                                 ef800_protocol_length(text));
 }
 
+/* cppcheck-suppress constParameterCallback -- plugin ABI callback type is fixed as void * */
 static int32_t measure(void *instance, struct ef800_measurement_result *result)
 {
     char response[128];
@@ -225,6 +229,7 @@ static int32_t input(void *instance, uint32_t value)
     return PM_OK;
 }
 
+/* cppcheck-suppress constParameterCallback -- plugin ABI callback type is fixed as void * */
 static int32_t render(void *instance, struct ef800_measurement_display *display)
 {
     if (instance != &ef800_runtime.public_instance || display == 0) return PM_EINVAL;

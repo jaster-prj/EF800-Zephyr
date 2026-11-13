@@ -1,0 +1,6 @@
+tests:
+  ef800.shared.workspace_editor:
+    tags: [ef800, workspace, editor]
+    harness: ztest
+    platform_allow:
+      - native_sim

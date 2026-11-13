@@ -7,6 +7,9 @@ project(ef800_keyboard_bootloader)
 
 target_sources(app PRIVATE
 	src/main.c
+	src/keyboard_boot_handoff.c
+	src/keyboard_boot_probe.c
+	src/keyboard_boot_flash.c
 	${CMAKE_CURRENT_LIST_DIR}/../../shared/ef800_keyboard_boot/ef800_keyboard_boot.c
 	${CMAKE_CURRENT_LIST_DIR}/../../shared/ef800_update/ef800_update.c
 	${CMAKE_CURRENT_LIST_DIR}/../../shared/ef800_watchdog/ef800_watchdog.c

@@ -34,7 +34,7 @@ struct ef800_plugin_registry {
 
 void ef800_plugin_registry_init(struct ef800_plugin_registry *registry);
 int ef800_plugin_registry_register_builtins(
-	struct ef800_plugin_registry *registry);
+	const struct ef800_plugin_registry *registry);
 int ef800_plugin_registry_register_external(
 	struct ef800_plugin_registry *registry,
 	const struct ef800_plugin_descriptor_info *info);

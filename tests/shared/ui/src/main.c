@@ -1,10 +1,62 @@
 /* SPDX-License-Identifier: Apache-2.0 */
 #include <zephyr/ztest.h>
+#include <string.h>
 
 #include "ef800_ui.h"
 #include "keyboard_host.h"
 #include "ef800_plugin_session.h"
 #include "ef800_lcd_contrast.h"
+#include "ef800_main_display.h"
+#include "ef800_workspace_browser.h"
+#include "ef800_workspace_row_editor.h"
+#include "ef800_measurement_plugin.h"
+
+static char rendered_rows[8U][EF800_MAIN_DISPLAY_COLUMNS + 1U];
+static uint8_t rendered_row;
+static unsigned int pixel_write_calls;
+static bool last_pixel_value;
+static bool first_pixel_value;
+
+int ef800_t6963_text_cursor(struct ef800_t6963 *lcd, uint8_t column,
+	uint8_t row)
+{
+	ARG_UNUSED(lcd);
+	ARG_UNUSED(column);
+	rendered_row = row;
+	return 0;
+}
+
+int ef800_t6963_write_string(struct ef800_t6963 *lcd, const char *string)
+{
+	ARG_UNUSED(lcd);
+	if (rendered_row < ARRAY_SIZE(rendered_rows)) {
+		strncpy(rendered_rows[rendered_row], string,
+			sizeof(rendered_rows[rendered_row]) - 1U);
+		rendered_rows[rendered_row][EF800_MAIN_DISPLAY_COLUMNS] = '\0';
+	}
+	return 0;
+}
+
+int ef800_t6963_draw_horizontal_line(struct ef800_t6963 *lcd, uint16_t y)
+{
+	ARG_UNUSED(lcd);
+	ARG_UNUSED(y);
+	return 0;
+}
+
+int ef800_t6963_write_pixel(struct ef800_t6963 *lcd, uint16_t x, uint16_t y,
+	bool value)
+{
+	ARG_UNUSED(lcd);
+	ARG_UNUSED(x);
+	ARG_UNUSED(y);
+	if (pixel_write_calls == 0U) {
+		first_pixel_value = value;
+	}
+	++pixel_write_calls;
+	last_pixel_value = value;
+	return 0;
+}
 
 struct render_capture {
 	struct ef800_ui_state state;
@@ -22,6 +74,132 @@ static void capture_render(void *context, const struct ef800_ui_state *state)
 	struct render_capture *capture = context;
 	capture->state = *state;
 	++capture->calls;
+}
+
+ZTEST(shared_ui, test_plugin_model_render_keeps_host_context_and_bounds)
+{
+	struct ef800_t6963 lcd = {0};
+	struct ef800_main_display display;
+	struct ef800_measurement_display model = {
+		.title = "Plugin title",
+		.rows = {"Measure", "Back"},
+		.footer = "ENTER select",
+		.selected_action = 1U,
+		.row_count = 2U,
+	};
+
+	memset(rendered_rows, 0, sizeof(rendered_rows));
+	ef800_main_display_init(&display, &lcd, true);
+	ef800_main_display_plugin_menu(&display, &model, 3U, "Instrument",
+		"12:34");
+	zassert_true(strncmp(rendered_rows[0], "Plugin title", 12U) == 0, NULL);
+	zassert_true(strncmp(rendered_rows[0] + 17U, "12:34", 5U) == 0, NULL);
+	zassert_true(strncmp(rendered_rows[1], "Port 3: Instrument", 18U) == 0,
+		NULL);
+	zassert_true(strncmp(rendered_rows[4], "> Back", 6U) == 0, NULL);
+	zassert_true(strncmp(rendered_rows[7], "ENTER select", 12U) == 0, NULL);
+	zassert_equal(strlen(rendered_rows[7]), EF800_MAIN_DISPLAY_COLUMNS, NULL);
+}
+
+ZTEST(shared_ui, test_paged_list_renderer_keeps_rows_and_footer_separate)
+{
+	struct ef800_t6963 lcd = {0};
+	struct ef800_main_display display;
+	const char *const rows[4] = {"> Port A", "  Port B", "  Port C", ""};
+
+	memset(rendered_rows, 0, sizeof(rendered_rows));
+	ef800_main_display_init(&display, &lcd, true);
+	ef800_main_display_list_page(&display, "Port assignment", "Ports 1-4 of 5",
+		rows, ARRAY_SIZE(rows), "ENTER edit  ESC back", "11:24");
+	zassert_true(strncmp(rendered_rows[0], "Port assignment", 15U) == 0,
+		NULL);
+	zassert_true(strncmp(rendered_rows[1], "Ports 1-4 of 5", 14U) == 0,
+		NULL);
+	zassert_true(strncmp(rendered_rows[3], "> Port A", 8U) == 0, NULL);
+	zassert_true(strncmp(rendered_rows[5], "  Port C", 8U) == 0, NULL);
+	zassert_true(strncmp(rendered_rows[7], "ENTER edit  ESC back", 20U) == 0,
+		NULL);
+}
+
+ZTEST(shared_ui, test_battery_icon_renderer_updates_only_on_state_change)
+{
+	struct ef800_t6963 lcd = {0};
+	struct ef800_main_display display;
+
+	pixel_write_calls = 0U;
+	first_pixel_value = false;
+	ef800_main_display_init(&display, &lcd, true);
+	ef800_main_display_battery_status(&display, true, 50U);
+	zassert_equal(pixel_write_calls, 38U, NULL);
+	zassert_true(first_pixel_value, NULL);
+	ef800_main_display_battery_status(&display, true, 50U);
+	zassert_equal(pixel_write_calls, 38U, NULL);
+	ef800_main_display_battery_status(&display, false, 0U);
+	zassert_equal(pixel_write_calls, 73U, NULL);
+	zassert_false(last_pixel_value, NULL);
+}
+
+ZTEST(shared_ui, test_workspace_renderer_preserves_selection_and_position_mode)
+{
+	struct ef800_t6963 lcd = {0};
+	struct ef800_main_display display;
+	struct ef800_workspace_browser browser = {
+		.lines = {"first row", "selected row"},
+		.line_count = 2U,
+		.selected_row = 1U,
+		.active = true,
+	};
+
+	memset(rendered_rows, 0, sizeof(rendered_rows));
+	ef800_main_display_init(&display, &lcd, true);
+	ef800_main_display_workspace_view(&display, &browser, true, "survey",
+		false, "08:21");
+	zassert_true(strncmp(rendered_rows[0], "Show", 4U) == 0,
+		NULL);
+	zassert_true(strncmp(rendered_rows[1], "Workspace: survey", 17U) == 0,
+		NULL);
+	zassert_true(strncmp(rendered_rows[3], "  first row", 11U) == 0, NULL);
+	zassert_true(strncmp(rendered_rows[4], "> selected row", 14U) == 0,
+		NULL);
+	zassert_true(strncmp(rendered_rows[7], "UP/DOWN select ENTER actions",
+		28U) == 0, NULL);
+
+	memset(rendered_rows, 0, sizeof(rendered_rows));
+	ef800_main_display_workspace_view(&display, &browser, true, "survey",
+		true, "08:21");
+	zassert_true(strncmp(rendered_rows[0], "Current Position", 16U) == 0,
+		NULL);
+	zassert_true(strncmp(rendered_rows[3], "first row", 9U) == 0, NULL);
+	zassert_true(strncmp(rendered_rows[7], "ESC back", 8U) == 0, NULL);
+}
+
+ZTEST(shared_ui, test_workspace_row_editor_renderer_tracks_bounded_viewport)
+{
+	struct ef800_t6963 lcd = {0};
+	struct ef800_main_display display;
+	struct ef800_workspace_row_editor editor = {
+		.text = "0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghij",
+		.length = 46U,
+		.caret = 40U,
+		.insert_mode = true,
+	};
+
+	memset(rendered_rows, 0, sizeof(rendered_rows));
+	ef800_main_display_init(&display, &lcd, true);
+	ef800_main_display_workspace_row_editor(&display, &editor, "survey",
+		"09:15");
+	zassert_equal(editor.viewport_start, 1U, NULL);
+	zassert_true(strncmp(rendered_rows[0], "Modify workspace", 16U) == 0,
+		NULL);
+	zassert_true(strncmp(rendered_rows[1], "Workspace: survey", 17U) == 0,
+		NULL);
+	zassert_true(strncmp(rendered_rows[2], "INSERT (INS toggles)", 20U) == 0,
+		NULL);
+	zassert_true(strncmp(rendered_rows[3], "123456789ABCDEFGHIJKLMNOPQRSTUVWXYZabcd", 39U) == 0,
+		NULL);
+	zassert_equal(rendered_rows[4][38], ' ', NULL);
+	zassert_true(strncmp(rendered_rows[7], "ENTER save  ESC cancel", 22U) == 0,
+		NULL);
 }
 
 ZTEST(shared_ui, test_main_menu_wraps_and_renders)

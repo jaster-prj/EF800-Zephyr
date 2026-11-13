@@ -40,7 +40,8 @@ int ef800_plugin_worker_syscall(
     assert(message->kind == EF800_PLUGIN_WORKER_HOST_SERVICE_REQUEST);
     assert(message->capability == TEST_WORKER_CAPABILITY);
     if (message->sequence == 1u) worker_sequence = 0u;
-    assert(message->sequence == ++worker_sequence);
+	worker_sequence++;
+	assert(message->sequence == worker_sequence);
     assert(active_port != NULL);
 
     switch (message->operation) {

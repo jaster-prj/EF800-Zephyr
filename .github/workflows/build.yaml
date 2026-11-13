@@ -10,6 +10,9 @@ on:
 jobs:
   build:
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      security-events: write
     container:
       image: ghcr.io/jaster-prj/devcontainer-zephyr-workspace:latest
       volumes:
@@ -36,11 +39,31 @@ jobs:
           /opt/venv/bin/west zephyr-export
           /opt/venv/bin/python -m pip install -r zephyr/scripts/requirements.txt
 
+      - name: Install static-analysis tools
+        run: |
+          apt-get update
+          apt-get install -y --no-install-recommends clang-tidy-22 cppcheck
+
+      - name: Audit Python dependencies
+        working-directory: ./zephyr_workspace/application
+        run: |
+          /opt/venv/bin/python -m pip install pip-audit
+          /opt/venv/bin/pip-audit -r GSE/Virtual-EF800/requirements.txt
+          /opt/venv/bin/pip-audit -r /workspace/zephyr/scripts/requirements.txt
+
+      - name: Initialize CodeQL
+        uses: github/codeql-action/init@v3
+        with:
+          languages: c-cpp
+          build-mode: manual
+          queries: security-extended
+
       - name: Run all native tests
         working-directory: ./zephyr_workspace
         run: |
           /opt/venv/bin/west twister -T application/tests \
-            -p native_sim --inline-logs --no-clean
+            -p native_sim --inline-logs --no-clean \
+            -x CMAKE_EXPORT_COMPILE_COMMANDS=ON
 
       - name: Build virtual EF800 target
         working-directory: ./zephyr_workspace
@@ -74,28 +97,48 @@ jobs:
         run: |
           /opt/venv/bin/west build -p always -b ef800_keyboard \
             application/application/ef800-keyboard \
-            --build-dir application/build/ef800-keyboard
+            --build-dir application/build/ef800-keyboard -- \
+            -DCMAKE_EXPORT_COMPILE_COMMANDS=ON
 
       - name: Build main application
         working-directory: ./zephyr_workspace
         run: |
           /opt/venv/bin/west build -p always -b ef800 \
             application/application/ef800-main \
-            --build-dir application/build/ef800-main
+            --build-dir application/build/ef800-main -- \
+            -DCMAKE_EXPORT_COMPILE_COMMANDS=ON
 
       - name: Build backup application
         working-directory: ./zephyr_workspace
         run: |
           /opt/venv/bin/west build -p always -b ef800 \
             application/application/ef800-backup \
-            --build-dir application/build/ef800-backup
+            --build-dir application/build/ef800-backup -- \
+            -DCMAKE_EXPORT_COMPILE_COMMANDS=ON
 
       - name: Build second-level bootloader
         working-directory: ./zephyr_workspace
         run: |
           /opt/venv/bin/west build -p always -b ef800 \
             application/application/ef800-bootloader \
-            --build-dir application/build/ef800-bootloader
+            --build-dir application/build/ef800-bootloader -- \
+            -DCMAKE_EXPORT_COMPILE_COMMANDS=ON
+
+      - name: Build keyboard bootloader
+        working-directory: ./zephyr_workspace
+        run: |
+          /opt/venv/bin/west build -p always -b ef800_keyboard \
+            application/application/ef800-keyboard-bootloader \
+            --build-dir application/build/ef800-keyboard-bootloader -- \
+            -DCMAKE_EXPORT_COMPILE_COMMANDS=ON
+
+      - name: Build keyboard updater
+        working-directory: ./zephyr_workspace
+        run: |
+          /opt/venv/bin/west build -p always -b ef800_keyboard \
+            application/application/ef800-keyboard-updater \
+            --build-dir application/build/ef800-keyboard-updater -- \
+            -DCMAKE_EXPORT_COMPILE_COMMANDS=ON
 
       - name: Build hardware debug image
         working-directory: ./zephyr_workspace
@@ -108,6 +151,18 @@ jobs:
       - name: Verify image contract
         working-directory: ./zephyr_workspace
         run: bash application/scripts/verify-images.sh
+
+      - name: Run focused C quality checks
+        working-directory: ./zephyr_workspace
+        run: |
+          python3 application/scripts/run-c-quality.py \
+            --workspace /workspace \
+            --application /workspace/application
+
+      - name: Finalize CodeQL
+        uses: github/codeql-action/analyze@v3
+        with:
+          category: "/language:c-cpp"
 
       - name: Package development images
         working-directory: ./zephyr_workspace

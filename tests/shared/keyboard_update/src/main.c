@@ -4,8 +4,12 @@
 #include <zephyr/ztest.h>
 
 #include "ef800_keyboard_update.h"
+#undef EF800_KB_UPDATE_ACK
+#undef EF800_KB_UPDATE_NACK
 #include "ef800_keyboard_update_protocol.h"
 #include "ef800_update.h"
+#include "ef800_keyboard_update_service.h"
+#include "ef800_keyboard_i2c.h"
 
 static void put_le32(uint8_t *p, uint32_t value)
 {
@@ -23,6 +27,42 @@ static void make_header(uint8_t wire[EF800_KB_UPDATE_HEADER_SIZE],
 	wire[4] = target;
 	put_le32(&wire[8], size);
 	put_le32(&wire[12], crc);
+}
+
+ZTEST(ef800_keyboard_update, test_image_kind_selects_bounded_update_plan)
+{
+	struct ef800_keyboard_update_plan plan;
+
+	zassert_ok(ef800_keyboard_update_plan_select(
+		EF800_KEYBOARD_IMAGE_APPLICATION, &plan), NULL);
+	zassert_equal(plan.image_base, EF800_KEYBOARD_PACKAGE_BASE, NULL);
+	zassert_equal(plan.image_limit, EF800_KEYBOARD_PACKAGE_LIMIT, NULL);
+	zassert_equal(plan.target, EF800_KB_UPDATE_TARGET_APPLICATION, NULL);
+	zassert_equal(plan.service_address, EF800_KEYBOARD_UPDATER_I2C_ADDRESS,
+		NULL);
+	zassert_ok(ef800_keyboard_update_plan_select(
+		EF800_KEYBOARD_IMAGE_BOOTLOADER, &plan), NULL);
+	zassert_equal(plan.image_base, EF800_KEYBOARD_BOOT_BASE, NULL);
+	zassert_equal(plan.image_limit, EF800_KEYBOARD_BOOT_LIMIT, NULL);
+	zassert_equal(plan.target, EF800_KB_UPDATE_TARGET_BOOTLOADER, NULL);
+	zassert_ok(ef800_keyboard_update_plan_select(
+		EF800_KEYBOARD_IMAGE_UPDATER, &plan), NULL);
+	zassert_equal(plan.image_base, EF800_KEYBOARD_UPDATER_BASE, NULL);
+	zassert_equal(plan.image_limit, EF800_KEYBOARD_UPDATER_LIMIT, NULL);
+	zassert_equal(plan.target, EF800_KB_UPDATE_TARGET_UPDATER, NULL);
+	zassert_equal(plan.service_address, EF800_KEYBOARD_I2C_ADDRESS, NULL);
+	zassert_equal(ef800_keyboard_update_plan_select(0U, &plan), -EINVAL, NULL);
+	zassert_equal(ef800_keyboard_update_plan_select(
+		EF800_KEYBOARD_IMAGE_APPLICATION, NULL), -EINVAL, NULL);
+}
+
+ZTEST(ef800_keyboard_update, test_transaction_requires_complete_adapter_context)
+{
+	struct ef800_keyboard_update_transaction transaction = {0};
+
+	zassert_equal(ef800_keyboard_update_transaction_run(NULL), -EINVAL, NULL);
+	zassert_equal(ef800_keyboard_update_transaction_run(&transaction), -EINVAL,
+		NULL);
 }
 
 ZTEST(ef800_keyboard_update, test_valid_targets_decode_with_fixed_sizes)
@@ -205,6 +245,22 @@ ZTEST(ef800_keyboard_update, test_package_targets_match_partition_map)
 	header.image_base = EF800_KEYBOARD_PACKAGE_BASE;
 	zassert_false(ef800_keyboard_package_valid(&header,
 		EF800_KEYBOARD_PACKAGE_HEADER_SIZE + header.image_size), NULL);
+}
+
+ZTEST(ef800_keyboard_update, test_update_service_little_endian_helpers)
+{
+	uint8_t bytes[4];
+
+	ef800_keyboard_update_put_le16(bytes, UINT16_C(0xA17C));
+	zassert_equal(bytes[0], 0x7CU, NULL);
+	zassert_equal(bytes[1], 0xA1U, NULL);
+	ef800_keyboard_update_put_le32(bytes, UINT32_C(0x78563412));
+	zassert_equal(bytes[0], 0x12U, NULL);
+	zassert_equal(bytes[1], 0x34U, NULL);
+	zassert_equal(bytes[2], 0x56U, NULL);
+	zassert_equal(bytes[3], 0x78U, NULL);
+	zassert_equal(ef800_keyboard_update_get_le32(bytes),
+		UINT32_C(0x78563412), NULL);
 }
 
 ZTEST(ef800_keyboard_update, test_fixed_partition_page_and_write_bounds)

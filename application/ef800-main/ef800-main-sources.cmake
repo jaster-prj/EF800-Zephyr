@@ -4,8 +4,18 @@
 # native_sim must consume this list; only platform adapters are target-specific.
 set(EF800_MAIN_COMMON_SOURCES
 	${CMAKE_CURRENT_LIST_DIR}/src/main.c
+	${CMAKE_CURRENT_LIST_DIR}/src/ef800_main_display.c
+	${CMAKE_CURRENT_LIST_DIR}/src/ef800_main_battery_adc.c
+	${CMAKE_CURRENT_LIST_DIR}/src/ef800_main_time_editor.c
 	${CMAKE_CURRENT_LIST_DIR}/src/ef800_memory_pool.c
 	${CMAKE_CURRENT_LIST_DIR}/src/keyboard_host.c
+	${CMAKE_CURRENT_LIST_DIR}/src/ef800_keyboard_command.c
+	${CMAKE_CURRENT_LIST_DIR}/src/ef800_keyboard_update_service.c
+	${CMAKE_CURRENT_LIST_DIR}/src/ef800_main_shell.c
+	${CMAKE_CURRENT_LIST_DIR}/src/ef800_workspace_browser.c
+	${CMAKE_CURRENT_LIST_DIR}/src/ef800_workspace_row_editor.c
+	${CMAKE_CURRENT_LIST_DIR}/src/ef800_position_editor.c
+	${CMAKE_CURRENT_LIST_DIR}/src/ef800_main_port_workflow.c
 	${CMAKE_CURRENT_LIST_DIR}/src/ef800_plugin_host.c
 	${CMAKE_CURRENT_LIST_DIR}/src/ef800_plugin_syscall.c
 	${CMAKE_CURRENT_LIST_DIR}/src/ef800_plugin_worker.c

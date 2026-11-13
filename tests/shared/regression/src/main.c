@@ -1,11 +1,15 @@
 /* SPDX-License-Identifier: Apache-2.0 */
 #include <zephyr/ztest.h>
 #include <zephyr/sys/byteorder.h>
+#include <zephyr/sys/util.h>
+#include <errno.h>
 
 #include "keyboard_host.h"
 #include "keyboard_protocol.h"
 #include "keyboard_translation.h"
+#include "keyboard_matrix_debounce.h"
 #include "keyboard_key_names.h"
+#include "keyboard_uart_protocol.h"
 #include "ef800_time.h"
 #include "ef800_persistence.h"
 #include "ef800_persistence_fake.h"
@@ -18,8 +22,60 @@
 #include "ef800_usb_personality.h"
 #include "ef800_measurement.h"
 #include "ef800_device_plugin.h"
+#include "ef800_main_port_workflow.h"
+#include "ef800_main_time_editor.h"
 
 #if defined(EF800_TEST_KEYBOARD)
+ZTEST(keyboard_protocol, test_matrix_debounce_reports_stable_transitions)
+{
+	struct kb_matrix_debounce_state state = {0};
+	struct kb_matrix_key_event events[KB_MATRIX_KEY_COUNT];
+	size_t event_count = 0U;
+	const uint64_t key = UINT64_C(1) << 9;
+
+	for (uint8_t scan = 0U; scan < 19U; ++scan) {
+		zassert_ok(kb_matrix_debounce_update(&state, key, 20U, events,
+			ARRAY_SIZE(events), &event_count), NULL);
+		zassert_equal(event_count, 0U, NULL);
+	}
+	zassert_false((state.stable_keys & key) != 0U, NULL);
+	zassert_ok(kb_matrix_debounce_update(&state, key, 20U, events,
+		ARRAY_SIZE(events), &event_count), NULL);
+	zassert_equal(event_count, 1U, NULL);
+	zassert_equal(events[0].key_index, 9U, NULL);
+	zassert_true(events[0].pressed, NULL);
+	zassert_true((state.stable_keys & key) != 0U, NULL);
+
+	for (uint8_t scan = 0U; scan < 20U; ++scan) {
+		zassert_ok(kb_matrix_debounce_update(&state, 0U, 20U, events,
+			ARRAY_SIZE(events), &event_count), NULL);
+	}
+	zassert_equal(event_count, 1U, NULL);
+	zassert_equal(events[0].key_index, 9U, NULL);
+	zassert_false(events[0].pressed, NULL);
+	zassert_equal(state.stable_keys & key, 0U, NULL);
+}
+
+ZTEST(keyboard_protocol, test_matrix_debounce_capacity_failure_is_atomic)
+{
+	struct kb_matrix_debounce_state state = {0};
+	struct kb_matrix_key_event event;
+	size_t event_count = 0U;
+	const uint64_t key = UINT64_C(1) << 4;
+
+	state.scan_counts[4] = 2U;
+	zassert_equal(kb_matrix_debounce_update(&state, key, 3U, &event, 0U,
+		&event_count), -ENOSPC, NULL);
+	zassert_equal(event_count, 0U, NULL);
+	zassert_equal(state.scan_counts[4], 2U, NULL);
+	zassert_equal(state.stable_keys, 0U, NULL);
+
+	zassert_ok(kb_matrix_debounce_update(&state, key, 3U, &event, 1U,
+		&event_count), NULL);
+	zassert_equal(event_count, 1U, NULL);
+	zassert_true(event.pressed, NULL);
+}
+
 ZTEST(keyboard_protocol, test_raw_key_map)
 {
 	struct kb_wire_scancode scancode;
@@ -249,9 +305,185 @@ ZTEST(keyboard_protocol, test_incomplete_keyboard_version_is_not_valid)
 		      EF800_HOST_FEED_NONE, NULL);
 	zassert_false(ef800_keyboard_host_get_version(&host, version), NULL);
 }
+
+struct keyboard_protocol_fixture {
+	uint8_t transmitted[16];
+	size_t transmitted_length;
+	uint32_t configured_baudrate;
+	uint32_t delays[2];
+	size_t delay_count;
+	char operations[8];
+	size_t operation_count;
+};
+
+static void keyboard_protocol_transmit(void *context, const uint8_t *data,
+				       size_t length)
+{
+	struct keyboard_protocol_fixture *fixture = context;
+
+	if (fixture->transmitted_length + length <= sizeof(fixture->transmitted)) {
+		memcpy(&fixture->transmitted[fixture->transmitted_length], data, length);
+		fixture->transmitted_length += length;
+	}
+	fixture->operations[fixture->operation_count++] = 'T';
+}
+
+static int keyboard_protocol_configure(void *context, uint32_t baudrate)
+{
+	struct keyboard_protocol_fixture *fixture = context;
+
+	fixture->configured_baudrate = baudrate;
+	fixture->operations[fixture->operation_count++] = 'C';
+	return 0;
+}
+
+static void keyboard_protocol_delay(void *context, uint32_t delay_ms)
+{
+	struct keyboard_protocol_fixture *fixture = context;
+
+	fixture->delays[fixture->delay_count++] = delay_ms;
+	fixture->operations[fixture->operation_count++] = 'D';
+}
+
+static uint64_t keyboard_protocol_uptime(void *context)
+{
+	ARG_UNUSED(context);
+	return 100U;
+}
+
+static void keyboard_protocol_reset_scan(void *context)
+{
+	ARG_UNUSED(context);
+}
+
+static void keyboard_protocol_reset(void *context)
+{
+	ARG_UNUSED(context);
+}
+
+static void keyboard_protocol_enter_updater(void *context)
+{
+	ARG_UNUSED(context);
+}
+
+static void keyboard_protocol_fixture_init(
+	struct keyboard_protocol_fixture *fixture)
+{
+	const struct keyboard_uart_protocol_ops ops = {
+		.transmit = keyboard_protocol_transmit,
+		.configure_baudrate = keyboard_protocol_configure,
+		.delay_ms = keyboard_protocol_delay,
+		.uptime_ms = keyboard_protocol_uptime,
+		.reset_scan_counts = keyboard_protocol_reset_scan,
+		.reset_device = keyboard_protocol_reset,
+		.enter_updater = keyboard_protocol_enter_updater,
+		.context = fixture,
+	};
+
+	memset(fixture, 0, sizeof(*fixture));
+	zassert_ok(ef800_keyboard_uart_protocol_init(&ops), NULL);
+	fixture->transmitted_length = 0U;
+	fixture->operation_count = 0U;
+}
+
+ZTEST(keyboard_protocol, test_device_id_and_typematic_command_serialization)
+{
+	struct keyboard_protocol_fixture fixture;
+	static const uint8_t expected_id[] = {
+		CMD_RETURN, CMD_KEYBOARD_ID, 0xABU, 0x83U,
+	};
+	static const uint8_t expected_typematic[] = {
+		CMD_RETURN, CMD_KEYBOARD_TYPEMATIC, CMD_ACK, 0x42U,
+	};
+
+	keyboard_protocol_fixture_init(&fixture);
+	ef800_keyboard_uart_protocol_process(CMD_KEYBOARD_ID, 10U);
+	zassert_mem_equal(fixture.transmitted, expected_id, sizeof(expected_id), NULL);
+	zassert_equal(fixture.transmitted_length, sizeof(expected_id), NULL);
+
+	fixture.transmitted_length = 0U;
+	ef800_keyboard_uart_protocol_process(CMD_KEYBOARD_TYPEMATIC, 20U);
+	zassert_false(ef800_keyboard_uart_protocol_active(), NULL);
+	ef800_keyboard_uart_protocol_process(0x42U, 21U);
+	zassert_mem_equal(fixture.transmitted, expected_typematic,
+			  sizeof(expected_typematic), NULL);
+	zassert_equal(fixture.transmitted_length, sizeof(expected_typematic), NULL);
+	zassert_true(ef800_keyboard_uart_protocol_active(), NULL);
+}
+
+ZTEST(keyboard_protocol, test_baud_change_ack_precedes_reconfiguration)
+{
+	struct keyboard_protocol_fixture fixture;
+	static const uint8_t expected[] = {
+		CMD_RETURN, CMD_KEYBOARD_BAUDRATE, CMD_ACK, CMD_INITIALIZED,
+	};
+
+	keyboard_protocol_fixture_init(&fixture);
+	ef800_keyboard_uart_protocol_process(CMD_KEYBOARD_BAUDRATE, 100U);
+	ef800_keyboard_uart_protocol_process(KB_BAUD_SELECTOR_115200, 101U);
+	zassert_mem_equal(fixture.transmitted, expected, sizeof(expected), NULL);
+	zassert_equal(fixture.transmitted_length, sizeof(expected), NULL);
+	zassert_equal(fixture.configured_baudrate, 115200U, NULL);
+	zassert_equal(fixture.delay_count, 2U, NULL);
+	zassert_equal(fixture.delays[0], 10U, NULL);
+	zassert_equal(fixture.delays[1], 100U, NULL);
+	zassert_equal(fixture.operation_count, 5U, NULL);
+	zassert_equal(fixture.operations[0], 'T', NULL);
+	zassert_equal(fixture.operations[1], 'D', NULL);
+	zassert_equal(fixture.operations[2], 'C', NULL);
+	zassert_equal(fixture.operations[3], 'D', NULL);
+	zassert_equal(fixture.operations[4], 'T', NULL);
+}
 #endif
 
 #if defined(EF800_TEST_RTC)
+ZTEST(keyboard_protocol, test_time_editor_bounds_fields_and_offset_input)
+{
+	const struct rtc_time initial = {
+		.tm_year = 124, .tm_mon = 0, .tm_mday = 31,
+		.tm_wday = 0, .tm_yday = -1, .tm_isdst = -1,
+	};
+	const struct ef800_time_settings settings = {0};
+	struct ef800_main_time_editor editor;
+
+	ef800_main_time_editor_init(&editor, &initial, &settings);
+	zassert_equal(ef800_main_time_editor_handle_key(&editor, 'x'),
+		EF800_TIME_EDITOR_IGNORED, NULL);
+	ef800_main_time_editor_adjust_weekday(&editor, -1);
+	zassert_equal(editor.local.tm_wday, 6, NULL);
+	zassert_equal(ef800_main_time_editor_handle_key(&editor, '\r'),
+		EF800_TIME_EDITOR_ADVANCED, NULL);
+	zassert_equal(editor.field, EF800_TIME_EDITOR_DATE, NULL);
+	(void)ef800_main_time_editor_handle_key(&editor, '3');
+	(void)ef800_main_time_editor_handle_key(&editor, '2');
+	zassert_equal(ef800_main_time_editor_handle_key(&editor, '\r'),
+		EF800_TIME_EDITOR_ADVANCED, NULL);
+	zassert_equal(editor.local.tm_mday, 32, NULL);
+	(void)ef800_main_time_editor_handle_key(&editor, '1');
+	(void)ef800_main_time_editor_handle_key(&editor, '3');
+	zassert_equal(ef800_main_time_editor_handle_key(&editor, '\n'),
+		EF800_TIME_EDITOR_INVALID, NULL);
+	zassert_equal(editor.length, 0U, NULL);
+	(void)ef800_main_time_editor_handle_key(&editor, '2');
+	zassert_equal(ef800_main_time_editor_handle_key(&editor, '\r'),
+		EF800_TIME_EDITOR_ADVANCED, NULL);
+	zassert_equal(editor.local.tm_mon, 1, NULL);
+	editor.field = EF800_TIME_EDITOR_OFFSET;
+	(void)ef800_main_time_editor_handle_key(&editor, '+');
+	(void)ef800_main_time_editor_handle_key(&editor, '0');
+	(void)ef800_main_time_editor_handle_key(&editor, '5');
+	(void)ef800_main_time_editor_handle_key(&editor, ':');
+	(void)ef800_main_time_editor_handle_key(&editor, '3');
+	(void)ef800_main_time_editor_handle_key(&editor, '0');
+	zassert_equal(ef800_main_time_editor_handle_key(&editor, '\r'),
+		EF800_TIME_EDITOR_ADVANCED, NULL);
+	zassert_equal(editor.settings.utc_offset_minutes, 330, NULL);
+	(void)ef800_main_time_editor_handle_key(&editor, '1');
+	zassert_equal(ef800_main_time_editor_handle_key(&editor, '\r'),
+		EF800_TIME_EDITOR_COMPLETE, NULL);
+	zassert_true(editor.settings.daylight_saving, NULL);
+}
+
 ZTEST(keyboard_protocol, test_rtc_local_time_conversion)
 {
 	const struct ef800_time_settings settings = {
@@ -1109,6 +1341,123 @@ ZTEST(keyboard_protocol, test_workspace_transaction_recovers_after_interruption)
 #endif
 
 #if defined(EF800_TEST_PORTS)
+struct port_workflow_callback_capture {
+	unsigned int readiness_calls;
+	unsigned int transport_calls;
+	uint8_t initialized_port;
+	uint32_t initialized_plugin;
+};
+
+static int capture_port_ready(void *context, uint8_t port_id,
+	uint32_t connection)
+{
+	struct port_workflow_callback_capture *capture = context;
+
+	ARG_UNUSED(port_id);
+	ARG_UNUSED(connection);
+	++capture->readiness_calls;
+	return 0;
+}
+
+static int capture_transport_init(void *context, uint8_t port_id,
+	uint32_t plugin_id, uint32_t connection)
+{
+	struct port_workflow_callback_capture *capture = context;
+
+	ARG_UNUSED(connection);
+	++capture->transport_calls;
+	capture->initialized_port = port_id;
+	capture->initialized_plugin = plugin_id;
+	return 0;
+}
+
+ZTEST(keyboard_protocol, test_main_port_workflow_claims_uart_before_transport)
+{
+	struct ef800_port_assignment_service assignments = {0};
+	struct ef800_plugin_registry plugins = {0};
+	struct ef800_port_uart_registry uart_registry;
+	struct ef800_measurement_zephyr_transport transports[EF800_PORT_COUNT] = {0};
+	struct port_workflow_callback_capture capture = {0};
+	struct ef800_main_port_workflow workflow = {
+		.assignments = &assignments,
+		.plugins = &plugins,
+		.uart_registry = &uart_registry,
+		.measurement_transports = transports,
+		.port_uart_check_ready = capture_port_ready,
+		.initialize_measurement_transport = capture_transport_init,
+		.adapter_context = &capture,
+	};
+
+	plugins.count = 1U;
+	plugins.entries[0].info.plugin_id = 0x1234U;
+	plugins.entries[0].info.kind = EF800_PLUGIN_KIND_MEASUREMENT;
+	plugins.entries[0].state = EF800_PLUGIN_REGISTRY_READY;
+	assignments.states[0].port_id = 1U;
+	assignments.states[0].assigned = true;
+	assignments.states[0].plugin_id = 0x1234U;
+	assignments.states[0].connection = EF800_PORT_CONNECTION_SERIAL;
+	zassert_ok(ef800_port_uart_registry_init(&uart_registry,
+		EF800_PORT_UART_NONE), NULL);
+	zassert_ok(ef800_main_port_workflow_claim_loaded_assignments(&workflow),
+		NULL);
+	zassert_equal(capture.readiness_calls, 1U, NULL);
+	zassert_true(ef800_port_uart_is_claimed(&uart_registry, 1U), NULL);
+	zassert_equal(capture.transport_calls, 1U, NULL);
+	zassert_equal(capture.initialized_port, 1U, NULL);
+	zassert_equal(capture.initialized_plugin, 0x1234U, NULL);
+}
+
+ZTEST(keyboard_protocol, test_main_port_workflow_filters_measurement_ports)
+{
+	struct ef800_port_assignment_service assignments = {0};
+	struct ef800_plugin_registry plugins = {0};
+	struct ef800_measurement_zephyr_transport transports[EF800_PORT_COUNT] = {0};
+	struct ef800_main_port_workflow workflow = {
+		.assignments = &assignments,
+		.plugins = &plugins,
+		.measurement_transports = transports,
+	};
+	struct ef800_plugin_registry_entry *plugin = &plugins.entries[0];
+
+	plugins.count = 1U;
+	plugin->info.plugin_id = 0x1234U;
+	plugin->info.kind = EF800_PLUGIN_KIND_MEASUREMENT;
+	plugin->state = EF800_PLUGIN_REGISTRY_READY;
+	assignments.states[0].port_id = 1U;
+	assignments.states[0].assigned = true;
+	assignments.states[0].plugin_id = plugin->info.plugin_id;
+	assignments.states[0].connection = EF800_PORT_CONNECTION_SERIAL;
+	transports[0].uart = (const struct device *)(uintptr_t)1U;
+
+	zassert_ok(ef800_main_port_workflow_load_measurement_ports(&workflow), NULL);
+	zassert_equal(workflow.measurement_port_count, 1U, NULL);
+	zassert_equal(workflow.measurement_port_ids[0], 1U, NULL);
+	transports[0].uart = NULL;
+	zassert_equal(ef800_main_port_workflow_load_measurement_ports(&workflow),
+		-ENODEV, NULL);
+	zassert_equal(workflow.measurement_port_count, 0U, NULL);
+	zassert_equal(ef800_main_port_workflow_uart_owner(&workflow,
+		plugin->info.plugin_id), EF800_PORT_BUILDER_DEBUG, NULL);
+}
+
+ZTEST(keyboard_protocol, test_main_port_workflow_reconciles_missing_plugin)
+{
+	struct ef800_port_assignment_service assignments = {0};
+	struct ef800_plugin_registry plugins = {0};
+	struct ef800_main_port_workflow workflow = {
+		.assignments = &assignments,
+		.plugins = &plugins,
+	};
+
+	assignments.states[0].port_id = 1U;
+	assignments.states[0].assigned = true;
+	assignments.states[0].plugin_id = 0x4567U;
+	assignments.states[0].connection = EF800_PORT_CONNECTION_SERIAL;
+	zassert_equal(ef800_main_port_workflow_reconcile_plugins(&workflow),
+		-EINVAL, NULL);
+	zassert_false(ef800_port_assignment_is_assigned(&assignments, 1U), NULL);
+}
+
 ZTEST(keyboard_protocol, test_usb_personality_transitions)
 {
 	zassert_equal(ef800_usb_personality_transition(
@@ -1241,7 +1590,7 @@ ZTEST(keyboard_protocol, test_port_assignment_persistence)
 	struct ef800_port_assignment_service service;
 	struct ef800_port_assignment_service restored;
 	uint8_t record[EF800_PORT_ASSIGNMENT_RECORD_SIZE];
-	char name[] = "port_assignment_1";
+	const char name[] = "port_assignment_1";
 	size_t length;
 
 	ef800_persistence_fake_init(&fake);
