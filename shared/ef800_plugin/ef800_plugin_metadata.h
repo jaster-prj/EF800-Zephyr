@@ -1,4 +1,5 @@
 /* SPDX-License-Identifier: Apache-2.0 */
+/** @file @brief Define the versioned plugin package metadata binary layout. */
 #ifndef EF800_PLUGIN_METADATA_H
 #define EF800_PLUGIN_METADATA_H
 

@@ -1,4 +1,5 @@
 /* SPDX-License-Identifier: Apache-2.0 */
+/** @file @brief Service bounded keyboard firmware update requests over I2C. */
 #include <errno.h>
 #include <stdbool.h>
 #include <stddef.h>

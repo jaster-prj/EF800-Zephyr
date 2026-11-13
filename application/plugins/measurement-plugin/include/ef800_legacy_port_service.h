@@ -1,4 +1,5 @@
 /* SPDX-License-Identifier: Apache-2.0 */
+/** @file @brief Define the trusted development-only direct port callback ABI. */
 #ifndef EF800_LEGACY_PORT_SERVICE_H
 #define EF800_LEGACY_PORT_SERVICE_H
 

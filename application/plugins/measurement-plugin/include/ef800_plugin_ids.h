@@ -1,4 +1,5 @@
 /* SPDX-License-Identifier: Apache-2.0 */
+/** @file @brief Assign stable IDs to built-in measurement and calculation plugins. */
 #ifndef EF800_PLUGIN_IDS_H
 #define EF800_PLUGIN_IDS_H
 

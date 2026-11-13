@@ -1,4 +1,5 @@
 /* SPDX-License-Identifier: Apache-2.0 */
+/** @file @brief Validate and track streamed keyboard image-update transfers. */
 #ifndef EF800_KEYBOARD_UPDATE_H_
 #define EF800_KEYBOARD_UPDATE_H_
 
@@ -41,19 +42,44 @@ struct ef800_kb_update_stream {
 };
 
 /* Decode the fixed 16-byte wire header and enforce partition/staging bounds. */
+
+/** @brief Decode the fixed wire header and enforce target/staging limits.
+ * @param wire Complete fixed-size header bytes.
+ * @param header Receives decoded target, image size, and CRC.
+ * @return True when decoding and all image bounds checks pass.
+ */
 bool ef800_kb_update_header_decode(const uint8_t wire[EF800_KB_UPDATE_HEADER_SIZE],
 					   struct ef800_kb_update_header *header);
 
 /* Initialize only after a valid target/size header has been received. */
+
+/** @brief Initialize stream tracking from a validated image header.
+ * @param stream Transfer state to initialize.
+ * @param header Validated image metadata.
+ * @return True when a transfer can begin.
+ */
 bool ef800_kb_update_stream_begin(struct ef800_kb_update_stream *stream,
 					  const struct ef800_kb_update_header *header);
 
 /* Chunks must be contiguous, non-empty, and no larger than the protocol cap. */
+
+/** @brief Accept the next contiguous image chunk and update its CRC.
+ * @param stream Active transfer state.
+ * @param offset Chunk offset, which must equal bytes already received.
+ * @param data Chunk bytes.
+ * @param length Chunk size, within the protocol limit.
+ * @return True when accepted; false for inactive, out-of-order, or invalid data.
+ */
 bool ef800_kb_update_stream_chunk(struct ef800_kb_update_stream *stream,
 					  uint32_t offset, const uint8_t *data,
 					  size_t length);
 
 /* Finish validates exact length and whole-image CRC, then consumes the state. */
+
+/** @brief Verify exact image length and final CRC, then consume stream state.
+ * @param stream Transfer state to validate and finish.
+ * @return True if complete image validation succeeds.
+ */
 bool ef800_kb_update_stream_finish(struct ef800_kb_update_stream *stream);
 
 #endif /* EF800_KEYBOARD_UPDATE_H_ */

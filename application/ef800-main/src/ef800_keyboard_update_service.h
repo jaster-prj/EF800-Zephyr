@@ -48,6 +48,7 @@ struct ef800_keyboard_update_transaction {
  */
 int ef800_keyboard_update_plan_select(uint8_t image_kind,
 	struct ef800_keyboard_update_plan *plan);
+
 /** @brief Validate, transfer, verify, and finalize the package at package_path.
  * @param transaction I2C, package, active-state, ownership, and platform callbacks.
  * @return 0 if no package exists or the update completes; negative errno when
@@ -65,6 +66,7 @@ int ef800_keyboard_update_transaction_run(
 int ef800_keyboard_update_read_package(
 	struct fs_file_t *file, struct ef800_keyboard_package_header *header,
 	size_t file_size);
+
 /** @brief Send a framed updater command and poll for its bounded response.
  * @param i2c Ready I2C controller device.
  * @param address 7-bit updater service address.
@@ -79,6 +81,7 @@ int ef800_keyboard_update_read_package(
 int ef800_keyboard_update_request(const struct device *i2c, uint16_t address,
 	uint8_t command, const uint8_t *payload, size_t payload_length,
 	uint8_t *response, size_t response_length, uint32_t timeout_ms);
+
 /** @brief Query and validate the updater's fixed-size version response.
  * @param i2c Ready I2C controller device.
  * @param address 7-bit updater service address.
@@ -88,17 +91,20 @@ int ef800_keyboard_update_request(const struct device *i2c, uint16_t address,
  */
 int ef800_keyboard_update_query_version(const struct device *i2c,
 	uint16_t address, uint8_t *version, uint32_t timeout_ms);
+
 /** @brief Decode an unaligned little-endian 32-bit value.
  * @param data Pointer to at least four bytes.
  * @return Decoded unsigned value.
  */
 uint32_t ef800_keyboard_update_get_le32(const uint8_t *data);
+
 /** @brief Encode a 16-bit value in little-endian byte order.
  * @param data Destination buffer of at least two bytes.
  * @param value Value to encode.
  * @return None.
  */
 void ef800_keyboard_update_put_le16(uint8_t *data, uint16_t value);
+
 /** @brief Encode a 32-bit value in little-endian byte order.
  * @param data Destination buffer of at least four bytes.
  * @param value Value to encode.

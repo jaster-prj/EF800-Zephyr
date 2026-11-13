@@ -1,4 +1,5 @@
 /* SPDX-License-Identifier: Apache-2.0 */
+/** @file @brief Validate keyboard images and select application or updater boot. */
 #include <stdbool.h>
 #include <stdint.h>
 

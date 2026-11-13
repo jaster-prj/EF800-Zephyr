@@ -1,4 +1,5 @@
 /* SPDX-License-Identifier: Apache-2.0 */
+/** @file @brief Demonstrate USB device functionality on the EF800 platform. */
 
 #include <errno.h>
 #include <stdbool.h>

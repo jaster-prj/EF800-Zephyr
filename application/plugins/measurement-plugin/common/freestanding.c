@@ -1,4 +1,5 @@
 /* SPDX-License-Identifier: Apache-2.0 */
+/** @file @brief Provide libc/runtime support for freestanding plugin images. */
 #include <stdarg.h>
 #include <stddef.h>
 #include <stdint.h>

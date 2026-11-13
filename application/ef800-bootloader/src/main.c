@@ -1,4 +1,5 @@
 /* SPDX-License-Identifier: Apache-2.0 */
+/** @file @brief Select, validate, and hand off to EF800 firmware images. */
 
 #include <stdbool.h>
 #include <stddef.h>

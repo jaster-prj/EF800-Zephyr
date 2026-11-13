@@ -1,4 +1,5 @@
 /* SPDX-License-Identifier: Apache-2.0 */
+/** @file @brief Expose the isolated worker's pointer-free port service binding. */
 #ifndef EF800_PORT_SERVICE_H
 #define EF800_PORT_SERVICE_H
 

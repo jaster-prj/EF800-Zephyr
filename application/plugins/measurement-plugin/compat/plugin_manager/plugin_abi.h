@@ -1,4 +1,5 @@
 /* SPDX-License-Identifier: Apache-2.0 */
+/** @file @brief Define the compatibility ABI for the legacy plugin manager. */
 #ifndef EF800_PLUGIN_MANAGER_ABI_H
 #define EF800_PLUGIN_MANAGER_ABI_H
 

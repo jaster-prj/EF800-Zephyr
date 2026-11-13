@@ -1,4 +1,5 @@
 /* SPDX-License-Identifier: Apache-2.0 */
+/** @file @brief Implement common measurement-plugin lifecycle and UI callbacks. */
 #include "plugin_runtime.h"
 
 #include "ef800_plugin_ids.h"

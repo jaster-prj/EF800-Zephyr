@@ -1,4 +1,5 @@
 /* SPDX-License-Identifier: Apache-2.0 */
+/** @file @brief Publish dummy calculation plugin metadata and ABI entry points. */
 #include <stddef.h>
 #include <stdint.h>
 

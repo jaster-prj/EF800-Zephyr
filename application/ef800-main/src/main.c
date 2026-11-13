@@ -1,4 +1,5 @@
 /* SPDX-License-Identifier: Apache-2.0 */
+/** @file @brief Initialize MainApplication services and run the EF800 UI loop. */
 #include <stdbool.h>
 #include <errno.h>
 #include <limits.h>

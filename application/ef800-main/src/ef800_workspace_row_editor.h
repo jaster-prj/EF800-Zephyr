@@ -34,6 +34,7 @@ struct ef800_workspace_row_editor {
 void ef800_workspace_row_editor_init(struct ef800_workspace_row_editor *editor,
 				     const struct ef800_workspace_row *row,
 				     const char *text, size_t length);
+
 /** @brief Move the caret one character within the edited text.
  * @param editor Editor state to update; ignored when NULL.
  * @param direction Negative moves left, positive moves right, zero is a no-op.
@@ -41,12 +42,14 @@ void ef800_workspace_row_editor_init(struct ef800_workspace_row_editor *editor,
  */
 void ef800_workspace_row_editor_move(struct ef800_workspace_row_editor *editor,
 				     int direction);
+
 /** @brief Switch between insertion and overwrite editing.
  * @param editor Editor state to update; ignored when NULL.
  * @return None.
  */
 void ef800_workspace_row_editor_toggle_mode(
 	struct ef800_workspace_row_editor *editor);
+
 /** @brief Erase the character before the caret or at the caret.
  * @param editor Editor state to modify.
  * @param before_caret True for backspace, false for delete.
@@ -54,6 +57,7 @@ void ef800_workspace_row_editor_toggle_mode(
  */
 bool ef800_workspace_row_editor_erase(struct ef800_workspace_row_editor *editor,
 				      bool before_caret);
+
 /** @brief Insert or overwrite with one printable ASCII character.
  * @param editor Editor state to modify.
  * @param character Character to place at the caret.

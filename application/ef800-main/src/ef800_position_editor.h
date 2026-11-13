@@ -35,6 +35,7 @@ struct ef800_position_editor {
  * @return None.
  */
 void ef800_position_editor_start(struct ef800_position_editor *editor);
+
 /** @brief Apply one key and save when all fields form a valid position.
  * @param editor Active editor state.
  * @param workspace Workspace receiving a completed entry.

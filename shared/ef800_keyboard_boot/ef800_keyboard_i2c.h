@@ -1,4 +1,7 @@
 /* SPDX-License-Identifier: Apache-2.0 */
+/** @file
+ * @brief Define the keyboard application's I2C address and command wire IDs.
+ */
 #ifndef EF800_KEYBOARD_I2C_H_
 #define EF800_KEYBOARD_I2C_H_
 

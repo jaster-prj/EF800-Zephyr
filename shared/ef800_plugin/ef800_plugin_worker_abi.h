@@ -1,4 +1,7 @@
 /* SPDX-License-Identifier: Apache-2.0 */
+/** @file
+ * @brief Define and validate the pointer-free plugin worker mailbox ABI.
+ */
 #ifndef EF800_PLUGIN_WORKER_ABI_H
 #define EF800_PLUGIN_WORKER_ABI_H
 
@@ -123,6 +126,14 @@ _Static_assert(sizeof(struct ef800_plugin_worker_mailbox) <=
  * operation-specific sizes, and deadlines. The gateway must additionally
  * verify worker identity/privilege, active generation, capability ownership,
  * operation permission, and safely copy user data before dispatch.
+ */
+
+/** @brief Validate a copied mailbox header's framing, ranges, and deadline.
+ * @param message Trusted copy of the worker-provided fixed header.
+ * @param payload_capacity Size of the mapped payload region.
+ * @param active_generation Current worker generation for this session.
+ * @param now_ms Current monotonic time in milliseconds.
+ * @return 0 when structurally valid; negative errno when any bound is invalid.
  */
 int ef800_plugin_worker_message_validate(
 	const struct ef800_plugin_worker_message *message,

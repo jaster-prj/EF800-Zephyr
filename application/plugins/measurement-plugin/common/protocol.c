@@ -1,4 +1,5 @@
 /* SPDX-License-Identifier: Apache-2.0 */
+/** @file @brief Implement bounded serial framing and measurement response parsing. */
 #include "protocol.h"
 
 #include <errno.h>

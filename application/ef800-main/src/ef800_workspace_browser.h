@@ -34,6 +34,7 @@ struct ef800_workspace_browser {
  * @return None.
  */
 void ef800_workspace_browser_reset(struct ef800_workspace_browser *browser);
+
 /** @brief Open the newest measurement rows in a selected workspace.
  * @param browser Destination browser state.
  * @param workspace Selected workspace to read.
@@ -42,6 +43,7 @@ void ef800_workspace_browser_reset(struct ef800_workspace_browser *browser);
 int ef800_workspace_browser_open_measurements(
 	struct ef800_workspace_browser *browser,
 	const struct ef800_workspace *workspace);
+
 /** @brief Rebuild the visible page starting at the row containing anchor.
  * @param browser Browser state to refresh.
  * @param workspace Workspace whose current contents are read.
@@ -52,6 +54,7 @@ int ef800_workspace_browser_open_measurements(
 int ef800_workspace_browser_refresh_at(struct ef800_workspace_browser *browser,
 				       const struct ef800_workspace *workspace,
 				       size_t anchor);
+
 /** @brief Move selection by one row, loading an adjacent page at its edge.
  * @param browser Active measurement browser.
  * @param workspace Workspace from which adjacent rows are read.
@@ -61,6 +64,7 @@ int ef800_workspace_browser_refresh_at(struct ef800_workspace_browser *browser,
 int ef800_workspace_browser_move(struct ef800_workspace_browser *browser,
 				 const struct ef800_workspace *workspace,
 				 int direction);
+
 /** @brief Find and display the workspace's current position record.
  * @param browser Destination browser state.
  * @param workspace Selected workspace to scan.
@@ -69,6 +73,7 @@ int ef800_workspace_browser_move(struct ef800_workspace_browser *browser,
 int ef800_workspace_browser_find_position(
 	struct ef800_workspace_browser *browser,
 	const struct ef800_workspace *workspace);
+
 /** @brief Resolve the selected cached row after checking workspace freshness.
  * @param browser Active measurement browser with a saved version.
  * @param workspace Workspace to verify and read.
@@ -79,6 +84,7 @@ int ef800_workspace_browser_selected_row(
 	const struct ef800_workspace_browser *browser,
 	const struct ef800_workspace *workspace,
 	struct ef800_workspace_row *row);
+
 /** @brief Replace or delete a row only if the cached workspace version is current.
  * @param browser Browser state containing the version used for editing.
  * @param workspace Workspace to modify.

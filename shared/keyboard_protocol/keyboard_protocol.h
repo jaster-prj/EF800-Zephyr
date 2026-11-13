@@ -1,4 +1,7 @@
 /* SPDX-License-Identifier: Apache-2.0 */
+/** @file
+ * @brief Define the stable EF800 keyboard UART, event, and key-matrix protocol.
+ */
 #ifndef EF800_KEYBOARD_PROTOCOL_H
 #define EF800_KEYBOARD_PROTOCOL_H
 

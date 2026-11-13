@@ -1,4 +1,5 @@
 /* SPDX-License-Identifier: Apache-2.0 */
+/** @file @brief Simulate plugin completion, delays, failures, and quarantine. */
 #ifndef EF800_VIRTUAL_PLUGIN_H
 #define EF800_VIRTUAL_PLUGIN_H
 
@@ -27,9 +28,21 @@ struct ef800_virtual_plugin {
 	uint32_t elapsed_ms;
 };
 
+/** @brief Initialize a simulated plugin behavior and deadline.
+ * @param plugin Simulation state to initialize.
+ * @param behavior Completion/fault behavior to emulate.
+ * @param deadline_ms Maximum operation duration.
+ * @return None.
+ */
 void ef800_virtual_plugin_init(struct ef800_virtual_plugin *plugin,
 				       enum ef800_virtual_plugin_behavior behavior,
 				       uint32_t deadline_ms);
+
+/** @brief Advance a simulated operation and report completion/fault status.
+ * @param plugin Simulation state.
+ * @param elapsed_ms Time advanced since the previous step.
+ * @return Current completion, output acceptance, quarantine, and error state.
+ */
 struct ef800_virtual_plugin_result ef800_virtual_plugin_step(
 	struct ef800_virtual_plugin *plugin, uint32_t elapsed_ms);
 

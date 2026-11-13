@@ -1,4 +1,5 @@
 /* SPDX-License-Identifier: Apache-2.0 */
+/** @file @brief Run keyboard scanning, UART protocol, and updater I2C services. */
 #include <errno.h>
 #include <stdbool.h>
 #include <stddef.h>

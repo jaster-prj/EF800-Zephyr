@@ -1,4 +1,5 @@
 /* SPDX-License-Identifier: Apache-2.0 */
+/** @file @brief Register hardware bring-up commands and diagnostics. */
 
 #include <stdbool.h>
 #include <errno.h>

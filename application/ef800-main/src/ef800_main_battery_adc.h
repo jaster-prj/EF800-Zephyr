@@ -26,6 +26,7 @@ struct ef800_main_battery_adc {
  */
 int ef800_main_battery_adc_init(struct ef800_main_battery_adc *battery,
 	struct ef800_battery_soc_store *store, bool store_ready);
+
 /** @brief Sample, filter, and convert battery voltage into gauge status.
  * @param context Pointer to initialized battery ADC adapter state.
  * @param status Receives SOC percent and voltage in microvolts.

@@ -1,4 +1,5 @@
 /* SPDX-License-Identifier: Apache-2.0 */
+/** @file @brief Run BackupApplication recovery, storage, and USB services. */
 
 #include <stdbool.h>
 #include <errno.h>

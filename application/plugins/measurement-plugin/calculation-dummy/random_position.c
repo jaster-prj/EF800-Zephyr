@@ -1,4 +1,5 @@
 /* SPDX-License-Identifier: Apache-2.0 */
+/** @file @brief Implement a deterministic dummy position calculation plugin. */
 #include <stddef.h>
 #include <stdint.h>
 

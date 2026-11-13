@@ -1,4 +1,5 @@
 /* SPDX-License-Identifier: Apache-2.0 */
+/** @file @brief Encode/decode framed virtual-device messages and log records. */
 #ifndef EF800_VIRTUAL_PROTOCOL_H
 #define EF800_VIRTUAL_PROTOCOL_H
 
@@ -91,16 +92,42 @@ struct ef800_virtual_message {
 	uint16_t length;
 };
 
+/** @brief Encode a typed payload into a bounded virtual protocol frame.
+ * @param type Message type identifier.
+ * @param payload Payload bytes, or NULL for an empty message.
+ * @param length Payload size.
+ * @param frame Destination frame buffer.
+ * @param frame_size Frame buffer capacity.
+ * @return Encoded frame size, or zero when input/capacity is invalid.
+ */
 size_t ef800_virtual_protocol_encode(uint8_t type, const uint8_t *payload,
 					     uint16_t length, uint8_t *frame,
 					     size_t frame_size);
 
+/** @brief Validate and decode a framed virtual protocol message.
+ * @param frame Complete encoded frame.
+ * @param frame_size Available frame bytes.
+ * @param message Receives message type and payload view into frame.
+ * @return 0 on decode; negative errno for malformed header/length/version.
+ */
 int ef800_virtual_protocol_decode(const uint8_t *frame, size_t frame_size,
 					  struct ef800_virtual_message *message);
 
+/** @brief Encode one structured virtual log record.
+ * @param record Severity, sequence, flags, and text view.
+ * @param payload Destination payload buffer.
+ * @param payload_size Buffer capacity.
+ * @return Encoded payload size, or zero when record does not fit.
+ */
 size_t ef800_virtual_log_encode(const struct ef800_virtual_log_record *record,
 					uint8_t *payload, size_t payload_size);
 
+/** @brief Decode a structured virtual log record without copying its text.
+ * @param payload Encoded log payload.
+ * @param payload_size Payload size.
+ * @param record Receives fields and a view of text within payload.
+ * @return 0 on decode; negative errno for malformed payload.
+ */
 int ef800_virtual_log_decode(const uint8_t *payload, size_t payload_size,
 					 struct ef800_virtual_log_record *record);
 

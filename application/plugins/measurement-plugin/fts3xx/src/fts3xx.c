@@ -1,4 +1,5 @@
 /* SPDX-License-Identifier: Apache-2.0 */
+/** @file @brief Implement the FTS3xx serial measurement plugin and UI. */
 #include "plugin_runtime.h"
 #include "protocol.h"
 

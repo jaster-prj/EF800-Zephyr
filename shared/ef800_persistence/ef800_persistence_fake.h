@@ -1,4 +1,5 @@
 /* SPDX-License-Identifier: Apache-2.0 */
+/** @file @brief Provide an in-memory persistence backend for tests. */
 #ifndef EF800_PERSISTENCE_FAKE_H
 #define EF800_PERSISTENCE_FAKE_H
 
@@ -22,6 +23,10 @@ struct ef800_persistence_fake {
 	bool corrupt_on_sync_enabled;
 };
 
+/** @brief Initialize empty in-memory files and backend callbacks.
+ * @param fake Fake persistence state to initialize.
+ * @return None.
+ */
 void ef800_persistence_fake_init(struct ef800_persistence_fake *fake);
 
 #endif /* EF800_PERSISTENCE_FAKE_H */

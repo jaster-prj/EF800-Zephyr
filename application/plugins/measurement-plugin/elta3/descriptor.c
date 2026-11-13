@@ -1,4 +1,5 @@
 /* SPDX-License-Identifier: Apache-2.0 */
+/** @file @brief Publish ELTA3 plugin metadata and ABI entry points. */
 #include <stdint.h>
 #include <stddef.h>
 

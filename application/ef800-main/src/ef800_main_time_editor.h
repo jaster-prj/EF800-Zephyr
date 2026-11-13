@@ -48,6 +48,7 @@ struct ef800_main_time_editor {
  */
 void ef800_main_time_editor_init(struct ef800_main_time_editor *editor,
 	const struct rtc_time *local, const struct ef800_time_settings *settings);
+
 /** @brief Move the weekday selection forward or backward with wraparound.
  * @param editor Active editor in the weekday field.
  * @param direction Negative decrements, positive increments, zero does nothing.
@@ -55,6 +56,7 @@ void ef800_main_time_editor_init(struct ef800_main_time_editor *editor,
  */
 void ef800_main_time_editor_adjust_weekday(
 	struct ef800_main_time_editor *editor, int direction);
+
 /** @brief Apply one byte of input and return the UI action required.
  * @param editor Active editor state to update.
  * @param key Input byte (text, Enter, Backspace/Delete, or Escape).

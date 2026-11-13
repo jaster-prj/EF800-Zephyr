@@ -32,6 +32,7 @@ struct ef800_main_display {
  */
 void ef800_main_display_init(struct ef800_main_display *display,
 			     struct ef800_t6963 *lcd, bool ready);
+
 /** @brief Update whether subsequent drawing operations are permitted.
  * @param display Display state to update.
  * @param ready True when the LCD is available.
@@ -39,6 +40,7 @@ void ef800_main_display_init(struct ef800_main_display *display,
  */
 void ef800_main_display_set_ready(struct ef800_main_display *display,
 				  bool ready);
+
 /** @brief Render one padded text row, preserving the header clock/title layout.
  * @param display Display state and LCD binding.
  * @param row Text row index, from 0 through 7.
@@ -48,6 +50,7 @@ void ef800_main_display_set_ready(struct ef800_main_display *display,
  */
 void ef800_main_display_line(struct ef800_main_display *display, uint8_t row,
 			     const char *text, const char *clock_text);
+
 /** @brief Clear all text rows while retaining the supplied clock in the header.
  * @param display Display to clear.
  * @param clock_text Optional clock text for the header row.
@@ -55,12 +58,14 @@ void ef800_main_display_line(struct ef800_main_display *display, uint8_t row,
  */
 void ef800_main_display_clear(struct ef800_main_display *display,
 			      const char *clock_text);
+
 /** @brief Draw the fixed horizontal separator below the display header.
  * @param display Display with an initialized LCD.
  * @return 0 on success or a negative errno if unavailable or drawing fails.
  */
 int ef800_main_display_draw_header_separator(
 	struct ef800_main_display *display);
+
 /** @brief Draw or clear the battery icon only when its displayed state changes.
  * @param display Display state and LCD binding.
  * @param has_value True when a valid state-of-charge value is available.
@@ -69,6 +74,7 @@ int ef800_main_display_draw_header_separator(
  */
 void ef800_main_display_battery_status(struct ef800_main_display *display,
 	bool has_value, uint8_t soc_percent);
+
 /** @brief Render a five-entry menu with selection and shortcut indicators.
  * @param display Display used for rendering.
  * @param title Menu title.
@@ -85,6 +91,7 @@ void ef800_main_display_menu(struct ef800_main_display *display,
 			    const char *const *items,
 			    const char *const *shortcuts, size_t count,
 			    size_t selection, const char *clock_text);
+
 /** @brief Render a titled page with up to four rows and a footer.
  * @param display Display used for rendering.
  * @param title Page title.
@@ -99,6 +106,7 @@ void ef800_main_display_list_page(struct ef800_main_display *display,
 	const char *title, const char *subtitle,
 	const char *const rows[4], size_t row_count, const char *footer,
 	const char *clock_text);
+
 /** @brief Render the bounded action model supplied by a measurement plugin.
  * @param display Display used for rendering.
  * @param model Bounded title, rows, selection, and footer model.
@@ -110,6 +118,7 @@ void ef800_main_display_list_page(struct ef800_main_display *display,
 void ef800_main_display_plugin_menu(struct ef800_main_display *display,
 	const struct ef800_measurement_display *model, uint8_t port_id,
 	const char *device_title, const char *clock_text);
+
 /** @brief Render plugin working/unavailable status.
  * @param display Display used for rendering.
  * @param show_header True to draw the plugin page header.
@@ -119,6 +128,7 @@ void ef800_main_display_plugin_menu(struct ef800_main_display *display,
  */
 void ef800_main_display_plugin_unavailable(struct ef800_main_display *display,
 	bool show_header, bool working, const char *clock_text);
+
 /** @brief Render the selected workspace rows or current-position view.
  * @param display Display used for rendering.
  * @param browser Current bounded browser state.
@@ -131,6 +141,7 @@ void ef800_main_display_plugin_unavailable(struct ef800_main_display *display,
 void ef800_main_display_workspace_view(struct ef800_main_display *display,
 	const struct ef800_workspace_browser *browser, bool workspace_selected,
 	const char *workspace_name, bool position_only, const char *clock_text);
+
 /** @brief Render confirmation instructions and the row being deleted.
  * @param display Display used for rendering.
  * @param selected_row Text of the selected row, or NULL.
@@ -140,6 +151,7 @@ void ef800_main_display_workspace_view(struct ef800_main_display *display,
 void ef800_main_display_workspace_row_confirmation(
 	struct ef800_main_display *display, const char *selected_row,
 	const char *clock_text);
+
 /** @brief Render the row editor, caret, and bounded horizontal viewport.
  * @param display Display used for rendering.
  * @param editor Mutable editor state whose viewport may be adjusted.

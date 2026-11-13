@@ -41,18 +41,21 @@ struct ef800_main_port_workflow {
  */
 int ef800_main_port_workflow_reconcile_plugins(
 	struct ef800_main_port_workflow *workflow);
+
 /** @brief Collect ready, assigned measurement-plugin ports for the UI.
  * @param workflow Workflow state to update.
  * @return 0 when at least one port is ready; otherwise negative errno.
  */
 int ef800_main_port_workflow_load_measurement_ports(
 	struct ef800_main_port_workflow *workflow);
+
 /** @brief Restore UART claims and initialize loaded measurement transports.
  * @param workflow Workflow state and hardware adapter callbacks.
  * @return 0 if all claims succeeded; first negative errno otherwise.
  */
 int ef800_main_port_workflow_claim_loaded_assignments(
 	struct ef800_main_port_workflow *workflow);
+
 /** @brief Map a plugin ID to the UART owner used by the port registry.
  * @param workflow Workflow and plugin registry; may be NULL for legacy mapping.
  * @param plugin_id Assigned plugin/builder ID.
@@ -60,6 +63,7 @@ int ef800_main_port_workflow_claim_loaded_assignments(
  */
 uint8_t ef800_main_port_workflow_uart_owner(
 	const struct ef800_main_port_workflow *workflow, uint32_t plugin_id);
+
 /** @brief Persist a built-in device assignment, applying builder-specific policy.
  * @param workflow Assignment service and optional USB-MSD adapter.
  * @param port_id Port to assign.
@@ -70,6 +74,7 @@ uint8_t ef800_main_port_workflow_uart_owner(
 int ef800_main_port_workflow_set_assignment(
 	struct ef800_main_port_workflow *workflow, uint8_t port_id,
 	uint8_t builder_id, uint32_t connection);
+
 /** @brief Persist an assignment to a registered plugin.
  * @param workflow Assignment and plugin registries.
  * @param port_id Port to assign.
@@ -80,6 +85,7 @@ int ef800_main_port_workflow_set_assignment(
 int ef800_main_port_workflow_set_plugin_assignment(
 	struct ef800_main_port_workflow *workflow, uint8_t port_id,
 	uint32_t plugin_id, uint32_t connection);
+
 /** @brief Remove a port assignment, clearing runtime state if persistence is absent.
  * @param workflow Workflow with assignment service.
  * @param port_id Port whose assignment is removed.
@@ -87,6 +93,7 @@ int ef800_main_port_workflow_set_plugin_assignment(
  */
 int ef800_main_port_workflow_remove_assignment(
 	struct ef800_main_port_workflow *workflow, uint8_t port_id);
+
 /** @brief Restore a prior assignment or clear the port if it was unassigned.
  * @param workflow Workflow with assignment service.
  * @param port_id Port to restore.

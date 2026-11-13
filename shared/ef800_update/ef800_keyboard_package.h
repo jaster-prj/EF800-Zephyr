@@ -1,4 +1,5 @@
 /* SPDX-License-Identifier: Apache-2.0 */
+/** @file @brief Define and validate signed-target keyboard update packages. */
 #ifndef EF800_KEYBOARD_PACKAGE_H_
 #define EF800_KEYBOARD_PACKAGE_H_
 
@@ -35,6 +36,11 @@ struct ef800_keyboard_package_header {
 	uint32_t flags;
 };
 
+/** @brief Validate package identity, image bounds, and exact file size.
+ * @param header Parsed package header.
+ * @param file_size Total package size in bytes.
+ * @return True when the package conforms to the supported format and target.
+ */
 bool ef800_keyboard_package_valid(
 	const struct ef800_keyboard_package_header *header,
 	size_t file_size);

@@ -1,4 +1,5 @@
 /* SPDX-License-Identifier: Apache-2.0 */
+/** @file @brief Implement the ELTA3 serial measurement plugin and UI. */
 #include "plugin_runtime.h"
 #include "protocol.h"
 
