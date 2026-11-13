@@ -12,9 +12,11 @@
 
 #include <zephyr/kernel.h>
 #include <zephyr/app_memory/mem_domain.h>
-#include <zephyr/arch/arm/arm-m-switch.h>
 #include <zephyr/logging/log.h>
 #include <zephyr/sys/barrier.h>
+#if !CONFIG_BOARD_NATIVE_SIM
+#include <zephyr/arch/arm/arm-m-switch.h>
+#endif
 #if CONFIG_EF800_MAIN_PLUGIN_USER_WORKER && !CONFIG_BOARD_NATIVE_SIM
 #include <zephyr/arch/exception.h>
 #include <zephyr/arch/arm/arch.h>

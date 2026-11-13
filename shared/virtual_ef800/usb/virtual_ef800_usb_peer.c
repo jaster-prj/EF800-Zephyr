@@ -152,13 +152,13 @@ static int bulk_transfer(struct usb_device *udev, uint8_t endpoint,
 	}
 	buf = usbh_xfer_buf_alloc(udev, requested);
 	if (buf == NULL) {
-		(void)usbh_xfer_free(udev, xfer);
+		(void)uhc_xfer_unref(xfer);
 		return -ENOMEM;
 	}
 	ret = usbh_xfer_buf_add(udev, xfer, buf);
 	if (ret != 0) {
 		usbh_xfer_buf_free(udev, buf);
-		(void)usbh_xfer_free(udev, xfer);
+		(void)uhc_xfer_unref(xfer);
 		return ret;
 	}
 	if (!USB_EP_DIR_IS_IN(endpoint)) {
@@ -171,7 +171,7 @@ static int bulk_transfer(struct usb_device *udev, uint8_t endpoint,
 	ret = usbh_xfer_enqueue(udev, xfer);
 	if (ret != 0) {
 		usbh_xfer_buf_free(udev, buf);
-		(void)usbh_xfer_free(udev, xfer);
+		(void)uhc_xfer_unref(xfer);
 		return ret;
 	}
 	ret = k_sem_take(&peer_transfer_sem, K_MSEC(timeout_ms));
@@ -204,12 +204,7 @@ static int bulk_transfer(struct usb_device *udev, uint8_t endpoint,
 		}
 	}
 	usbh_xfer_buf_free(udev, buf);
-	{
-		int free_ret = usbh_xfer_free(udev, xfer);
-		if (ret == 0) {
-			ret = free_ret;
-		}
-	}
+	(void)uhc_xfer_unref(xfer);
 	return ret;
 }
 
