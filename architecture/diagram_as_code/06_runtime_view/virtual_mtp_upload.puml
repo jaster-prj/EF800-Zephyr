@@ -4,7 +4,7 @@ autonumber
 
 actor Browser
 participant "HTTP / WebSocket gateway" as Gateway
-participant "MainApplication native_sim" as Sim
+participant "EF800Application native_sim" as Sim
 participant "In-process USB host peer" as Peer
 participant "Virtual UHC <-> UDC bus" as Bus
 participant "Production MTP class" as MTP

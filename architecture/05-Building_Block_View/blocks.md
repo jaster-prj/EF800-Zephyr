@@ -4,18 +4,18 @@
 
 Level-1 context diagram source: [`1_level.puml`](../diagram_as_code/05_building_block_view/1_level.puml).
 
-The firmware system comprises the second-level Bootloader, MainApplication,
+The firmware system comprises the second-level Bootloader, EF800Application,
 BackupApplication, keyboard resident bootloader, and keyboard application.
 Shared EF800 domain modules are reused by the applicable images. Zephyr and its
 drivers provide the runtime; pinned PluginManager and ZephyrMTP modules provide
 external package and MTP integration. Native-sim adapters supply virtual
 peripherals and the virtual USB peer.
 
-## Level 2: MainApplication components
+## Level 2: EF800Application components
 
-MainApplication component diagram source: [`2_main_components.puml`](../diagram_as_code/05_building_block_view/2_main_components.puml).
+EF800Application component diagram source: [`2_main_components.puml`](../diagram_as_code/05_building_block_view/2_main_components.puml).
 
-`application/ef800-main/src/main.c` is the composition root. Domain behavior is
+`application/ef800-application/src/main.c` is the composition root. Domain behavior is
 implemented in shared modules; it wires services to Zephyr APIs and platform
 adapters.
 

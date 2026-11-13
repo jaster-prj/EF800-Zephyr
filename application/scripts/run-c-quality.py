@@ -280,12 +280,12 @@ def main() -> int:
 
     failures = 0
     image_targets = (
-        "ef800-main",
+        "ef800-application",
         "ef800-backup",
         "ef800-bootloader",
-        "ef800-keyboard",
-        "ef800-keyboard-bootloader",
-        "ef800-keyboard-updater",
+        "keyboard-application",
+        "keyboard-bootloader",
+        "keyboard-updater",
     )
     for target in image_targets:
         database = application / "build" / target

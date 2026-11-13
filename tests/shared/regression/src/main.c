@@ -22,8 +22,8 @@
 #include "ef800_usb_personality.h"
 #include "ef800_measurement.h"
 #include "ef800_device_plugin.h"
-#include "ef800_main_port_workflow.h"
-#include "ef800_main_time_editor.h"
+#include "ef800_application_port_workflow.h"
+#include "ef800_application_time_editor.h"
 
 #if defined(EF800_TEST_KEYBOARD)
 ZTEST(keyboard_protocol, test_matrix_debounce_reports_stable_transitions)
@@ -444,42 +444,42 @@ ZTEST(keyboard_protocol, test_time_editor_bounds_fields_and_offset_input)
 		.tm_wday = 0, .tm_yday = -1, .tm_isdst = -1,
 	};
 	const struct ef800_time_settings settings = {0};
-	struct ef800_main_time_editor editor;
+	struct ef800_application_time_editor editor;
 
-	ef800_main_time_editor_init(&editor, &initial, &settings);
-	zassert_equal(ef800_main_time_editor_handle_key(&editor, 'x'),
+	ef800_application_time_editor_init(&editor, &initial, &settings);
+	zassert_equal(ef800_application_time_editor_handle_key(&editor, 'x'),
 		EF800_TIME_EDITOR_IGNORED, NULL);
-	ef800_main_time_editor_adjust_weekday(&editor, -1);
+	ef800_application_time_editor_adjust_weekday(&editor, -1);
 	zassert_equal(editor.local.tm_wday, 6, NULL);
-	zassert_equal(ef800_main_time_editor_handle_key(&editor, '\r'),
+	zassert_equal(ef800_application_time_editor_handle_key(&editor, '\r'),
 		EF800_TIME_EDITOR_ADVANCED, NULL);
 	zassert_equal(editor.field, EF800_TIME_EDITOR_DATE, NULL);
-	(void)ef800_main_time_editor_handle_key(&editor, '3');
-	(void)ef800_main_time_editor_handle_key(&editor, '2');
-	zassert_equal(ef800_main_time_editor_handle_key(&editor, '\r'),
+	(void)ef800_application_time_editor_handle_key(&editor, '3');
+	(void)ef800_application_time_editor_handle_key(&editor, '2');
+	zassert_equal(ef800_application_time_editor_handle_key(&editor, '\r'),
 		EF800_TIME_EDITOR_ADVANCED, NULL);
 	zassert_equal(editor.local.tm_mday, 32, NULL);
-	(void)ef800_main_time_editor_handle_key(&editor, '1');
-	(void)ef800_main_time_editor_handle_key(&editor, '3');
-	zassert_equal(ef800_main_time_editor_handle_key(&editor, '\n'),
+	(void)ef800_application_time_editor_handle_key(&editor, '1');
+	(void)ef800_application_time_editor_handle_key(&editor, '3');
+	zassert_equal(ef800_application_time_editor_handle_key(&editor, '\n'),
 		EF800_TIME_EDITOR_INVALID, NULL);
 	zassert_equal(editor.length, 0U, NULL);
-	(void)ef800_main_time_editor_handle_key(&editor, '2');
-	zassert_equal(ef800_main_time_editor_handle_key(&editor, '\r'),
+	(void)ef800_application_time_editor_handle_key(&editor, '2');
+	zassert_equal(ef800_application_time_editor_handle_key(&editor, '\r'),
 		EF800_TIME_EDITOR_ADVANCED, NULL);
 	zassert_equal(editor.local.tm_mon, 1, NULL);
 	editor.field = EF800_TIME_EDITOR_OFFSET;
-	(void)ef800_main_time_editor_handle_key(&editor, '+');
-	(void)ef800_main_time_editor_handle_key(&editor, '0');
-	(void)ef800_main_time_editor_handle_key(&editor, '5');
-	(void)ef800_main_time_editor_handle_key(&editor, ':');
-	(void)ef800_main_time_editor_handle_key(&editor, '3');
-	(void)ef800_main_time_editor_handle_key(&editor, '0');
-	zassert_equal(ef800_main_time_editor_handle_key(&editor, '\r'),
+	(void)ef800_application_time_editor_handle_key(&editor, '+');
+	(void)ef800_application_time_editor_handle_key(&editor, '0');
+	(void)ef800_application_time_editor_handle_key(&editor, '5');
+	(void)ef800_application_time_editor_handle_key(&editor, ':');
+	(void)ef800_application_time_editor_handle_key(&editor, '3');
+	(void)ef800_application_time_editor_handle_key(&editor, '0');
+	zassert_equal(ef800_application_time_editor_handle_key(&editor, '\r'),
 		EF800_TIME_EDITOR_ADVANCED, NULL);
 	zassert_equal(editor.settings.utc_offset_minutes, 330, NULL);
-	(void)ef800_main_time_editor_handle_key(&editor, '1');
-	zassert_equal(ef800_main_time_editor_handle_key(&editor, '\r'),
+	(void)ef800_application_time_editor_handle_key(&editor, '1');
+	zassert_equal(ef800_application_time_editor_handle_key(&editor, '\r'),
 		EF800_TIME_EDITOR_COMPLETE, NULL);
 	zassert_true(editor.settings.daylight_saving, NULL);
 }
@@ -1378,7 +1378,7 @@ ZTEST(keyboard_protocol, test_main_port_workflow_claims_uart_before_transport)
 	struct ef800_port_uart_registry uart_registry;
 	struct ef800_measurement_zephyr_transport transports[EF800_PORT_COUNT] = {0};
 	struct port_workflow_callback_capture capture = {0};
-	struct ef800_main_port_workflow workflow = {
+	struct ef800_application_port_workflow workflow = {
 		.assignments = &assignments,
 		.plugins = &plugins,
 		.uart_registry = &uart_registry,
@@ -1398,7 +1398,7 @@ ZTEST(keyboard_protocol, test_main_port_workflow_claims_uart_before_transport)
 	assignments.states[0].connection = EF800_PORT_CONNECTION_SERIAL;
 	zassert_ok(ef800_port_uart_registry_init(&uart_registry,
 		EF800_PORT_UART_NONE), NULL);
-	zassert_ok(ef800_main_port_workflow_claim_loaded_assignments(&workflow),
+	zassert_ok(ef800_application_port_workflow_claim_loaded_assignments(&workflow),
 		NULL);
 	zassert_equal(capture.readiness_calls, 1U, NULL);
 	zassert_true(ef800_port_uart_is_claimed(&uart_registry, 1U), NULL);
@@ -1412,7 +1412,7 @@ ZTEST(keyboard_protocol, test_main_port_workflow_filters_measurement_ports)
 	struct ef800_port_assignment_service assignments = {0};
 	struct ef800_plugin_registry plugins = {0};
 	struct ef800_measurement_zephyr_transport transports[EF800_PORT_COUNT] = {0};
-	struct ef800_main_port_workflow workflow = {
+	struct ef800_application_port_workflow workflow = {
 		.assignments = &assignments,
 		.plugins = &plugins,
 		.measurement_transports = transports,
@@ -1429,14 +1429,14 @@ ZTEST(keyboard_protocol, test_main_port_workflow_filters_measurement_ports)
 	assignments.states[0].connection = EF800_PORT_CONNECTION_SERIAL;
 	transports[0].uart = (const struct device *)(uintptr_t)1U;
 
-	zassert_ok(ef800_main_port_workflow_load_measurement_ports(&workflow), NULL);
+	zassert_ok(ef800_application_port_workflow_load_measurement_ports(&workflow), NULL);
 	zassert_equal(workflow.measurement_port_count, 1U, NULL);
 	zassert_equal(workflow.measurement_port_ids[0], 1U, NULL);
 	transports[0].uart = NULL;
-	zassert_equal(ef800_main_port_workflow_load_measurement_ports(&workflow),
+	zassert_equal(ef800_application_port_workflow_load_measurement_ports(&workflow),
 		-ENODEV, NULL);
 	zassert_equal(workflow.measurement_port_count, 0U, NULL);
-	zassert_equal(ef800_main_port_workflow_uart_owner(&workflow,
+	zassert_equal(ef800_application_port_workflow_uart_owner(&workflow,
 		plugin->info.plugin_id), EF800_PORT_BUILDER_DEBUG, NULL);
 }
 
@@ -1444,7 +1444,7 @@ ZTEST(keyboard_protocol, test_main_port_workflow_reconciles_missing_plugin)
 {
 	struct ef800_port_assignment_service assignments = {0};
 	struct ef800_plugin_registry plugins = {0};
-	struct ef800_main_port_workflow workflow = {
+	struct ef800_application_port_workflow workflow = {
 		.assignments = &assignments,
 		.plugins = &plugins,
 	};
@@ -1453,7 +1453,7 @@ ZTEST(keyboard_protocol, test_main_port_workflow_reconciles_missing_plugin)
 	assignments.states[0].assigned = true;
 	assignments.states[0].plugin_id = 0x4567U;
 	assignments.states[0].connection = EF800_PORT_CONNECTION_SERIAL;
-	zassert_equal(ef800_main_port_workflow_reconcile_plugins(&workflow),
+	zassert_equal(ef800_application_port_workflow_reconcile_plugins(&workflow),
 		-EINVAL, NULL);
 	zassert_false(ef800_port_assignment_is_assigned(&assignments, 1U), NULL);
 }

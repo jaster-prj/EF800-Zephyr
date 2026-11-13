@@ -27,12 +27,12 @@ fi
 
 # Build targets. Build output stays in the mounted repository so it is visible
 # from the host and is ignored by Git.
-/opt/venv/bin/west build -p always -b ef800 application/application/ef800-main --build-dir application/build/ef800-main
+/opt/venv/bin/west build -p always -b ef800 application/application/ef800-application --build-dir application/build/ef800-application
 /opt/venv/bin/west build -p always -b ef800 application/application/ef800-backup --build-dir application/build/ef800-backup
 /opt/venv/bin/west build -p always -b ef800 application/application/ef800-bootloader --build-dir application/build/ef800-bootloader
-/opt/venv/bin/west build -p always -b ef800_keyboard application/application/ef800-keyboard --build-dir application/build/ef800-keyboard
-/opt/venv/bin/west build -p always -b ef800_keyboard application/application/ef800-keyboard-bootloader --build-dir application/build/ef800-keyboard-bootloader
-/opt/venv/bin/west build -p always -b ef800_keyboard application/application/ef800-keyboard-updater --build-dir application/build/ef800-keyboard-updater
+/opt/venv/bin/west build -p always -b ef800_keyboard application/application/keyboard-application --build-dir application/build/keyboard-application
+/opt/venv/bin/west build -p always -b ef800_keyboard application/application/keyboard-bootloader --build-dir application/build/keyboard-bootloader
+/opt/venv/bin/west build -p always -b ef800_keyboard application/application/keyboard-updater --build-dir application/build/keyboard-updater
 /opt/venv/bin/west build -p always -b ef800 application/application/test-hwdebug --build-dir application/build/test-hwdebug
 
 # Native tests, fixed-image contract verification, and external-flash debug

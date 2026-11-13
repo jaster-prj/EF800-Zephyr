@@ -34,7 +34,7 @@
 		};
 
 		ef800_main_partition: partition@30000 {
-			label = "ef800-main-test";
+			label = "ef800-application-test";
 			reg = <0x00030000 0x000D0000>;
 		};
 

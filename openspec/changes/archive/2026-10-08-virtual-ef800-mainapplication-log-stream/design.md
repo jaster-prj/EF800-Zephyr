@@ -1,12 +1,12 @@
 ## Context
 
-The Virtual EF800 already runs the production MainApplication composition root in
+The Virtual EF800 already runs the production EF800Application composition root in
 Zephyr `native_sim`. Its native front-panel service owns one bounded TCP connection
 to the Python gateway, which translates LCD frames, keypad operations, plugin
 status, and virtual-device controls to a browser WebSocket. The browser currently
-has no path for MainApplication logs.
+has no path for EF800Application logs.
 
-MainApplication logging is formatted by the shared EF800 log backend and written
+EF800Application logging is formatted by the shared EF800 log backend and written
 through the selected EF800 console UART. On native_sim, the default console path is
 the emulated/native-PTY UART rather than the browser transport. The existing log
 backend has a small formatting buffer, but it has no browser-facing queue or
@@ -22,7 +22,7 @@ is unchanged.
 
 **Goals:**
 
-- Publish bounded native-sim MainApplication records through the existing simulator
+- Publish bounded native-sim EF800Application records through the existing simulator
   protocol and gateway WebSocket.
 - Retain a small recent history, recommended at 64 records and approximately 8 KiB
   of text, subject to implementation constants and tests.

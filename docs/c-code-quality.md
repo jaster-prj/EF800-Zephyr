@@ -88,10 +88,10 @@ source list:
 
 ```sh
 clang-tidy-22 \
-  -p build/quality/ef800-main-clang-db \
+  -p build/quality/ef800-application-clang-db \
   --extra-arg-before=--target=arm-none-eabi \
   --checks=-*,bugprone-sizeof-expression,bugprone-suspicious-memset-usage,readability-misleading-indentation \
-  $(cat build/quality/ef800-main-owned-sources.txt)
+  $(cat build/quality/ef800-application-owned-sources.txt)
 ```
 
 Native-sim tests use their own compile databases and host target configuration;

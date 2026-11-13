@@ -6,9 +6,9 @@
 
 ## Context
 
-EF800 external packages are dynamically loaded into SRAM and currently execute through native function pointers on MainApplication's privileged thread and stack. Contract validation and bounded data structures do not prevent package code from reading or corrupting host memory, accessing peripherals, blocking the UI, or taking MainApplication through the system fatal path. Continuing an interrupted C call stack after a CPU exception cannot reliably restore locks, resource ownership, memory integrity, or peripheral state.
+EF800 external packages are dynamically loaded into SRAM and currently execute through native function pointers on EF800Application's privileged thread and stack. Contract validation and bounded data structures do not prevent package code from reading or corrupting host memory, accessing peripherals, blocking the UI, or taking EF800Application through the system fatal path. Continuing an interrupted C call stack after a CPU exception cannot reliably restore locks, resource ownership, memory integrity, or peripheral state.
 
-MainApplication must retain the package-owned logical Measurement behavior established by ADR-0001 while enforcing its ownership of hardware, navigation, persistence, and resource lifetime. The STM32L496 MPU and Zephyr userspace provide a potential isolation boundary, but target MPU layout and fault-termination semantics must be proven before arbitrary external execution is enabled.
+EF800Application must retain the package-owned logical Measurement behavior established by ADR-0001 while enforcing its ownership of hardware, navigation, persistence, and resource lifetime. The STM32L496 MPU and Zephyr userspace provide a potential isolation boundary, but target MPU layout and fault-termination semantics must be proven before arbitrary external execution is enabled.
 
 ## Decision
 
@@ -21,7 +21,7 @@ Packages that require the old direct-callback contract or cannot fit the MPU/W^X
 ## Consequences
 
 - Plugin UI and protocol behavior remains package-owned, while host resource ownership becomes hardware-enforced rather than contract-only.
-- MainApplication can remain available after a proven-contained plugin fault or timeout without resuming corrupted plugin frames.
+- EF800Application can remain available after a proven-contained plugin fault or timeout without resuming corrupted plugin frames.
 - EF800 must enable Zephyr userspace, reserve worker stack and MPU resources, add a verified service gateway, and support host-only abandonment of faulted PluginManager instances.
 - Existing external packages must be rebuilt against the isolated execution contract; old packages become explicitly incompatible.
 - Fault containment, MPU permissions, deadlines, and escalation must be tested on STM32L496 because native simulation is insufficient.

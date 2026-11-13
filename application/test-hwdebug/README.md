@@ -89,7 +89,7 @@ address-pattern mismatch at `0x60000000`, and an address-alias mismatch at
 `0x60000200` (expected `0x0a`, read `0xa5`). Earlier invocations also failed
 at boundary/data-pattern locations. Therefore the external memory is not
 validated or available for firmware use. FMC timing, board connectivity,
-and physical SRAM behavior require further diagnosis; no MainApplication
+and physical SRAM behavior require further diagnosis; no EF800Application
 integration is authorized by these results.
 
 Timing experiments (all on the confirmed STM32L496 target) did not fix the

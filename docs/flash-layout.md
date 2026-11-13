@@ -9,10 +9,10 @@ uses three non-overlapping regions:
 |---|---:|---:|
 | Second-level bootloader | `0x08000000` | `0x10000` |
 | Backup application | `0x08010000` | `0x20000` |
-| Main application | `0x08030000` | `0xD0000` |
+| EF800 application | `0x08030000` | `0xD0000` |
 
-The 64 KiB bootloader, 128 KiB BackupApplication, and 832 KiB MainApplication
-cover the 1 MiB device. MainApplication remains linked at `0x08030000`. Boot
+The 64 KiB bootloader, 128 KiB BackupApplication, and 832 KiB EF800Application
+cover the 1 MiB device. EF800Application remains linked at `0x08030000`. Boot
 state is stored in the dedicated external-QSPI NVS partition, not in internal
 flash. The legacy `BackupApplication.bin` capture is reference evidence only
 and must not be flashed into the current image layout.
@@ -50,7 +50,7 @@ The software partition contract covers the device address space exactly:
 
 These are firmware offsets, not evidence that the fitted QSPI geometry, erase
 behavior, existing media, or power-loss behavior has been production-qualified.
-The development MainApplication can format a recognized legacy monolithic FAT
+The development EF800Application can format a recognized legacy monolithic FAT
 volume into this layout; this is destructive and remains disabled for production
 firmware. See `docs/qspi-migration.md`.
 

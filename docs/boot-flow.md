@@ -9,9 +9,9 @@ will:
 1. Initialize the QSPI FAT disk.
 2. Find `/fwu/EF800_FW.bin`.
 3. Validate the update package and main-image vector table.
-4. Program and verify the main application partition.
+4. Program and verify the EF800 application partition.
 5. Remove the update file only after successful verification.
-6. Start the main application when it is valid.
+6. Start the EF800 application when it is valid.
 7. Select the backup application after repeated main-application watchdog
    failures.
 
@@ -21,7 +21,7 @@ Boot failure state transitions are:
 MAIN + watchdog reset         -> increment failure counter
 MAIN + normal reset/shutdown  -> clear failure counter
 failure limit reached         -> start BackupApplication
-BACKUP + next boot            -> clear counter and retry MainApplication
+BACKUP + next boot            -> clear counter and retry EF800Application
 ```
 
 BackupApplication is therefore a one-boot recovery path. It does not become a

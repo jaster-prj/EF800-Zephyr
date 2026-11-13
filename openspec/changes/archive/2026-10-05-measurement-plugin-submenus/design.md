@@ -1,6 +1,6 @@
 ## Context
 
-The current MainApplication has a fixed `APPLICATION_MENU_MEASUREMENT_ACTIONS` list and dispatches `Measure` and directional input through separate host functions. The measurement plugin ABI already provides `measure()` and `handle_input()`, but the host activates and destroys an instance for each call. The current plugin sources expose Elta3 directional commands while the second source is named `fts3xx` and rejects directional input; the requested product name is Fennel1 and must be confirmed or mapped during implementation.
+The current EF800Application has a fixed `APPLICATION_MENU_MEASUREMENT_ACTIONS` list and dispatches `Measure` and directional input through separate host functions. The measurement plugin ABI already provides `measure()` and `handle_input()`, but the host activates and destroys an instance for each call. The current plugin sources expose Elta3 directional commands while the second source is named `fts3xx` and rejects directional input; the requested product name is Fennel1 and must be confirmed or mapped during implementation.
 
 The existing UI owns the LCD header, menu rendering, keyboard decoding, port assignment, measurement records, and host navigation. The design must add persistent plugin submenu behavior without giving plugins direct access to raw UART framing, LCD drivers, or global application state.
 
@@ -33,7 +33,7 @@ Add a persistent activation/input path to `ef800_plugin_host` rather than callin
 
 ### Give host keys precedence and expose logical events only
 
-The keyboard host remains the only raw protocol consumer. After decoding, MainApplication handles global keys and back/cancel first, then offers remaining logical events to the plugin session state machine. A consumed result prevents parent-menu handling; an unconsumed result follows an explicit fallback policy. This prevents a plugin from trapping system navigation or receiving transport-specific bytes.
+The keyboard host remains the only raw protocol consumer. After decoding, EF800Application handles global keys and back/cancel first, then offers remaining logical events to the plugin session state machine. A consumed result prevents parent-menu handling; an unconsumed result follows an explicit fallback policy. This prevents a plugin from trapping system navigation or receiving transport-specific bytes.
 
 ### Preserve legacy dispatch as a separate branch
 
@@ -55,8 +55,8 @@ The plan will treat the requested Fennel1 action contract as authoritative, but 
 
 1. Add the action/session contract and host state-machine APIs while retaining the existing one-shot host APIs for legacy callers.
 2. Adapt Elta3 and the confirmed Fennel1 implementation to declare their action sets.
-3. Integrate plugin-session creation, rendering, keyboard dispatch, action execution, and teardown into MainApplication.
-4. Run native plugin and MainApplication tests, then the required firmware/native test baseline.
+3. Integrate plugin-session creation, rendering, keyboard dispatch, action execution, and teardown into EF800Application.
+4. Run native plugin and EF800Application tests, then the required firmware/native test baseline.
 5. Roll back by disabling plugin submenu session creation and using the existing fixed host action flow; no persisted data or image layout migration is required.
 
 ## Open Questions

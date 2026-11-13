@@ -80,11 +80,11 @@ Syntactically valid tokens absent from the current catalog are:
 - excluded from the effective composition;
 - never interpreted from their spelling or prefix.
 
-The physical MainApplication supports `USBMSD0` (Main MSC disabled) and
+The physical EF800Application supports `USBMSD0` (Main MSC disabled) and
 `USBMSD1` (Main MSC enabled), with `USBMSD1` as the default. Select the mode on
-the MainApplication shell with `usbmsd mode USBMSD0` or `usbmsd mode USBMSD1`;
+the EF800Application shell with `usbmsd mode USBMSD0` or `usbmsd mode USBMSD1`;
 the selection requires restart. Native-sim defaults to `USBMSD0` and does not
-compile Main MSC. The `LCDCONTR` group defaults to `LCDCONTR0`; MainApplication
+compile Main MSC. The `LCDCONTR` group defaults to `LCDCONTR0`; EF800Application
 and BackupApplication resolve its mode at startup, while contrast duty remains
 a separate runtime setting.
 
@@ -113,7 +113,7 @@ change the active PWM state in the current boot.
 ## Failure Behavior
 
 Missing files, unavailable configuration storage, two invalid slots, or a slot
-conflict do not prevent MainApplication startup. The service reports the
+conflict do not prevent EF800Application startup. The service reports the
 condition and resolves the repository defaults. It does not create a default
 file automatically, format FAT, modify internal boot metadata, or reconfigure
 running services.

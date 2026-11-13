@@ -13,7 +13,7 @@
 - [x] 2.5 Add persistence tests proving untouched bytes/endings are preserved, large files are streamed without file-sized buffers, MTP-visible artifacts are safely validated, and conflict detection catches an intervening host update.
 - [x] 2.6 Recompute cached point/code context from the committed workspace using existing record interpretation rules and test deletion/modification of the latest valid measurement record.
 
-## 3. MainApplication row interaction
+## 3. EF800Application row interaction
 
 - [x] 3.1 Add selected-row state to `Show Measurements`; route Up/Down to row selection and bounded scrolling, and Enter to Modify/Delete/Cancel actions while keeping `Show current Position` read-only.
 - [x] 3.2 Implement the 255-byte raw-text editor with visible caret and insert/overwrite state, Left/Right, Insert, Backspace/Delete, Enter-save, Escape-cancel, and rejection of row-ending input.
@@ -24,5 +24,5 @@
 ## 4. Verification and status
 
 - [x] 4.1 Run the keyboard, protocol, RTC, and persistence native tests and confirm the updated native test-case total in `docs/migration-status.md`.
-- [x] 4.2 Run the firmware builds prescribed by the repository guide and confirm the MainApplication image contract with `application/scripts/verify-images.sh`.
+- [x] 4.2 Run the firmware builds prescribed by the repository guide and confirm the EF800Application image contract with `application/scripts/verify-images.sh`.
 - [x] 4.3 Update `docs/migration-status.md` and relevant persistence/workspace status documentation with the implemented behavior, test results, MTP concurrency limitation, and any remaining hardware recovery qualification gate.

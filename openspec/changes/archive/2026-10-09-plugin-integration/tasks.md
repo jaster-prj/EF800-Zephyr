@@ -8,15 +8,15 @@
 
 ## 2. Startup Discovery and Storage Boundary
 
-- [x] 2.1 Integrate startup package scanning and validation into MainApplication only when internal storage is reachable.
+- [x] 2.1 Integrate startup package scanning and validation into EF800Application only when internal storage is reachable.
 - [x] 2.2 Ensure storage-unavailable startup continues with built-in functionality and does not format, overwrite, monitor, or access plugin files.
-- [x] 2.3 Preserve existing USB MSD ownership and restart behavior; verify MainApplication never scans or executes plugin files while BackupApplication owns storage.
+- [x] 2.3 Preserve existing USB MSD ownership and restart behavior; verify EF800Application never scans or executes plugin files while BackupApplication owns storage.
 - [x] 2.4 Add malformed, corrupt, incompatible, duplicate, target-mismatch, and valid-package discovery tests.
 - [x] 2.5 Add discovery tests for EF800 hardware metadata and port-capability filtering without changing generic PluginManager behavior.
 
 ## 3. Measurement Integration
 
-- [x] 3.1 Replace builder-specific MainApplication measurement dispatch with registry lookup and interface validation.
+- [x] 3.1 Replace builder-specific EF800Application measurement dispatch with registry lookup and interface validation.
 - [x] 3.2 Preserve port assignment, compatibility matching, UART claims, serial configuration defaults, and release ordering under host ownership.
 - [x] 3.3 Add persisted external plugin-ID handling that preserves missing assignments and distinguishes missing plugins from invalid records.
 - [x] 3.4 Expose ready Measurement menu entries only for valid assigned plugins with compatible ready routes.
@@ -36,7 +36,7 @@
 - [x] 5.1 Add declarative menu metadata and optional UI capability handling to the host registry.
 - [x] 5.2 Implement the bounded screen model with host-owned header, body limits, footer policy, and explicit overflow handling.
 - [x] 5.3 Wrap T6963 operations in a host service without exposing driver, GPIO, DeviceTree, or mutex types to plugins.
-- [x] 5.4 Convert existing keyboard output to logical key events for plugin dispatch while retaining raw protocol ownership in MainApplication.
+- [x] 5.4 Convert existing keyboard output to logical key events for plugin dispatch while retaining raw protocol ownership in EF800Application.
 - [x] 5.5 Implement plugin session lifecycle, consumed/unconsumed keys, bounded text-input mode, back/cancel behavior, and global-key precedence.
 - [x] 5.6 Add UI regression tests for menu contributions, header preservation, navigation, keyboard dispatch, input limits, and plugin teardown.
 
@@ -44,7 +44,7 @@
 
 - [x] 6.1 Publish the EF800 contract export, ABI limits, target metadata, and Measurement/Calculation/UI examples for plugin developers.
 - [x] 6.2 Add native tests for registry policy, startup storage states, menu visibility, plugin lifecycle, and bounded services.
-- [x] 6.3 Add production MainApplication target acceptance coverage for package discovery, Measurement assignment/readiness, Calculation invocation, plugin UI, and restart-based USB transitions.
+- [x] 6.3 Add production EF800Application target acceptance coverage for package discovery, Measurement assignment/readiness, Calculation invocation, plugin UI, and restart-based USB transitions.
 - [x] 6.4 Run all four firmware builds and the native suite, then verify image sizes, linked addresses, and generated DeviceTree outputs.
 - [x] 6.5 Update `docs/pluginmanager-implementation.md`, `docs/migration-status.md`, and relevant testing documentation when the implementation gates close.
 

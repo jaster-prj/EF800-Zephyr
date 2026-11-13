@@ -35,27 +35,27 @@
 
 - [x] 5.1 Ensure `data`, `plugins`, and `fwu` exist after a successful FAT mount and before MTP activation, without falling back to exposing `/EF800:` when creation fails.
 - [x] 5.2 Enable reentrant FatFS, move long-filename workspace from BSS to the compatible stack mode, and raise the USB device thread stack to the measured MTP baseline.
-- [ ] 5.3 Audit MainApplication, PluginManager, MCUmgr, update, and persistence filesystem operations for assumptions invalidated by concurrent MTP access, and enforce completed-file and startup-only plugin-consumption boundaries.
+- [ ] 5.3 Audit EF800Application, PluginManager, MCUmgr, update, and persistence filesystem operations for assumptions invalidated by concurrent MTP access, and enforce completed-file and startup-only plugin-consumption boundaries.
 - [ ] 5.4 Verify that MSC remains the only raw-disk owner, MTP never invokes disk-sector access directly, and MCUmgr filesystem access remains serialized without being registered as an unintended native USB class.
 - [ ] 5.5 Add native filesystem tests for concurrent operations on different files, incomplete-object exclusion, missing-root handling, and safe recovery after simulated transfer failure.
 
 ## 6. Preserve Update and Plugin Safety
 
-- [ ] 6.1 Verify the bootloader rejects incomplete, corrupt, oversized, wrong-address, and CRC-mismatched headered `EF800_FW.bin` files before erasing/programming MainApplication.
-- [ ] 6.2 Verify MainApplication rejects incomplete, corrupt, oversized, and wrong-target `EF800_KEYBOARD.pkg` files before programming the keyboard controller.
+- [ ] 6.1 Verify the bootloader rejects incomplete, corrupt, oversized, wrong-address, and CRC-mismatched headered `EF800_FW.bin` files before erasing/programming EF800Application.
+- [ ] 6.2 Verify EF800Application rejects incomplete, corrupt, oversized, and wrong-target `EF800_KEYBOARD.pkg` files before programming the keyboard controller.
 - [ ] 6.3 Add regression tests proving interrupted MTP uploads never replace completed update files and orphan temporary update files are ignored by both update consumers.
 - [ ] 6.4 Verify MTP plugin uploads do not alter the running plugin registry and are considered only by the existing validation/discovery path on subsequent startup.
 
 ## 7. Build and Behavioral Verification
 
 - [x] 7.1 Run the complete native Twister suite in the reusable devcontainer and update tests and `docs/migration-status.md` if the authoritative case count changes.
-- [x] 7.2 Pristine-build bootloader, backup, MainApplication, and keyboard firmware after the Kconfig, CMake, and manifest changes.
+- [x] 7.2 Pristine-build bootloader, backup, EF800Application, and keyboard firmware after the Kconfig, CMake, and manifest changes.
 - [x] 7.3 Run `application/scripts/verify-images.sh` and inspect map/RAM usage and USB stack high-water evidence to confirm fixed image layout and memory headroom.
 - [x] 7.4 Document module provenance, removal procedure when official Zephyr MTP is adopted, host MTP semantics, three-root/12-object limits, MSC restart rules, and recovery diagnostics.
 
 ## 8. Physical Windows and Linux Qualification
 
-- [ ] 8.1 On STM32L496 hardware, verify repeated None/DebugConsole/MTP hot switching with VBUS present and absent, including host disconnect/re-enumeration and no MainApplication restart.
+- [ ] 8.1 On STM32L496 hardware, verify repeated None/DebugConsole/MTP hot switching with VBUS present and absent, including host disconnect/re-enumeration and no EF800Application restart.
 - [ ] 8.2 Verify every transition entering or leaving MSC persists the selected mode and performs a controlled restart before changing FAT/raw-disk ownership.
 - [ ] 8.3 Qualify Windows native MTP transfers in both directions for 0, 1, 52, 63, 64, 65, multi-kilobyte, and multi-megabyte files, nested directories, 11/12/13 objects, cancellation, unplug, and reconnect.
 - [ ] 8.4 Qualify the same matrix on the documented Linux baseline using direct `libmtp` diagnostics and the selected desktop integration, initially Ubuntu GNOME/GVFS unless release documentation selects another baseline.

@@ -6,8 +6,8 @@ find_package(Zephyr REQUIRED HINTS $ENV{ZEPHYR_BASE})
 project(ef800_shared_battery_soc_test)
 
 target_compile_definitions(app PRIVATE
-	CONFIG_EF800_MAIN_RUNTIME_RTC_PERIOD_MS=1000
-	CONFIG_EF800_MAIN_RUNTIME_BATTERY_PERIOD_MS=10000
+	CONFIG_EF800_APPLICATION_RUNTIME_RTC_PERIOD_MS=1000
+	CONFIG_EF800_APPLICATION_RUNTIME_BATTERY_PERIOD_MS=10000
 )
 
 target_sources(app PRIVATE
@@ -29,6 +29,6 @@ target_include_directories(app PRIVATE
 	${CMAKE_CURRENT_LIST_DIR}/../../../shared/virtual_ef800/profile
 	${CMAKE_CURRENT_LIST_DIR}/../../../shared/virtual_ef800/serial
 	${CMAKE_CURRENT_LIST_DIR}/../../../shared/ef800_runtime
-	${CMAKE_CURRENT_LIST_DIR}/../../../shared/ef800_main
+	${CMAKE_CURRENT_LIST_DIR}/../../../shared/ef800_app
 	${CMAKE_CURRENT_LIST_DIR}/../../../shared/ef800_persistence
 )

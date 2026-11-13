@@ -13,7 +13,7 @@ target_compile_definitions(app PRIVATE
 target_sources(app PRIVATE
 	src/main.c
 	${CMAKE_CURRENT_LIST_DIR}/../../../shared/virtual_ef800/usb/virtual_ef800_usb_peer.c
-	${CMAKE_CURRENT_LIST_DIR}/../../../shared/ef800_ports/ef800_main_usb_mtp.c
+	${CMAKE_CURRENT_LIST_DIR}/../../../shared/ef800_ports/ef800_app_usb_mtp.c
 	${CMAKE_CURRENT_LIST_DIR}/../../../shared/ef800_ports/ef800_console_usb.c
 	${CMAKE_CURRENT_LIST_DIR}/../../../shared/ef800_ports/ef800_console.c)
 

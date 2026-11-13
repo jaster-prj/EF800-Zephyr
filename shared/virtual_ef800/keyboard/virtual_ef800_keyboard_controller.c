@@ -57,7 +57,7 @@ static void keyboard_controller_start(void)
 		return;
 	}
 	uart_emul_callback_tx_data_ready_set(keyboard_uart, tx_data_ready, NULL);
-	/* Keep the response in the emulated RX FIFO until MainApplication arms
+	/* Keep the response in the emulated RX FIFO until EF800Application arms
 	 * its interrupt handler and releases the virtual keyboard reset. */
 	k_msleep(20U);
 	virtual_ef800_keyboard_controller_reset_released(true);

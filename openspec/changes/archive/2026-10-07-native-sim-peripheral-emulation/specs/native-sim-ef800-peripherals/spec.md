@@ -1,7 +1,7 @@
 ## ADDED Requirements
 
 ### Requirement: Provide a healthy native-sim peripheral profile
-The native-sim EF800 SHALL provide a default profile in which the GPIO banks, UART devices, I2C devices, simulated storage, RTC, battery gauge, keyboard controller, and LCD device are present and operational so the production MainApplication startup path can complete without physical hardware.
+The native-sim EF800 SHALL provide a default profile in which the GPIO banks, UART devices, I2C devices, simulated storage, RTC, battery gauge, keyboard controller, and LCD device are present and operational so the production EF800Application startup path can complete without physical hardware.
 
 #### Scenario: Production application boots with healthy peripherals
 - **WHEN** the native-sim EF800 is started without fault configuration

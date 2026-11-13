@@ -1,6 +1,6 @@
 ## 1. Native-sim production composition
 
-- [x] 1.1 Add a native-sim application composition that reuses the production `ef800-main` source set and shared services without changing the physical EF800 target.
+- [x] 1.1 Add a native-sim application composition that reuses the production `ef800-application` source set and shared services without changing the physical EF800 target.
 - [x] 1.2 Add native-sim Kconfig enabling the production GPIO, interrupt-driven UART, runtime UART configuration, I2C, flash, filesystem, FAT, NVS, RTC, logging, and required plugin/application services.
 - [x] 1.3 Add a native-sim devicetree overlay exposing the production node labels `gpioa`, `gpiob`, `gpioc`, `gpiod`, `lpuart1`, `usart1`, `usart3`, `uart4`, and the required chosen/user properties.
 - [x] 1.4 Build the production composition on native-sim and record any remaining unavailable startup dependencies before adding device models.
@@ -41,7 +41,7 @@
 
 ## 6. Production workflow and front-panel integration
 
-- [x] 6.1 Verify persistence, workspace, metadata, plugin registration, port assignment, and MainApplication initialization execute against disposable virtual storage.
+- [x] 6.1 Verify persistence, workspace, metadata, plugin registration, port assignment, and EF800Application initialization execute against disposable virtual storage.
 - [x] 6.2 Verify semantic front-panel press, release, and release-all events traverse the emulated keyboard UART and existing keyboard/application handlers.
 - [x] 6.3 Verify browser gateway and direct headless clients receive the production-generated LCD state and remain compatible with the bounded simulator protocol.
 - [x] 6.4 Add native-sim startup and healthy-profile acceptance tests that run without a connected front panel.

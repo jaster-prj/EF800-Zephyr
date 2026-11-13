@@ -20,7 +20,7 @@ The Workspace viewer currently allows users to inspect records but not correct o
 
 ## Impact
 
-- MainApplication workspace viewer and keyboard/LCD interaction in `application/ef800-main/src/main.c`.
+- EF800Application workspace viewer and keyboard/LCD interaction in `application/ef800-application/src/main.c`.
 - Workspace and persistence APIs/backends under `shared/ef800_persistence/`, including safe replacement and conflict detection.
 - Persistence fake and regression coverage for mixed line endings, row edits/deletes, recovery, and conflicting changes.
 - The existing `workspace-file-browser` specification; no new capability is introduced.

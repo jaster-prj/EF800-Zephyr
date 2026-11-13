@@ -1,7 +1,7 @@
 ## 1. Composition and runtime source selection
 
 - [x] 1.1 Add the mutually exclusive BATSOC0/BATSOC1/BATSOC2 catalog group with BATSOC2 default for physical EF800 and native-sim; verify profile resolution, persistence, browser composition presentation, and restart activation.
-- [x] 1.2 Refactor MainApplication battery acquisition behind a source-neutral provider selected from active COMPOSITION; BATSOC0 skips acquisition, BATSOC1 uses ADC, and BATSOC2 probes the MAX17048-compatible gauge.
+- [x] 1.2 Refactor EF800Application battery acquisition behind a source-neutral provider selected from active COMPOSITION; BATSOC0 skips acquisition, BATSOC1 uses ADC, and BATSOC2 probes the MAX17048-compatible gauge.
 - [x] 1.3 Implement one deferred BATSOC2 probe after application initialization, with no profile mutation or same-boot retries, and add tests for absent and responding gauges.
 - [x] 1.4 Track consecutive MAX17048 read failures: preserve the last valid SOC for two failures, clear availability on the third, reset on success, and keep unavailable distinct from valid 0%.
 - [x] 1.5 Add a physical shell command to inspect and select BATSOC0/BATSOC1/BATSOC2 through COMPOSITION, preserving other tokens and requiring restart for activation.
@@ -25,9 +25,9 @@
 - [x] 4.1 Add a bounded gateway battery-control operation that accepts integer SOC 0–100 from the active controller and routes it over the existing simulator control connection.
 - [x] 4.2 Add an accessible battery SOC control to the web front panel, show acceptance/unavailable errors, and disable updates for viewers or when BATSOC0 is active.
 - [x] 4.3 Add gateway and web asset tests for valid updates, 0% as a valid value, out-of-range rejection, viewer rejection, disconnect behavior, and simulator restart resetting the transient input.
-- [ ] 4.4 Run an interactive native-sim acceptance test for BATSOC2 register-backed SOC and BATSOC1 ADC-emulated SOC through the displayed MainApplication battery indicator.
+- [ ] 4.4 Run an interactive native-sim acceptance test for BATSOC2 register-backed SOC and BATSOC1 ADC-emulated SOC through the displayed EF800Application battery indicator.
 
 ## 5. Documentation and verification
 
 - [x] 5.1 Document BATSOC selections, startup fallback, three-read failure policy, the PC1 calibration hex format, and the unqualified physical divider/table assumptions.
-- [ ] 5.2 Build the native-sim and physical MainApplication targets, run the prescribed firmware builds and native Twister suite, and verify the virtual EF800 web deployment with both supported SOC source paths.
+- [ ] 5.2 Build the native-sim and physical EF800Application targets, run the prescribed firmware builds and native Twister suite, and verify the virtual EF800 web deployment with both supported SOC source paths.

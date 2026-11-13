@@ -6,12 +6,12 @@
 #include "keyboard_host.h"
 #include "ef800_plugin_session.h"
 #include "ef800_lcd_contrast.h"
-#include "ef800_main_display.h"
+#include "ef800_application_display.h"
 #include "ef800_workspace_browser.h"
 #include "ef800_workspace_row_editor.h"
 #include "ef800_measurement_plugin.h"
 
-static char rendered_rows[8U][EF800_MAIN_DISPLAY_COLUMNS + 1U];
+static char rendered_rows[8U][EF800_APPLICATION_DISPLAY_COLUMNS + 1U];
 static uint8_t rendered_row;
 static unsigned int pixel_write_calls;
 static bool last_pixel_value;
@@ -32,7 +32,7 @@ int ef800_t6963_write_string(struct ef800_t6963 *lcd, const char *string)
 	if (rendered_row < ARRAY_SIZE(rendered_rows)) {
 		strncpy(rendered_rows[rendered_row], string,
 			sizeof(rendered_rows[rendered_row]) - 1U);
-		rendered_rows[rendered_row][EF800_MAIN_DISPLAY_COLUMNS] = '\0';
+		rendered_rows[rendered_row][EF800_APPLICATION_DISPLAY_COLUMNS] = '\0';
 	}
 	return 0;
 }
@@ -79,7 +79,7 @@ static void capture_render(void *context, const struct ef800_ui_state *state)
 ZTEST(shared_ui, test_plugin_model_render_keeps_host_context_and_bounds)
 {
 	struct ef800_t6963 lcd = {0};
-	struct ef800_main_display display;
+	struct ef800_application_display display;
 	struct ef800_measurement_display model = {
 		.title = "Plugin title",
 		.rows = {"Measure", "Back"},
@@ -89,8 +89,8 @@ ZTEST(shared_ui, test_plugin_model_render_keeps_host_context_and_bounds)
 	};
 
 	memset(rendered_rows, 0, sizeof(rendered_rows));
-	ef800_main_display_init(&display, &lcd, true);
-	ef800_main_display_plugin_menu(&display, &model, 3U, "Instrument",
+	ef800_application_display_init(&display, &lcd, true);
+	ef800_application_display_plugin_menu(&display, &model, 3U, "Instrument",
 		"12:34");
 	zassert_true(strncmp(rendered_rows[0], "Plugin title", 12U) == 0, NULL);
 	zassert_true(strncmp(rendered_rows[0] + 17U, "12:34", 5U) == 0, NULL);
@@ -98,18 +98,18 @@ ZTEST(shared_ui, test_plugin_model_render_keeps_host_context_and_bounds)
 		NULL);
 	zassert_true(strncmp(rendered_rows[4], "> Back", 6U) == 0, NULL);
 	zassert_true(strncmp(rendered_rows[7], "ENTER select", 12U) == 0, NULL);
-	zassert_equal(strlen(rendered_rows[7]), EF800_MAIN_DISPLAY_COLUMNS, NULL);
+	zassert_equal(strlen(rendered_rows[7]), EF800_APPLICATION_DISPLAY_COLUMNS, NULL);
 }
 
 ZTEST(shared_ui, test_paged_list_renderer_keeps_rows_and_footer_separate)
 {
 	struct ef800_t6963 lcd = {0};
-	struct ef800_main_display display;
+	struct ef800_application_display display;
 	const char *const rows[4] = {"> Port A", "  Port B", "  Port C", ""};
 
 	memset(rendered_rows, 0, sizeof(rendered_rows));
-	ef800_main_display_init(&display, &lcd, true);
-	ef800_main_display_list_page(&display, "Port assignment", "Ports 1-4 of 5",
+	ef800_application_display_init(&display, &lcd, true);
+	ef800_application_display_list_page(&display, "Port assignment", "Ports 1-4 of 5",
 		rows, ARRAY_SIZE(rows), "ENTER edit  ESC back", "11:24");
 	zassert_true(strncmp(rendered_rows[0], "Port assignment", 15U) == 0,
 		NULL);
@@ -124,17 +124,17 @@ ZTEST(shared_ui, test_paged_list_renderer_keeps_rows_and_footer_separate)
 ZTEST(shared_ui, test_battery_icon_renderer_updates_only_on_state_change)
 {
 	struct ef800_t6963 lcd = {0};
-	struct ef800_main_display display;
+	struct ef800_application_display display;
 
 	pixel_write_calls = 0U;
 	first_pixel_value = false;
-	ef800_main_display_init(&display, &lcd, true);
-	ef800_main_display_battery_status(&display, true, 50U);
+	ef800_application_display_init(&display, &lcd, true);
+	ef800_application_display_battery_status(&display, true, 50U);
 	zassert_equal(pixel_write_calls, 38U, NULL);
 	zassert_true(first_pixel_value, NULL);
-	ef800_main_display_battery_status(&display, true, 50U);
+	ef800_application_display_battery_status(&display, true, 50U);
 	zassert_equal(pixel_write_calls, 38U, NULL);
-	ef800_main_display_battery_status(&display, false, 0U);
+	ef800_application_display_battery_status(&display, false, 0U);
 	zassert_equal(pixel_write_calls, 73U, NULL);
 	zassert_false(last_pixel_value, NULL);
 }
@@ -142,7 +142,7 @@ ZTEST(shared_ui, test_battery_icon_renderer_updates_only_on_state_change)
 ZTEST(shared_ui, test_workspace_renderer_preserves_selection_and_position_mode)
 {
 	struct ef800_t6963 lcd = {0};
-	struct ef800_main_display display;
+	struct ef800_application_display display;
 	struct ef800_workspace_browser browser = {
 		.lines = {"first row", "selected row"},
 		.line_count = 2U,
@@ -151,8 +151,8 @@ ZTEST(shared_ui, test_workspace_renderer_preserves_selection_and_position_mode)
 	};
 
 	memset(rendered_rows, 0, sizeof(rendered_rows));
-	ef800_main_display_init(&display, &lcd, true);
-	ef800_main_display_workspace_view(&display, &browser, true, "survey",
+	ef800_application_display_init(&display, &lcd, true);
+	ef800_application_display_workspace_view(&display, &browser, true, "survey",
 		false, "08:21");
 	zassert_true(strncmp(rendered_rows[0], "Show", 4U) == 0,
 		NULL);
@@ -165,7 +165,7 @@ ZTEST(shared_ui, test_workspace_renderer_preserves_selection_and_position_mode)
 		28U) == 0, NULL);
 
 	memset(rendered_rows, 0, sizeof(rendered_rows));
-	ef800_main_display_workspace_view(&display, &browser, true, "survey",
+	ef800_application_display_workspace_view(&display, &browser, true, "survey",
 		true, "08:21");
 	zassert_true(strncmp(rendered_rows[0], "Current Position", 16U) == 0,
 		NULL);
@@ -176,7 +176,7 @@ ZTEST(shared_ui, test_workspace_renderer_preserves_selection_and_position_mode)
 ZTEST(shared_ui, test_workspace_row_editor_renderer_tracks_bounded_viewport)
 {
 	struct ef800_t6963 lcd = {0};
-	struct ef800_main_display display;
+	struct ef800_application_display display;
 	struct ef800_workspace_row_editor editor = {
 		.text = "0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghij",
 		.length = 46U,
@@ -185,8 +185,8 @@ ZTEST(shared_ui, test_workspace_row_editor_renderer_tracks_bounded_viewport)
 	};
 
 	memset(rendered_rows, 0, sizeof(rendered_rows));
-	ef800_main_display_init(&display, &lcd, true);
-	ef800_main_display_workspace_row_editor(&display, &editor, "survey",
+	ef800_application_display_init(&display, &lcd, true);
+	ef800_application_display_workspace_row_editor(&display, &editor, "survey",
 		"09:15");
 	zassert_equal(editor.viewport_start, 1U, NULL);
 	zassert_true(strncmp(rendered_rows[0], "Modify workspace", 16U) == 0,

@@ -26,7 +26,7 @@ bytes. EF800 owns the metadata extension UUID and schema.
 
 ### Measurement
 
-Measurement plugins represent external devices. MainApplication supplies a
+Measurement plugins represent external devices. EF800Application supplies a
 host-owned Port service and controls UART claiming, serial configuration,
 assignment, readiness, lifecycle, and release.
 
@@ -39,7 +39,7 @@ eligible for a port only when all required bits are present:
 
 ### Calculation
 
-Calculation plugins do not require a physical port. MainApplication supplies a
+Calculation plugins do not require a physical port. EF800Application supplies a
 bounded Workspace snapshot and a bounded result buffer. Plugins cannot access
 filesystem handles or mutate Workspace state implicitly.
 
@@ -73,7 +73,7 @@ input, output, screen content, or Workspace snapshots.
 
 ## Lifecycle
 
-Plugin packages are discovered at MainApplication startup only when internal
+Plugin packages are discovered at EF800Application startup only when internal
 storage is reachable. USB MSD ownership is unchanged; changing USB mode
 restarts the application and provides the package update boundary.
 

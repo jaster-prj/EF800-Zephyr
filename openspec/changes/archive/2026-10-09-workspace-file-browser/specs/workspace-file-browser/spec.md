@@ -1,7 +1,7 @@
 ## ADDED Requirements
 
 ### Requirement: Expose workspace browsing from the main menu
-The MainApplication SHALL keep a top-level menu entry named `Workspace` and SHALL provide `Show Measurements` and `Show current Position` entries beneath it. Workspace-management actions such as restoring, selecting, creating, and listing workspaces SHALL remain available under Settings and SHALL continue to operate on the selected workspace.
+The EF800Application SHALL keep a top-level menu entry named `Workspace` and SHALL provide `Show Measurements` and `Show current Position` entries beneath it. Workspace-management actions such as restoring, selecting, creating, and listing workspaces SHALL remain available under Settings and SHALL continue to operate on the selected workspace.
 
 #### Scenario: User opens the Workspace menu
 - **WHEN** the user selects `Workspace` from the main menu
@@ -77,4 +77,4 @@ The workspace views SHALL require a selected workspace and SHALL present a diagn
 
 #### Scenario: User leaves a workspace view
 - **WHEN** the user presses the host back key while viewing measurements or the current position
-- **THEN** MainApplication returns to the Workspace menu and releases any viewer state without changing the file
+- **THEN** EF800Application returns to the Workspace menu and releases any viewer state without changing the file

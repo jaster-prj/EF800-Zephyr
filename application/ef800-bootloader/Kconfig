@@ -3,12 +3,12 @@
 menu "EF800 bootloader"
 
 config EF800_BOOT_MAIN_FAILURE_LIMIT
-	int "Main application watchdog failure limit"
+	int "EF800 application watchdog failure limit"
 	default 3
 	range 1 255
 	help
 	  Select the backup application after this many watchdog resets while
-	  the main application was the selected target.
+	  the EF800 application was the selected target.
 
 endmenu
 

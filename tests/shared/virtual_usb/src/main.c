@@ -12,7 +12,7 @@
 #include <zephyr/ztest.h>
 
 #include "ef800_console.h"
-#include "ef800_main_usb_mtp.h"
+#include "ef800_app_usb_mtp.h"
 #include "virtual_ef800_usb_peer.h"
 
 #define TEST_DATA_DISK "DATA"
@@ -21,7 +21,7 @@
 #define TEST_FWU_ROOT "/DATA:/fwu"
 
 BUILD_ASSERT(!IS_ENABLED(CONFIG_USBD_MSC_CLASS),
-	"Native-sim MainApplication USBMSD0 must omit the MSC class");
+	"Native-sim EF800Application USBMSD0 must omit the MSC class");
 
 static FATFS data_fat_fs;
 static struct fs_mount_t data_mount = {
@@ -112,7 +112,7 @@ static void virtual_usb_after(void *fixture)
 {
 	ARG_UNUSED(fixture);
 	if (mtp_started) {
-		(void)ef800_main_usb_mtp_stop();
+		(void)ef800_app_usb_mtp_stop();
 		mtp_started = false;
 	}
 	if (cdc_started) {
@@ -129,7 +129,7 @@ static void virtual_usb_after(void *fixture)
 
 static void start_mtp_context(void)
 {
-	zassert_ok(ef800_main_usb_mtp_start(), NULL);
+	zassert_ok(ef800_app_usb_mtp_start(), NULL);
 	mtp_started = true;
 	zassert_ok(virtual_ef800_usb_peer_wait_for_device(5000U), NULL);
 }

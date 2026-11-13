@@ -12,7 +12,7 @@
 - `adr/0003-use-native-sim-for-behavioral-ef800.md` - limits this work to behavioral simulation evidence.
 - `adr/0004-use-web-gateway-for-virtual-ef800-front-panel.md` - preserves the gateway and browser boundary.
 - `adr/0005-use-zephyr-device-emulation-for-production-native-sim.md` - requires production driver/API paths and explicit virtual devices.
-- `adr/0006-use-single-ef800-main-target-for-physical-and-native-sim.md` - keeps shared production composition and virtual infrastructure.
+- `adr/0006-use-single-ef800-application-target-for-physical-and-native-sim.md` - keeps shared production composition and virtual infrastructure.
 
 ## Repository-Level ADRs Created
 

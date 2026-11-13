@@ -12,7 +12,7 @@ and the Virtual EF800 browser environment.
 
 The system context and principal external actors are shown in the
 [level-1 block diagram](../diagram_as_code/05_building_block_view/1_level.puml).
-The EF800 system contains the L496 Bootloader, MainApplication, BackupApplication,
+The EF800 system contains the L496 Bootloader, EF800Application, BackupApplication,
 L431 keyboard controller, internal flash, and external QSPI. It interacts with
 operators, serial instruments, a service PC, and (for native-sim) a browser
 gateway and developer toolchain.
@@ -21,8 +21,8 @@ gateway and developer toolchain.
 
 | Interface | Producer / consumer | Purpose and boundary |
 |---|---|---|
-| Main-to-keyboard UART | L496 MainApplication ↔ L431 keyboard image | Keyboard-ready indication, command/ACK frames, translated key events, and controller update workflow. Normal protocol: 115200 8N1. |
-| Measurement serial ports | MainApplication ↔ assigned instrument | Configured per-port transport. Protocol adapters are selected through the port/plugin assignment model. |
+| Main-to-keyboard UART | L496 EF800Application ↔ L431 keyboard image | Keyboard-ready indication, command/ACK frames, translated key events, and controller update workflow. Normal protocol: 115200 8N1. |
+| Measurement serial ports | EF800Application ↔ assigned instrument | Configured per-port transport. Protocol adapters are selected through the port/plugin assignment model. |
 | USB device MTP | Main or Backup ↔ PC/service host | Named, filesystem-mediated roots only. Boot NVS and raw flash are not exported. Main exposes Data/Plugins/FWU; Backup also exposes Configuration while it is sole application owner. |
 | USB device MSC | Main ↔ PC host | Optional physical composition; raw Shared Data ownership is exclusive and uses a restart/unmount boundary. Excluded in native-sim Main profile. |
 | Virtual front-panel TCP | Main native-sim ↔ gateway | Private Compose-network protocol for display, input, bounded control, logs, and diagnostics. Browser does not connect to this socket directly. |

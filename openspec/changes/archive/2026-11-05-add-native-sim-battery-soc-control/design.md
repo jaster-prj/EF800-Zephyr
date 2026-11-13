@@ -1,12 +1,12 @@
 ## Context
 
-MainApplication currently initializes the MAX17048-compatible gauge at startup and samples its SOC/voltage through `shared/ef800_runtime`. The runtime snapshot and LCD icon already provide a source-neutral place to publish availability and SOC. The composition catalog currently has no BATSOC group.
+EF800Application currently initializes the MAX17048-compatible gauge at startup and samples its SOC/voltage through `shared/ef800_runtime`. The runtime snapshot and LCD icon already provide a source-neutral place to publish availability and SOC. The composition catalog currently has no BATSOC group.
 
 The native-sim battery profile already carries SOC and voltage and can mark the emulated gauge unavailable, but the web page only configures serial instrument dummies. The native-sim overlay has no ADC device. Zephyr provides an ADC emulator that can be used to exercise the production ADC API rather than bypassing it.
 
 The current physical board description routes QSPI through BK1 and does not assign PC1. The user reports that the second flash is not fitted; if it is later added on BK2, PC1 may become a conflicting resource. The battery divider values are 22 kOhm and 100 kOhm and the LiFePO4 pack maximum is 3.6 V, but the divider orientation and measured lookup points are not yet confirmed.
 
-The design follows the accepted decisions to keep one production MainApplication for physical and native-sim builds (ADR-0006), exercise production device APIs through native peripheral adapters (ADR-0005), use the local web gateway and its single bounded simulator connection (ADR-0004), and activate composition only on restart (ADR-0012, ADR-0016). Native-sim results remain behavioral evidence only (ADR-0003).
+The design follows the accepted decisions to keep one production EF800Application for physical and native-sim builds (ADR-0006), exercise production device APIs through native peripheral adapters (ADR-0005), use the local web gateway and its single bounded simulator connection (ADR-0004), and activate composition only on restart (ADR-0012, ADR-0016). Native-sim results remain behavioral evidence only (ADR-0003).
 
 ## Goals / Non-Goals
 
@@ -39,7 +39,7 @@ This fits the existing composition contract and prevents incidental gauge detect
 
 Keep one runtime battery snapshot and LCD indicator. A source adapter returns a valid SOC/voltage sample or an explicit unavailable/error status. This avoids separate UI code for MAX17048 and ADC. An unavailable source is distinct from a valid zero-percent reading.
 
-For `BATSOC2`, make one deferred probe from the runtime battery worker after application initialization; do not perform I2C gauge probing synchronously on the MainApplication startup thread. If the probe fails, keep SOC unavailable without retrying until restart. After the first valid reading, keep the last good SOC through two consecutive read failures, clear availability on the third, and reset the count on success.
+For `BATSOC2`, make one deferred probe from the runtime battery worker after application initialization; do not perform I2C gauge probing synchronously on the EF800Application startup thread. If the probe fails, keep SOC unavailable without retrying until restart. After the first valid reading, keep the last good SOC through two consecutive read failures, clear availability on the third, and reset the count on success.
 
 ### Store ADC calibration separately from COMPOSITION
 

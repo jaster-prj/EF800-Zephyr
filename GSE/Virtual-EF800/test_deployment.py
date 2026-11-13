@@ -17,7 +17,7 @@ class DeploymentDefinitionTests(unittest.TestCase):
         simulator = (ROOT / "docker/virtual-ef800/Dockerfile").read_text(encoding="utf-8")
         web = (ROOT / "docker/virtual-ef800-web/Dockerfile").read_text(encoding="utf-8")
         entrypoint = (ROOT / "docker/virtual-ef800/entrypoint.sh").read_text(encoding="utf-8")
-        self.assertIn("COPY build/ef800-main-native-sim/zephyr/zephyr.exe", simulator)
+        self.assertIn("COPY build/ef800-application-native-sim/zephyr/zephyr.exe", simulator)
         self.assertNotIn("west update", simulator)
         self.assertIn("useradd --system", simulator)
         self.assertIn("USER virtualef800", web)

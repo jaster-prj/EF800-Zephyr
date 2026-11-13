@@ -1,8 +1,8 @@
 ## Context
 
-MainApplication and the Bootloader currently share one 4 MiB QSPI FAT volume. MainApplication mounts it for `.configuration`, `data`, `plugins`, and `fwu`; BackupApplication exports the whole disk through MSC; the Bootloader mounts the same volume to find `fwu/EF800_FW.bin`. MainApplication MTP is being added by the in-progress `add-hot-switchable-usb-mtp` change, but its native-sim adapter currently returns `-ENOTSUP`. The web gateway's existing plugin upload writes directly to the simulator filesystem and does not exercise USB.
+EF800Application and the Bootloader currently share one 4 MiB QSPI FAT volume. EF800Application mounts it for `.configuration`, `data`, `plugins`, and `fwu`; BackupApplication exports the whole disk through MSC; the Bootloader mounts the same volume to find `fwu/EF800_FW.bin`. EF800Application MTP is being added by the in-progress `add-hot-switchable-usb-mtp` change, but its native-sim adapter currently returns `-ENOTSUP`. The web gateway's existing plugin upload writes directly to the simulator filesystem and does not exercise USB.
 
-The current internal-flash map reserves 32 KiB for NVS boot metadata between the 96 KiB BackupApplication and MainApplication at `0x08030000`. The external QSPI is a 4 MiB part, but its complete partition geometry and migration from the current FAT volume remain hardware qualification gates. Existing ADRs require MainApplication MTP to use approved filesystem roots, preserve the Main MSC restart/ownership boundary, execute the production MainApplication on native-sim, keep the browser behind the gateway, and retain restart-scoped composition profiles.
+The current internal-flash map reserves 32 KiB for NVS boot metadata between the 96 KiB BackupApplication and EF800Application at `0x08030000`. The external QSPI is a 4 MiB part, but its complete partition geometry and migration from the current FAT volume remain hardware qualification gates. Existing ADRs require EF800Application MTP to use approved filesystem roots, preserve the Main MSC restart/ownership boundary, execute the production EF800Application on native-sim, keep the browser behind the gateway, and retain restart-scoped composition profiles.
 
 ## Goals / Non-Goals
 
@@ -11,9 +11,9 @@ The current internal-flash map reserves 32 KiB for NVS boot metadata between the
 - Separate boot-state NVS, private configuration, and shared user/update data on QSPI using the selected 32 KiB / 992 KiB / 3072 KiB layout.
 - Keep configuration mounted independently of shared-data MSC handoff, eliminating the need to mirror application port assignments in boot metadata.
 - Give BackupApplication a file-level MTP recovery surface for Configuration, Data, Plugins, and FWU, without exposing raw NVS or internal-flash sectors.
-- Keep the Bootloader's automatic updater limited to validated MainApplication images; keep second-level Bootloader updates ST-LINK-only.
-- Exercise MainApplication's real device-next CDC and MTP contexts in native-sim, and let the localhost browser operate Main MTP through an in-process software USB host.
-- Gate MainApplication MSD availability through target composition: `USBMSD0` for native-sim and default `USBMSD1` for the physical target.
+- Keep the Bootloader's automatic updater limited to validated EF800Application images; keep second-level Bootloader updates ST-LINK-only.
+- Exercise EF800Application's real device-next CDC and MTP contexts in native-sim, and let the localhost browser operate Main MTP through an in-process software USB host.
+- Gate EF800Application MSD availability through target composition: `USBMSD0` for native-sim and default `USBMSD1` for the physical target.
 
 **Non-Goals:**
 
@@ -45,34 +45,34 @@ Alternatives considered:
 
 ### Keep configuration application-owned and hand off only shared data
 
-MainApplication mounts the configuration FAT throughout its runtime. MainApplication MTP accesses only approved roots from shared data while the application owns that filesystem. MainApplication MSC, when the effective composition is `USBMSD1`, unmounts only the shared-data FAT and exposes only its block device after the existing restart boundary. BackupApplication runs separately and mounts both FAT regions for MTP recovery; it does not expose MSC while those filesystems are mounted.
+EF800Application mounts the configuration FAT throughout its runtime. EF800Application MTP accesses only approved roots from shared data while the application owns that filesystem. EF800Application MSC, when the effective composition is `USBMSD1`, unmounts only the shared-data FAT and exposes only its block device after the existing restart boundary. BackupApplication runs separately and mounts both FAT regions for MTP recovery; it does not expose MSC while those filesystems are mounted.
 
 The Main MTP surface remains Data, Plugins, and FWU, consistent with ADR-0011's privacy boundary. The distinct Backup recovery MTP surface adds Configuration explicitly, allowing repair of private settings only while BackupApplication owns the device. Both MTP contexts use filesystem APIs and never export raw sectors.
 
 ### Relocate boot state to external NVS and retire the internal metadata partition
 
-Use the 32 KiB QSPI NVS region for boot-state records. If the record is invalid or absent but the region is accessible, initialize the boot-state record to defaults and boot a valid MainApplication. If QSPI/NVS access itself fails, use volatile defaults and attempt MainApplication without formatting either FAT region. Report the missing persistent counter; do not make a boot-state failure destructive to user data.
+Use the 32 KiB QSPI NVS region for boot-state records. If the record is invalid or absent but the region is accessible, initialize the boot-state record to defaults and boot a valid EF800Application. If QSPI/NVS access itself fails, use volatile defaults and attempt EF800Application without formatting either FAT region. Report the missing persistent counter; do not make a boot-state failure destructive to user data.
 
-Remove the internal metadata partition from the image map and expand BackupApplication from 96 KiB to 128 KiB, preserving MainApplication's `0x08030000` link address. The resulting internal map is Bootloader 64 KiB, BackupApplication 128 KiB, and MainApplication 832 KiB. Port assignments and composition are stored in the always-mounted configuration FAT, so no internal assignment mirror is needed for Main's data-volume handoff.
+Remove the internal metadata partition from the image map and expand BackupApplication from 96 KiB to 128 KiB, preserving EF800Application's `0x08030000` link address. The resulting internal map is Bootloader 64 KiB, BackupApplication 128 KiB, and EF800Application 832 KiB. Port assignments and composition are stored in the always-mounted configuration FAT, so no internal assignment mirror is needed for Main's data-volume handoff.
 
 Alternatives considered:
 
 - Keep internal NVS and mirror QSPI configuration: rejected because the selected storage model has a dedicated always-mounted configuration volume and a separate boot-state NVS region.
-- Move the MainApplication link address to reclaim 32 KiB: rejected because preserving the current Main image address reduces compatibility churn.
+- Move the EF800Application link address to reclaim 32 KiB: rejected because preserving the current Main image address reduces compatibility churn.
 
-### Keep the automatic installer MainApplication-only
+### Keep the automatic installer EF800Application-only
 
-The Bootloader reads `EF800_FW.bin` from the shared-data `fwu` directory, validates the supported MainApplication format/vector/bounds/integrity, writes only the Main partition, verifies it, and removes the consumed file best-effort. It does not update BackupApplication and never self-programs the second-level Bootloader. The latter remains ST-LINK-only; BackupApplication replacement remains a separate service procedure.
+The Bootloader reads `EF800_FW.bin` from the shared-data `fwu` directory, validates the supported EF800Application format/vector/bounds/integrity, writes only the Main partition, verifies it, and removes the consumed file best-effort. It does not update BackupApplication and never self-programs the second-level Bootloader. The latter remains ST-LINK-only; BackupApplication replacement remains a separate service procedure.
 
 ### Make BackupApplication a recovery MTP device
 
 Use the existing pinned Zephyr MTP class module in BackupApplication. Its MTP storages map to the Configuration directory and the Data, Plugins, and FWU roots. Keep object and transfer bounds; incomplete uploads must not become consumable update files. Keep the external NVS inaccessible through MTP. BackupApplication's 128 KiB image budget and RAM/stack headroom must be verified before closing the change.
 
-### Exercise MainApplication MTP through Zephyr's virtual USB bus
+### Exercise EF800Application MTP through Zephyr's virtual USB bus
 
 Replace the native-sim `-ENOTSUP` MTP adapter with a target-neutral Main MTP context and a physical-only clock-recovery adapter. Build the native-sim application with Zephyr's device-next virtual UDC/UHC pair. An in-process software host peer will enumerate the actual Main MTP device and implement the bounded MTP operations required by the browser file view. CDC uses the same virtual bus for deterministic enumeration/data tests. Browser HTTP/WebSocket requests go through the gateway's existing single simulator connection; the gateway does not read or write FAT directly.
 
-The browser MTP panel covers MainApplication's Data, Plugins, and FWU storages. Configuration remains hidden in MainApplication MTP and is available only through BackupApplication recovery MTP. Physical Windows/Linux and electrical qualification remain separate gates.
+The browser MTP panel covers EF800Application's Data, Plugins, and FWU storages. Configuration remains hidden in EF800Application MTP and is available only through BackupApplication recovery MTP. Physical Windows/Linux and electrical qualification remain separate gates.
 
 ### Use target-specific composition defaults for Main MSD availability
 

@@ -1,7 +1,7 @@
-"""Optional black-box test against a running native-sim MainApplication.
+"""Optional black-box test against a running native-sim EF800Application.
 
 Set EF800_SIMULATOR_HOST to the private simulator TCP endpoint. The simulator
-must run the production MainApplication image with its MTP personality active.
+must run the production EF800Application image with its MTP personality active.
 """
 import asyncio
 import os
@@ -43,7 +43,7 @@ class MainMtpGatewayEndToEndTests(unittest.IsolatedAsyncioTestCase):
             await self.gateway.send_simulator(MSG_KEY_UP, encoded)
             await asyncio.sleep(0.08)
 
-        # Select the actual Port 4 USB MTP personality through MainApplication
+        # Select the actual Port 4 USB MTP personality through EF800Application
         # rather than making the host peer talk to an inactive/stub class.
         for key in ("e", "p", "4", "m"):
             await press(key)

@@ -2,7 +2,7 @@
 
 ## Current Status (2026-10-04)
 
-Production `ef800-main` is the only EF800 PluginManager host. Generic
+Production `ef800-application` is the only EF800 PluginManager host. Generic
 PluginManager unit tests remain in the PluginManager repository.
 
 ### Proven
@@ -12,7 +12,7 @@ PluginManager unit tests remain in the PluginManager repository.
 - Both target packages are generated, CRC-verified, discovered from the FAT
   volume root, validated through `pm_package_parse_reader()`, and loaded with
   `pm_manager_load_available()`.
-- MainApplication loads, instantiates, executes, destroys, and unloads external
+- EF800Application loads, instantiates, executes, destroys, and unloads external
   plugins through the generic PluginManager lifecycle.
 - ELTA3 measurement passes at `1200 7O2`; Fennel-compatible FTS3XX measurement
   passes at `9600 8N1`.
@@ -31,18 +31,18 @@ PluginManager unit tests remain in the PluginManager repository.
 - Native target plugins execute from RAM with MPU disabled. Packages are CRC
   checked but not authenticated.
 
-For controlled hardware bring-up only, `application/ef800-main/plugin-dev.conf`
+For controlled hardware bring-up only, `application/ef800-application/plugin-dev.conf`
 is an explicit development overlay that disables the ARM MPU so the current RAM
 loader can execute locally built ELTA3/FTS3XX packages. It removes MPU and MPU
 stack-guard protection and accepts unsigned executable packages; never use this
 overlay in a production image or with untrusted package files. Build the normal
-MainApplication without the overlay to retain the production configuration.
+EF800Application without the overlay to retain the production configuration.
 
 ### Feature-Complete EF800 Gate
 
 EF800 integration is complete only when:
 
-1. MainApplication registers the EF800 contract and owns the complete plugin
+1. EF800Application registers the EF800 contract and owns the complete plugin
    lifecycle.
 2. Built-in and external Device plugins use one registry and dispatch path.
 3. Calculation plugins receive bounded workspace snapshots and cannot access
@@ -51,7 +51,7 @@ EF800 integration is complete only when:
    migration are persisted and diagnosable.
 5. FAT mounting, package scanning, plugin execution, and workspace access are
    blocked while BackupApplication owns storage through USB MSC.
-6. LCD and keyboard services expose logical APIs serialized by MainApplication.
+6. LCD and keyboard services expose logical APIs serialized by EF800Application.
 7. Package authenticity, target compatibility, anti-rollback, atomic update,
    rollback, and recovery behavior are implemented.
 8. Executable memory, MPU/W^X, stack, timeout, and fault behavior are defined
@@ -70,7 +70,7 @@ machinery.
 External PluginManager
   generic ABI, package parser, ELF loader, registry, SDK builder
 
-EF800 MainApplication
+EF800Application
   Device interface
   Calculation interface
   Port service
@@ -88,7 +88,7 @@ to the framework service tables.
 Create an application-specific contract area, preferably under:
 
 ```text
-application/ef800-main/src/ef800_plugin/
+application/ef800-application/src/ef800_plugin/
   ef800_plugin_contract.h
   ef800_plugin_contract.c
   ef800_device_plugin.h
@@ -149,7 +149,7 @@ int (*measure)(void *instance,
 ```
 
 Optional device commands can support Elta3 operations such as up, down, and
-enter. Device plugins return structured values; MainApplication formats values
+enter. Device plugins return structured values; EF800Application formats values
 for workspace output or display.
 
 ## Elta3 and FTS3XX Adaptation
@@ -172,7 +172,7 @@ FTS3XX: 9600 baud, 8 data bits, no parity, 1 stop bit
 Wrap `ef800_elta3_measure()` and `ef800_fts3xx_measure()` as built-in EF800
 device plugins before loading external device plugins. This provides a
 reference implementation for the SDK and removes protocol dispatch from
-`application/ef800-main/src/main.c`.
+`application/ef800-application/src/main.c`.
 
 ## Port Service
 
@@ -184,7 +184,7 @@ shared/ef800_measurement/ef800_measurement_zephyr.c
 shared/ef800_ports/ef800_port_uart.c
 ```
 
-The PluginManager must not let plugins claim UARTs directly. MainApplication
+The PluginManager must not let plugins claim UARTs directly. EF800Application
 must continue to:
 
 1. Load persisted port assignments.
@@ -223,7 +223,7 @@ The initial contract should support:
 - Explicit output length.
 - No implicit workspace mutation.
 
-MainApplication decides whether output is displayed, appended, or rejected.
+EF800Application decides whether output is displayed, appended, or rejected.
 This decision can later be exposed through the new menu system.
 
 ## Workspace Service
@@ -244,7 +244,7 @@ The service should provide:
 
 ```text
 snapshot current workspace into caller buffer
-append validated text through MainApplication
+append validated text through EF800Application
 report selected workspace and available size if required
 ```
 
@@ -269,7 +269,7 @@ DeviceTree objects
 ```
 
 The Keyboard service should expose logical key events, not raw UART framing.
-UI operations must be serialized by MainApplication and must not allow plugins
+UI operations must be serialized by EF800Application and must not allow plugins
 to create independent UI threads.
 
 Relevant existing code:
@@ -277,7 +277,7 @@ Relevant existing code:
 ```text
 shared/ef800_drivers/ef800_t6963.h
 shared/keyboard_protocol/
-application/ef800-main/src/main.c
+application/ef800-application/src/main.c
 ```
 
 ## Plugin Discovery and Storage
@@ -291,7 +291,7 @@ Use one configured directory, for example:
 The `.pmp` suffix is only a candidate-file filter. The manifest and
 loaded descriptor define the interface type.
 
-MainApplication controls scanning because storage ownership is application
+EF800Application controls scanning because storage ownership is application
 state. Do not scan or execute plugins while USB MSC owns the QSPI disk.
 
 Initial lifecycle:
@@ -314,12 +314,12 @@ USB MSC requested
 Require a rescan or reboot after a user uploads a new package. Do not add hot
 replacement until the storage and lifecycle behavior is proven.
 
-## MainApplication Integration
+## EF800Application Integration
 
 Replace builder-specific branches in:
 
 ```text
-application/ef800-main/src/main.c
+application/ef800-application/src/main.c
 ```
 
 with PluginManager calls. The application flow should become:
@@ -364,7 +364,7 @@ Add an EF800 contract export directory that the external SDK builder consumes:
 
 ```text
 docs/plugin-contract/              contract description
-application/ef800-main/plugin-sdk/ public contract inputs, if generated here
+application/ef800-application/plugin-sdk/ public contract inputs, if generated here
 ```
 
 The export must contain:
@@ -378,7 +378,7 @@ The export must contain:
 - Target architecture and toolchain metadata.
 - Examples of valid plugin descriptors.
 
-Generated SDK output should not be committed into MainApplication unless the
+Generated SDK output should not be committed into EF800Application unless the
 project deliberately vendors a release. The source contract remains the
 authority.
 
@@ -388,10 +388,10 @@ Current status as of 2026-10-04:
 
 - Generic framework host, ARM package, SDK-builder, generated harness, and
   Zephyr native-sim verification pass.
-- Production `ef800-main` is the sole EF800 PluginManager host and clean-builds.
+- Production `ef800-application` is the sole EF800 PluginManager host and clean-builds.
 - Built-in Elta3 and FTS3XX dispatch is implemented through the EF800-owned
   static device-plugin registry with persisted IDs unchanged.
-- PluginManager is pinned as a west module and production MainApplication
+- PluginManager is pinned as a west module and production EF800Application
   integrates package discovery, UART ownership, Workspace snapshots, bounded
   Calculation, UI sessions, and hardware-capability filtering.
 - Generic PluginManager tests remain in the PluginManager repository. The former
@@ -413,7 +413,7 @@ bits; external IDs require a separate persistence design.
 
 1. Keep the pinned PluginManager west module and NUCLEO CI build passing.
 2. Confirm the module builds without EF800 contract headers.
-3. Register the EF800 application contract from MainApplication.
+3. Register the EF800 application contract from EF800Application.
 4. Add contract identity and service ID definitions.
 
 ### Phase B: Built-in Device Plugins
@@ -456,7 +456,7 @@ bits; external IDs require a separate persistence design.
 
 Current verification baseline:
 
-- MainApplication, BackupApplication, Bootloader, and keyboard-controller
+- EF800Application, BackupApplication, Bootloader, and keyboard-controller
   pristine builds pass.
 - `scripts/verify-images.sh` passes the fixed flash layout:
   bootloader `0x08000000`, backup `0x08010000`, main `0x08030000`, keyboard
@@ -469,14 +469,14 @@ Current verification baseline:
   MPU/W^X, stack, timeout, fault-containment, and rollback evidence pass.
 
 The contract export is maintained under `docs/plugin-contract/`. Production
-MainApplication target acceptance is documented under
-`application/ef800-main/tests/`; the smoke test is:
+EF800Application target acceptance is documented under
+`application/ef800-application/tests/`; the smoke test is:
 
 ```powershell
-powershell -ExecutionPolicy Bypass -File application/ef800-main/tests/acceptance.ps1 -Port COM7
+powershell -ExecutionPolicy Bypass -File application/ef800-application/tests/acceptance.ps1 -Port COM7
 ```
 
-It validates production MainApplication startup discovery and registry/calculation diagnostics without
+It validates production EF800Application startup discovery and registry/calculation diagnostics without
 formatting or replacing storage. Exit code `2` means the internal storage is
 unavailable and is an explicit hardware blocker.
 
@@ -489,7 +489,7 @@ Before considering the integration complete:
 - Calculation plugins cannot access filesystem handles.
 - Workspace snapshots never silently truncate.
 - Plugin packages are rejected before execution when invalid.
-- MainApplication does not access FAT while USB MSC owns storage.
+- EF800Application does not access FAT while USB MSC owns storage.
 - Plugin load, create, execute, destroy, and unload paths are tested.
 - `docs/migration-status.md` is updated when an implementation phase closes.
 

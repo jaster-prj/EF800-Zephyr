@@ -11,7 +11,7 @@ EF800 still treats Elta3 and FTS3XX/Fennel1 as legacy builder devices even thoug
 - Decode existing v1 metadata for migration, discard stale legacy measurement assignments, and write the new metadata version.
 - Reconcile persisted port assignments against ready loaded measurement plugins after discovery; clear unknown, missing, invalid, or non-measurement plugin assignments to `NONE` and persist the cleanup when storage is writable.
 - Preserve non-measurement system assignments such as DebugDevice, USB MSD, and BlueNRG, including bootloader recovery and console-selection behavior.
-- Remove the legacy `ef800_device_plugin` dispatch path from MainApplication measurement setup and execution; retain protocol code only where needed by external plugin packages.
+- Remove the legacy `ef800_device_plugin` dispatch path from EF800Application measurement setup and execution; retain protocol code only where needed by external plugin packages.
 - Add migration, assignment reconciliation, metadata-version, bootloader, UI, and regression test coverage.
 
 ## Capabilities
@@ -28,7 +28,7 @@ EF800 still treats Elta3 and FTS3XX/Fennel1 as legacy builder devices even thoug
 
 - Shared metadata encoding, validation, CRC, and migration in `shared/ef800_update/`.
 - Bootloader metadata consumption in `application/ef800-bootloader/`.
-- MainApplication startup ordering, registry discovery, assignment reconciliation, UART setup, menu rendering, and measurement dispatch.
+- EF800Application startup ordering, registry discovery, assignment reconciliation, UART setup, menu rendering, and measurement dispatch.
 - Port assignment persistence and UI in `shared/ef800_ports/` and `shared/ef800_update/`.
 - Plugin registry and external measurement-plugin contract; legacy builder/device table removal.
 - Native regression tests, plugin tests, documentation, and all L496 firmware builds.

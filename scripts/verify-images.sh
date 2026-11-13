@@ -4,10 +4,10 @@ set -eu
 
 bootloader_dir="${1:-application/build/ef800-bootloader}"
 backup_dir="${2:-application/build/ef800-backup}"
-main_dir="${3:-application/build/ef800-main}"
-keyboard_dir="${4:-application/build/ef800-keyboard}"
-keyboard_bootloader_dir="${5:-application/build/ef800-keyboard-bootloader}"
-keyboard_updater_dir="${6:-application/build/ef800-keyboard-updater}"
+main_dir="${3:-application/build/ef800-application}"
+keyboard_dir="${4:-application/build/keyboard-application}"
+keyboard_bootloader_dir="${5:-application/build/keyboard-bootloader}"
+keyboard_updater_dir="${6:-application/build/keyboard-updater}"
 
 verify_image() {
 	name="$1"

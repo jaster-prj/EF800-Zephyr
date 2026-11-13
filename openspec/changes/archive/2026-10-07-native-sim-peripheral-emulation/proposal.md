@@ -1,10 +1,10 @@
 ## Why
 
-The current Virtual EF800 is a lightweight native-sim application that models a separate menu and virtual display, but it does not execute the production `ef800-main` composition root. As a result, native behavioral tests do not exercise the existing GPIO, UART, I2C, LCD, keyboard, storage, RTC, battery, persistence, and startup paths together. This change will provide a healthy-by-default native-sim device environment so the production application can run without EF800 hardware while retaining explicit controls for peripheral failure scenarios.
+The current Virtual EF800 is a lightweight native-sim application that models a separate menu and virtual display, but it does not execute the production `ef800-application` composition root. As a result, native behavioral tests do not exercise the existing GPIO, UART, I2C, LCD, keyboard, storage, RTC, battery, persistence, and startup paths together. This change will provide a healthy-by-default native-sim device environment so the production application can run without EF800 hardware while retaining explicit controls for peripheral failure scenarios.
 
 ## What Changes
 
-- Add a native-sim build of the production `ef800-main` source set with devicetree nodes and configuration matching the device names expected by the existing application.
+- Add a native-sim build of the production `ef800-application` source set with devicetree nodes and configuration matching the device names expected by the existing application.
 - Provide emulated GPIO controllers for the physical STM32 GPIO banks and connect their output/input transitions to virtual EF800 devices.
 - Provide emulated UART devices for the keyboard link and measurement ports, with a host-visible native console where appropriate.
 - Provide an emulated I2C controller and device models for the MCP23017, DS3231, and MAX17048/MAX17043-compatible peripherals, reusing existing Zephyr emulators where suitable.
@@ -27,7 +27,7 @@ The current Virtual EF800 is a lightweight native-sim application that models a 
 
 ## Impact
 
-- Affected targets include `application/ef800-virtual`, `application/ef800-main`, native-sim devicetree/Kconfig configuration, shared EF800 drivers, virtual peripheral components, and native test coverage.
+- Affected targets include `application/ef800-virtual`, `application/ef800-application`, native-sim devicetree/Kconfig configuration, shared EF800 drivers, virtual peripheral components, and native test coverage.
 - The change adds native-sim device and bus emulator code, virtual wiring callbacks, deterministic peripheral profiles, and simulated storage setup.
 - Existing physical `ef800` and `ef800_keyboard` targets remain unchanged and continue to use their hardware devicetrees and drivers.
 - Existing front-panel and web gateway protocols remain the observation and input boundary; no browser-facing protocol replacement is required.

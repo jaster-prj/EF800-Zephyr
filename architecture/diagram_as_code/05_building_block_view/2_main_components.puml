@@ -1,8 +1,8 @@
 @startuml 2_main_components
-title EF800 — MainApplication Components
+title EF800 — EF800Application Components
 left to right direction
 
-rectangle "Composition root\napplication/ef800-main/src/main.c" as root
+rectangle "Composition root\napplication/ef800-application/src/main.c" as root
 package "User interaction" {
   rectangle "UI / navigation" as ui
   rectangle "T6963 display" as display

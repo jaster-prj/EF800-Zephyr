@@ -1,14 +1,14 @@
 ## ADDED Requirements
 
-### Requirement: Browser file operations exercise MainApplication MTP
-The Virtual EF800 browser SHALL provide a file view for the MainApplication MTP-visible Data, Plugins, and FWU storages. Browser listing, download, and drag-and-drop upload operations SHALL be performed by an in-process software USB host through the native-sim virtual UHC/bus/UDC and the production MainApplication MTP class. The browser gateway SHALL NOT implement these operations by directly reading or writing the simulator filesystem.
+### Requirement: Browser file operations exercise EF800Application MTP
+The Virtual EF800 browser SHALL provide a file view for the EF800Application MTP-visible Data, Plugins, and FWU storages. Browser listing, download, and drag-and-drop upload operations SHALL be performed by an in-process software USB host through the native-sim virtual UHC/bus/UDC and the production EF800Application MTP class. The browser gateway SHALL NOT implement these operations by directly reading or writing the simulator filesystem.
 
-#### Scenario: Browser lists MainApplication MTP storages
-- **WHEN** a browser opens the virtual EF800 file view and the MainApplication MTP session is active
+#### Scenario: Browser lists EF800Application MTP storages
+- **WHEN** a browser opens the virtual EF800 file view and the EF800Application MTP session is active
 - **THEN** it lists Data, Plugins, and FWU using MTP operations and does not expose the private Configuration storage
 
 #### Scenario: Browser uploads a file by drag and drop
-- **WHEN** a user drops a file onto an approved MainApplication MTP storage
+- **WHEN** a user drops a file onto an approved EF800Application MTP storage
 - **THEN** the gateway sends the bytes to the in-process host peer, which transfers them through USB MTP into the corresponding FAT root and reports completion only after the MTP operation succeeds
 
 #### Scenario: Browser downloads a file

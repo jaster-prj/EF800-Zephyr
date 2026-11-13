@@ -1,6 +1,6 @@
 ## Context
 
-The repository already has a `native_sim` Virtual EF800, a web gateway, a T6963 behavioral model, and several virtual application helpers. The current virtual application owns a simplified menu loop and writes directly to a virtual framebuffer; it does not execute the production `application/ef800-main/src/main.c` composition root. The production path expects named GPIO, UART, I2C, flash, filesystem, RTC, battery, keyboard, LCD, persistence, and port devices from its STM32 devicetree.
+The repository already has a `native_sim` Virtual EF800, a web gateway, a T6963 behavioral model, and several virtual application helpers. The current virtual application owns a simplified menu loop and writes directly to a virtual framebuffer; it does not execute the production `application/ef800-application/src/main.c` composition root. The production path expects named GPIO, UART, I2C, flash, filesystem, RTC, battery, keyboard, LCD, persistence, and port devices from its STM32 devicetree.
 
 Zephyr v4.4.1 provides the needed native facilities: `zephyr,gpio-emul`, `zephyr,uart-emul`, `zephyr,i2c-emul-controller`, simulated flash, and the emulator registration framework. Zephyr also contains a MAX17048 emulator that can be reused or adapted for the EF800 raw MAX17043-compatible register access. The accepted native-sim and web-gateway ADRs remain in force: this is behavioral source-level evidence, not STM32 register, ARM MPU, electrical, or physical-peripheral qualification, and browser presentation remains outside the Zephyr application.
 
@@ -8,7 +8,7 @@ Zephyr v4.4.1 provides the needed native facilities: `zephyr,gpio-emul`, `zephyr
 
 **Goals:**
 
-- Run the production EF800 MainApplication composition root on `native_sim`.
+- Run the production EF800Application composition root on `native_sim`.
 - Preserve existing Zephyr GPIO, UART, I2C, flash, filesystem, RTC, and device-driver API paths.
 - Provide healthy-by-default emulated MCP23017, DS3231, MAX17048/MAX17043-compatible, keyboard, LCD, and serial-peer behavior.
 - Connect emulated GPIO transitions into a virtual T6963 bus model and other observable EF800 wiring.
@@ -21,14 +21,14 @@ Zephyr v4.4.1 provides the needed native facilities: `zephyr,gpio-emul`, `zephyr
 - Emulating STM32L496/L431 registers, clocks, exact instruction execution, or electrical signal timing.
 - Running the production ARM image unchanged on native_sim.
 - Qualifying QSPI geometry, USB behavior, bootloader handoff, MPU permissions, ARM faults, or fitted PCB wiring.
-- Implementing every T6963 command or every USB/MSC hardware behavior when not needed by enabled MainApplication workflows.
+- Implementing every T6963 command or every USB/MSC hardware behavior when not needed by enabled EF800Application workflows.
 - Replacing the web gateway with a Zephyr HTTP implementation.
 
 ## Decisions
 
 ### Use a native-sim composition that reuses the production source set
 
-The virtual target will include the production MainApplication sources and shared services rather than extending the current simplified virtual menu. Its native-sim devicetree and Kconfig will satisfy the node labels, chosen nodes, and feature symbols expected by the production code.
+The virtual target will include the production EF800Application sources and shared services rather than extending the current simplified virtual menu. Its native-sim devicetree and Kconfig will satisfy the node labels, chosen nodes, and feature symbols expected by the production code.
 
 This is preferred over a second application model because startup, keyboard parsing, persistence, workspace, plugin supervision, and menu behavior then remain production code. Physical `ef800` configuration remains separate, preventing native-only devices from entering firmware builds.
 
@@ -63,7 +63,7 @@ MCP pin 4  --> LCD FS state
 MCP pin 5  --> LCD reset state
 ```
 
-The coordinator will not emulate USB electrical behavior. It will expose observable device state and feed only the virtual keyboard and LCD models required by MainApplication workflows.
+The coordinator will not emulate USB electrical behavior. It will expose observable device state and feed only the virtual keyboard and LCD models required by EF800Application workflows.
 
 ### Detect T6963 transactions from emulated GPIO activity
 

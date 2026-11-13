@@ -22,7 +22,7 @@ mailbox size, minimum plugin RAM/worker stack, and MPU alignment. ELTA3 and
 FTS3XX now build as `USER_WORKER` packages and use the bounded worker SDK. It
 also declares maximum text, rodata, data, BSS, and plugin-owned shared-buffer
 sizes. The package verifier checks each ELF section against its declaration;
-MainApplication rechecks the loaded section sizes, active arena capacities,
+EF800Application rechecks the loaded section sizes, active arena capacities,
 aligned MPU mapping, aggregate writable RAM, and shared-buffer ceiling before
 admitting the descriptor. The shipped worker packages declare 16 KiB text and
 rodata bounds, 1 KiB each for data and BSS, and 4 KiB for shared buffers, within
@@ -56,7 +56,7 @@ and `struct_size`, then call:
 
 ## Measurement Submenus
 
-MainApplication exposes external measurement packages through package-declared
+EF800Application exposes external measurement packages through package-declared
 submenus. Elta3 declares `Measure`, `Up`, `Down`, and `Enter`. FTS3XX is the
 product name for the FTS3XX protocol adapter and declares `Measure` only. Its
 protocol remains a binary `0x11` request followed by `CR LF` and a line-based
@@ -74,7 +74,7 @@ shared mailbox ABI and host-validated capabilities are defined in
 The isolated SDK surface is `include/ef800_port_service.h` and
 `shared/ef800_plugin/ef800_plugin_worker_sdk.h`. It issues bounded mailbox
 requests through the single imported `ef800_plugin_worker_syscall` symbol;
-MainApplication resolves that import to a user-callable SVC-only bridge. The
+EF800Application resolves that import to a user-callable SVC-only bridge. The
 privileged syscall verifier checks the active worker/session and copies data
 through the mailbox before accessing host-owned transport or workspace state.
 It does not place a host callback or context pointer in the plugin service

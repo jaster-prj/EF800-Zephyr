@@ -22,6 +22,6 @@
 ## 4. Verification and Deployment
 
 - [x] 4.1 Run the Virtual EF800 gateway and web asset test suites, including multi-key and cleanup scenarios.
-- [x] 4.2 Build the native-sim `ef800-main` artifact and rebuild the Compose web gateway image without changing the simulator protocol.
+- [x] 4.2 Build the native-sim `ef800-application` artifact and rebuild the Compose web gateway image without changing the simulator protocol.
 - [x] 4.3 Start the Compose deployment and verify health, controller acquisition, representative key make/break behavior, and held-key visual state manually or through a browser test.
 - [x] 4.4 Confirm existing native-sim behavioral and deployment diagnostics remain functional and document any unresolved layout decision.

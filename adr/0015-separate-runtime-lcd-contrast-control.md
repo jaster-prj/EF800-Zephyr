@@ -6,7 +6,7 @@
 
 ## Context
 
-Modified EF800 hardware controls LCD contrast with a filtered PWM input, while unmodified units retain static contrast. MainApplication and BackupApplication share private Configuration storage but have distinct startup paths. The virtual LCD contract deliberately represents display content as a packed one-bit framebuffer, and the browser gateway owns presentation. The contrast feature must not activate PB8 on units configured for static contrast or turn analog contrast into simulated pixel content.
+Modified EF800 hardware controls LCD contrast with a filtered PWM input, while unmodified units retain static contrast. EF800Application and BackupApplication share private Configuration storage but have distinct startup paths. The virtual LCD contract deliberately represents display content as a packed one-bit framebuffer, and the browser gateway owns presentation. The contrast feature must not activate PB8 on units configured for static contrast or turn analog contrast into simulated pixel content.
 
 ## Decision
 
@@ -16,7 +16,7 @@ Native-sim preserves the T6963's logical one-bit framebuffer and communicates co
 
 ## Consequences
 
-- MainApplication and BackupApplication must share load, default, apply, disable, and persistence semantics for contrast.
+- EF800Application and BackupApplication must share load, default, apply, disable, and persistence semantics for contrast.
 - LCDCONTR state can change live without changing the restart-activated target-composition profile.
 - The PWM pin must be activated only when LCDCONTR1 is selected; static-contrast configurations must not initialize PB8.
 - Native-sim and browser changes must preserve the stable one-bit framebuffer and LCD frame payload, carrying presentation state separately.

@@ -2,30 +2,30 @@
 
 ## Purpose
 
-Provide Zephyr-compatible emulated and simulated peripherals that let the production EF800 MainApplication run on native_sim with deterministic healthy and failure profiles.
+Provide Zephyr-compatible emulated and simulated peripherals that let the production EF800Application run on native_sim with deterministic healthy and failure profiles.
 
 ## Requirements
 
-### Requirement: Provide native peripherals through the shared MainApplication target
-The native-sim GPIO, UART, I2C, storage, RTC, battery, LCD, keyboard, profile, and front-panel emulation SHALL remain available when `application/ef800-main` is built for `native_sim`, without requiring an `application/ef800-virtual` application wrapper.
+### Requirement: Provide native peripherals through the shared EF800Application target
+The native-sim GPIO, UART, I2C, storage, RTC, battery, LCD, keyboard, profile, and front-panel emulation SHALL remain available when `application/ef800-application` is built for `native_sim`, without requiring an `application/ef800-virtual` application wrapper.
 
 #### Scenario: Build the shared target for native_sim
-- **WHEN** a developer builds `application/ef800-main` with `-b native_sim`
-- **THEN** the production source manifest links with the native peripheral adapters and starts the same MainApplication composition root
+- **WHEN** a developer builds `application/ef800-application` with `-b native_sim`
+- **THEN** the production source manifest links with the native peripheral adapters and starts the same EF800Application composition root
 
 #### Scenario: Physical build remains hardware-specific
-- **WHEN** a developer builds `application/ef800-main` with `-b ef800`
+- **WHEN** a developer builds `application/ef800-application` with `-b ef800`
 - **THEN** the build selects STM32, physical USB, QSPI, watchdog, and board devicetree adapters without linking native-sim emulation code
 
 ### Requirement: Remove the duplicate virtual application model
-The project SHALL not require a second simulator-specific MainApplication or menu implementation after the shared target supports native_sim.
+The project SHALL not require a second simulator-specific EF800Application or menu implementation after the shared target supports native_sim.
 
 #### Scenario: Virtual application wrapper is removed
 - **WHEN** the native-sim target is built and launched
-- **THEN** its entry point and application workflows originate from `application/ef800-main`, while retained virtual modules are limited to peripheral, transport, and front-panel infrastructure
+- **THEN** its entry point and application workflows originate from `application/ef800-application`, while retained virtual modules are limited to peripheral, transport, and front-panel infrastructure
 
 ### Requirement: Provide a healthy native-sim peripheral profile
-The native-sim EF800 SHALL provide a default profile in which the GPIO banks, UART devices, I2C devices, simulated storage, RTC, battery gauge, keyboard controller, and LCD device are present and operational so the production MainApplication startup path can complete without physical hardware.
+The native-sim EF800 SHALL provide a default profile in which the GPIO banks, UART devices, I2C devices, simulated storage, RTC, battery gauge, keyboard controller, and LCD device are present and operational so the production EF800Application startup path can complete without physical hardware.
 
 #### Scenario: Production application boots with healthy peripherals
 - **WHEN** the native-sim EF800 is started without fault configuration
@@ -61,19 +61,19 @@ The native-sim target SHALL support explicit profile controls for availability, 
 - **THEN** the production application receives the corresponding bounded device error and follows its normal degraded behavior
 
 ### Requirement: Native-sim provides a virtual device-next USB host/device pair
-The native-sim MainApplication target SHALL provide Zephyr device-next virtual UDC and UHC controllers connected through a software USB bus. MainApplication CDC and MTP contexts SHALL use the production device-next class implementations; the MTP context SHALL use the same storage roots as physical MainApplication. A native MTP stub that returns `-ENOTSUP` SHALL NOT satisfy this requirement.
+The native-sim EF800Application target SHALL provide Zephyr device-next virtual UDC and UHC controllers connected through a software USB bus. EF800Application CDC and MTP contexts SHALL use the production device-next class implementations; the MTP context SHALL use the same storage roots as physical EF800Application. A native MTP stub that returns `-ENOTSUP` SHALL NOT satisfy this requirement.
 
 #### Scenario: Native-sim MTP device enumerates through the software host
-- **WHEN** the virtual USB host starts and MainApplication enables MTP
+- **WHEN** the virtual USB host starts and EF800Application enables MTP
 - **THEN** the host enumerates the production MTP device descriptors through the virtual bus and can issue device-next control and bulk transactions
 
 #### Scenario: CDC class is exercised through the virtual bus
-- **WHEN** MainApplication selects USB DebugConsole in native-sim
+- **WHEN** EF800Application selects USB DebugConsole in native-sim
 - **THEN** the software host enumerates the production CDC ACM class and exchanges test data through virtual USB endpoints
 
 #### Scenario: Native-sim USB MSD is excluded by composition
 - **WHEN** native-sim composition resolves to `USBMSD0`
-- **THEN** the virtual USB personality set contains no MainApplication MSC context and the shared-data FAT remains available to MainApplication
+- **THEN** the virtual USB personality set contains no EF800Application MSC context and the shared-data FAT remains available to EF800Application
 
 #### Scenario: Native USB test is not treated as physical qualification
 - **WHEN** a native-sim MTP transfer test passes
@@ -92,7 +92,7 @@ Native-sim SHALL provide a source-independent battery SOC input from 0 through 1
 
 #### Scenario: Native-sim uses BATSOC0
 - **WHEN** `BATSOC0` is active
-- **THEN** neither the MAX17048-compatible gauge nor the ADC model supplies a valid SOC reading to MainApplication
+- **THEN** neither the MAX17048-compatible gauge nor the ADC model supplies a valid SOC reading to EF800Application
 
 #### Scenario: Virtual SOC input is zero
 - **WHEN** the browser sets the virtual SOC input to 0 percent while BATSOC1 or BATSOC2 is active

@@ -17,7 +17,7 @@ The virtual EF800 SHALL use its documented, versioned binary transport between t
 
 #### Scenario: No front panel is connected
 - **WHEN** the simulator runs headlessly for an automated test
-- **THEN** MainApplication continues to run and the existing automated client interface remains usable without a browser or desktop window
+- **THEN** EF800Application continues to run and the existing automated client interface remains usable without a browser or desktop window
 
 ## ADDED Requirements
 

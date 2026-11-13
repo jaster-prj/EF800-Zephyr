@@ -11,12 +11,12 @@ behavioral target for application and browser-based development.
 1. Preserve user-visible measurement, keyboard, LCD, configuration, workspace,
    and update behavior while moving to Zephyr.
 2. Keep a fixed internal-flash image contract and offer a one-boot Backup
-   recovery path when MainApplication repeatedly fails.
+   recovery path when EF800Application repeatedly fails.
 3. Keep boot-state metadata, private configuration, and shared files in distinct
    QSPI partitions with explicit filesystem and USB ownership.
 4. Provide file-level USB MTP access without exposing raw boot metadata or
    arbitrary flash sectors.
-5. Reuse production MainApplication orchestration in `native_sim` for behavioral
+5. Reuse production EF800Application orchestration in `native_sim` for behavioral
    testing without claiming STM32 or board-level equivalence.
 6. Make developer builds and tests reproducible through the pinned west
    workspace and reusable development container.

@@ -7,7 +7,7 @@ RUN groupadd --system virtualef800 \
     && useradd --system --gid virtualef800 --home-dir /opt/virtual-ef800 \
        --create-home virtualef800
 WORKDIR /opt/virtual-ef800
-COPY build/ef800-main-native-sim/zephyr/zephyr.exe ./zephyr.exe
+COPY build/ef800-application-native-sim/zephyr/zephyr.exe ./zephyr.exe
 COPY docker/virtual-ef800/entrypoint.sh /usr/local/bin/virtual-ef800-entrypoint
 RUN chown virtualef800:virtualef800 ./zephyr.exe \
     && chmod 0555 ./zephyr.exe \

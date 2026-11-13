@@ -1,8 +1,8 @@
 ## Context
 
-EF800 already stores configuration files under `/EF800:/.configuration/` through the backend-neutral `ef800_persistence` API. Physical firmware maps that API to QSPI/FAT, native tests use an in-memory fake, and MainApplication can continue with storage unavailable. Existing settings use explicit encodings, while boot-critical USB and fallback data remain separately projected into internal-flash metadata.
+EF800 already stores configuration files under `/EF800:/.configuration/` through the backend-neutral `ef800_persistence` API. Physical firmware maps that API to QSPI/FAT, native tests use an in-memory fake, and EF800Application can continue with storage unavailable. Existing settings use explicit encodings, while boot-critical USB and fallback data remain separately projected into internal-flash metadata.
 
-There is currently no target composition identity or generic way to resolve persisted component identifiers into defaults. MainApplication also directly constructs its current hardware services. This change establishes only the persistence and resolution mechanism; it must not reinterpret those services yet. The same mechanism must build for physical EF800 and `native_sim`, consistent with ADR-0006, and profile changes use an explicit restart boundary consistent with the existing startup-only activation pattern in ADR-0008. Private configuration remains outside the MTP roots described by ADR-0011.
+There is currently no target composition identity or generic way to resolve persisted component identifiers into defaults. EF800Application also directly constructs its current hardware services. This change establishes only the persistence and resolution mechanism; it must not reinterpret those services yet. The same mechanism must build for physical EF800 and `native_sim`, consistent with ADR-0006, and profile changes use an explicit restart boundary consistent with the existing startup-only activation pattern in ADR-0008. Private configuration remains outside the MTP roots described by ADR-0011.
 
 ## Goals / Non-Goals
 
@@ -66,7 +66,7 @@ effective snapshot
 
 The catalog is an immutable table supplied to the resolver. A generic entry identifies a token, group, whether it is the group default, and opaque selection metadata reserved for future consumers. The resolver validates at most one recognized selection per group, applies one declared default to omitted groups, and leaves unknown tokens outside the effective snapshot. Catalog validation rejects duplicate tokens, duplicate group defaults, and inconsistent bounds before profile resolution.
 
-The initial MainApplication supplies an empty catalog. Therefore every syntactically valid token is unknown, the effective snapshot is empty, and current behavior cannot change. Later changes must define catalog entries and consumers explicitly.
+The initial EF800Application supplies an empty catalog. Therefore every syntactically valid token is unknown, the effective snapshot is empty, and current behavior cannot change. Later changes must define catalog entries and consumers explicitly.
 
 Alternatives considered:
 
@@ -90,9 +90,9 @@ No user interface or transport command is added now. The shared API is the modif
 
 ### Integrate after persistence without making startup depend on storage
 
-MainApplication initializes the service after `ef800_persistence_init`. Missing files, `-ENOTSUP`, or both slots being invalid produce an empty/default snapshot and a diagnostic, not startup failure. The mechanism does not write a default file automatically, format storage, or touch internal boot metadata.
+EF800Application initializes the service after `ef800_persistence_init`. Missing files, `-ENOTSUP`, or both slots being invalid produce an empty/default snapshot and a diagnostic, not startup failure. The mechanism does not write a default file automatically, format storage, or touch internal boot metadata.
 
-The module lives with shared persistence-oriented code and has a focused native test suite using `ef800_persistence_fake`. MainApplication integration is limited to initialization and logging because no runtime consumer exists in this change.
+The module lives with shared persistence-oriented code and has a focused native test suite using `ef800_persistence_fake`. EF800Application integration is limited to initialization and logging because no runtime consumer exists in this change.
 
 ## Risks / Trade-offs
 
@@ -107,7 +107,7 @@ The module lives with shared persistence-oriented code and has a focused native 
 
 1. Add the shared parser, encoder, catalog resolver, and service with an empty catalog.
 2. Add fake-persistence tests, including two-slot recovery and interrupted-write cases.
-3. Initialize the service in both physical and native-sim MainApplication builds without adding consumers.
+3. Initialize the service in both physical and native-sim EF800Application builds without adding consumers.
 4. Document the file grammar and extension rules.
 5. Existing installations without profile files continue with unchanged defaults. Rollback simply ignores the new private files; no existing persistence format is modified.
 

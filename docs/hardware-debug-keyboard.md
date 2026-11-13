@@ -1,21 +1,21 @@
 # Hardware debug keyboard
 
-This guide describes how to test MainApplication workflows on physical EF800
+This guide describes how to test EF800Application workflows on physical EF800
 hardware without pressing the fitted keyboard. The test host connects to the
-MainApplication console and sends semantic key names. MainApplication sends
+EF800Application console and sends semantic key names. EF800Application sends
 those names to the keyboard controller, which resolves each name to its matrix
 key and current scancode. The controller then emits the same PS/2-like
 scancode bytes used for physical keyboard input.
 
-The debug interface does not bypass MainApplication keyboard processing:
+The debug interface does not bypass EF800Application keyboard processing:
 
 ```text
 test host console
-    -> MainApplication shell
-    -> MainApplication keyboard UART
+    -> EF800Application shell
+    -> EF800Application keyboard UART
     -> keyboard controller name/matrix/scancode mapping
     -> normal keyboard UART scancode output
-    -> MainApplication keyboard parser and application handlers
+    -> EF800Application keyboard parser and application handlers
 ```
 
 The bootloader and BackupApplication do not consume keyboard-controller UART
@@ -30,7 +30,7 @@ UART4 through the CP2102 bridge on `COM7`, 115200 baud, 8 data bits, no parity,
 1 stop bit (115200 8N1). The hwdebug image's USB CDC console is a separate
 port, currently `COM10`.
 
-Bootloader, BackupApplication, and MainApplication emit the Zephyr startup
+Bootloader, BackupApplication, and EF800Application emit the Zephyr startup
 banner and route logs to the same UART4 connection.
 ```
 
@@ -38,7 +38,7 @@ Do not connect the terminal to the binary keyboard-controller link. The
 controller link is:
 
 ```text
-MainApplication LPUART1 to keyboard-controller USART3
+EF800Application LPUART1 to keyboard-controller USART3
 115200 baud, 8 data bits, no parity, 1 stop bit (115200 8N1)
 ```
 
@@ -60,10 +60,10 @@ docker exec EF800_Devcontainer /opt/venv/bin/west topdir
 Build all four images from `/workspace`:
 
 ```powershell
-docker exec -w /workspace EF800_Devcontainer /opt/venv/bin/west build -p always -b ef800 application/application/ef800-main -d application/build/ef800-main
+docker exec -w /workspace EF800_Devcontainer /opt/venv/bin/west build -p always -b ef800 application/application/ef800-application -d application/build/ef800-application
 docker exec -w /workspace EF800_Devcontainer /opt/venv/bin/west build -p always -b ef800 application/application/ef800-backup -d application/build/ef800-backup
 docker exec -w /workspace EF800_Devcontainer /opt/venv/bin/west build -p always -b ef800 application/application/ef800-bootloader -d application/build/ef800-bootloader
-docker exec -w /workspace EF800_Devcontainer /opt/venv/bin/west build -p always -b ef800_keyboard application/application/ef800-keyboard -d application/build/ef800-keyboard
+docker exec -w /workspace EF800_Devcontainer /opt/venv/bin/west build -p always -b ef800_keyboard application/application/keyboard-application -d application/build/keyboard-application
 ```
 
 Verify image sizes and addresses:
@@ -78,23 +78,23 @@ Flash the matching images at the fixed addresses:
 |---|---|---:|
 | Second-level bootloader | L496 | `0x08000000` |
 | BackupApplication | L496 | `0x08010000` |
-| MainApplication | L496 | `0x08030000` |
+| EF800Application | L496 | `0x08030000` |
 | Keyboard Controller | L431 | controller application flash |
 
-Never flash a MainApplication image linked at `0x08000000`; it overlaps the
-second-level bootloader. Keep MainApplication FAT mounting and bootloader
+Never flash a EF800Application image linked at `0x08000000`; it overlaps the
+second-level bootloader. Keep EF800Application FAT mounting and bootloader
 update storage disabled until the QSPI hardware gates are verified.
 
 ## Console preparation
 
-Open a terminal on the normal MainApplication UART4/CP2102 console (`COM7`) at
+Open a terminal on the normal EF800Application UART4/CP2102 console (`COM7`) at
 `115200 8N1` and capture the complete session log. Disable terminal-local echo
 if commands appear twice. USART1 is a product port and is not the fixed shell
 console in the current board configuration.
 
 Reset the target and wait for the normal boot output and the keyboard startup
 completion message. The debug commands should not be used before the keyboard
-controller has started and MainApplication has initialized its keyboard UART.
+controller has started and EF800Application has initialized its keyboard UART.
 
 ## Key names
 
@@ -168,7 +168,7 @@ keyboard debug release shift
 keyboard debug stop
 ```
 
-MainApplication should process the `A` make while Shift is held and therefore
+EF800Application should process the `A` make while Shift is held and therefore
 receive uppercase `A`. Releasing `a` must not release Shift.
 
 A Ctrl sequence can exercise the existing Ctrl+V application event:
@@ -196,8 +196,8 @@ keyboard debug stop
 
 Before the existing debug-disable response completes, the controller emits a
 normal break sequence for `a` and `shift`, clears virtual typematic state, and
-then finishes the existing debug-mode command. MainApplication must no longer
-have either key held after the command. MainApplication then restores normal
+then finishes the existing debug-mode command. EF800Application must no longer
+have either key held after the command. EF800Application then restores normal
 keyboard scanning.
 
 The stop command does not require the test host to know the scancodes. The
@@ -245,7 +245,7 @@ No application key, event, UART response, or echoed request should result from
 the unknown name.
 
 Do not include `off` in the default smoke test. The `off` key invokes
-MainApplication's real power-down output and should be tested only when that
+EF800Application's real power-down output and should be tested only when that
 hardware behavior is understood and monitored.
 
 ## Physical keyboard isolation
@@ -274,7 +274,7 @@ keyboard debug stop
 
 The controller releases all virtual keys before leaving debug mode. If the
 keyboard UART or either MCU was reset during a request, reset both applications
-before continuing so the MainApplication translator and controller virtual
+before continuing so the EF800Application translator and controller virtual
 state start from the same clean state. Capture the console log for any failed
 cleanup.
 
@@ -299,8 +299,8 @@ silent, debug stop releases every virtual key, and physical input resumes.
 When USB MSD is unavailable, use the MCUmgr filesystem transport on the
 selected DebugConsole. MCUmgr owns the DebugConsole binary stream while the
 transport is active; the interactive shell is paused during this operation.
-The shell is available by default. Enter `mcumgr start` on the MainApplication
-shell before starting the raw serial SMP host; reset MainApplication after the
+The shell is available by default. Enter `mcumgr start` on the EF800Application
+shell before starting the raw serial SMP host; reset EF800Application after the
 transfer to restore shell access.
 
 The package is uploaded to:
@@ -316,7 +316,7 @@ DebugConsole. The equivalent host operation is:
 fs upload EF800_KEYBOARD.pkg /EF800:/fwu/EF800_KEYBOARD.pkg
 ```
 
-After the upload completes, reset MainApplication to validate and process the
+After the upload completes, reset EF800Application to validate and process the
 package. The package header and payload CRC are checked before the keyboard
 controller update starts.
 

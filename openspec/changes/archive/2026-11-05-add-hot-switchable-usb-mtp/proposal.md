@@ -1,6 +1,6 @@
 ## Why
 
-USB MSC gives the host raw ownership of the QSPI disk, forcing MainApplication to unmount FAT and preventing safe simultaneous device-side filesystem access. EF800 needs a Windows- and Linux-compatible file-transfer mode that keeps FAT mounted, while preserving MSC as an explicitly restart-gated compatibility mode.
+USB MSC gives the host raw ownership of the QSPI disk, forcing EF800Application to unmount FAT and preventing safe simultaneous device-side filesystem access. EF800 needs a Windows- and Linux-compatible file-transfer mode that keeps FAT mounted, while preserving MSC as an explicitly restart-gated compatibility mode.
 
 ## What Changes
 
@@ -27,6 +27,6 @@ None.
 ## Impact
 
 - Adds a pinned west module containing the temporary MTP class and compatibility glue for Zephyr v4.4.2.
-- Changes MainApplication USB lifecycle management, Port 4 descriptors and persisted assignment handling, FAT configuration, and MSC ownership transitions.
+- Changes EF800Application USB lifecycle management, Port 4 descriptors and persisted assignment handling, FAT configuration, and MSC ownership transitions.
 - Affects the USB console and storage adapters, port-assignment UI, boot metadata compatibility, QSPI filesystem access, firmware/keyboard update validation, build configuration, native tests, hardware tests, and migration documentation.
 - Requires physical STM32L496 testing with Windows and Linux hosts; native simulation cannot establish USB electrical or host-stack interoperability.

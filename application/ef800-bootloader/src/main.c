@@ -54,7 +54,7 @@ BUILD_ASSERT(PARTITION_SIZE(backup_partition) == 0x00020000U,
 	     "backup partition size must remain 128 KiB");
 BUILD_ASSERT(PARTITION_OFFSET(main_partition) ==
 	     PARTITION_OFFSET(backup_partition) + PARTITION_SIZE(backup_partition),
-	     "MainApplication must follow the expanded BackupApplication region");
+	     "EF800Application must follow the expanded BackupApplication region");
 BUILD_ASSERT(PARTITION_OFFSET(qspi_bootstate_partition) == 0x00000000U &&
 	     PARTITION_SIZE(qspi_bootstate_partition) == 0x00008000U,
 	     "QSPI boot-state partition must be the first 32 KiB");
@@ -174,7 +174,7 @@ int main(void)
 			metadata.main_failures = 0U;
 			metadata.last_target = EF800_BOOT_TARGET_MAIN;
 			metadata_dirty = true;
-			LOG_INF("backup recovery boot complete; retrying main application");
+			LOG_INF("backup recovery boot complete; retrying EF800 application");
 		} else if (watchdog_reset &&
 			metadata.last_target == EF800_BOOT_TARGET_MAIN &&
 			metadata.main_failures < UINT32_MAX) {
@@ -185,12 +185,12 @@ int main(void)
 		}
 	}
 
-	LOG_INF("checking MTP MainApplication update");
+	LOG_INF("checking MTP EF800Application update");
 	rc = ef800_boot_install_update(main_area, PARTITION_ADDRESS(main_partition),
 					 sram_address, sram_size);
 	update_installed = rc == 0;
-	LOG_INF("MTP MainApplication update result: %d", rc);
-	ef800_boot_trace_result("MainApplication update", rc);
+	LOG_INF("MTP EF800Application update result: %d", rc);
+	ef800_boot_trace_result("EF800Application update", rc);
 	if (rc < 0 && rc != -ENOENT && rc != -ENODEV) {
 		LOG_WRN("update inspection failed: %d", rc);
 	}
@@ -242,7 +242,7 @@ int main(void)
 				LOG_ERR("boot metadata write failed: %d", rc);
 			}
 		}
-		LOG_INF("starting main application");
+		LOG_INF("starting EF800 application");
 		ef800_boot_handoff(main_area, PARTITION_ADDRESS(main_partition),
 				   sram_address, sram_size);
 	}
@@ -258,7 +258,7 @@ int main(void)
 				LOG_ERR("boot metadata write failed: %d", rc);
 			}
 		}
-		LOG_WRN("main application invalid; starting backup");
+		LOG_WRN("EF800 application invalid; starting backup");
 		ef800_boot_handoff(backup_area, PARTITION_ADDRESS(backup_partition),
 				   sram_address, sram_size);
 	}

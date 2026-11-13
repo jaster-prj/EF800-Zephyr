@@ -222,7 +222,7 @@ int ef800_boot_install_update(const struct flash_area *main_area,
 	int rc;
 
 	fs_file_t_init(&file);
-	LOG_INF("MainApplication update scan: %s", EF800_UPDATE_PATH);
+	LOG_INF("EF800Application update scan: %s", EF800_UPDATE_PATH);
 	ef800_boot_trace("boot update: scan begin\r\n");
 	rc = flash_area_open(PARTITION_ID(qspi_bootstate_partition),
 		&boot_state_area);
@@ -240,7 +240,7 @@ int ef800_boot_install_update(const struct flash_area *main_area,
 		return rc;
 	}
 	if (legacy_layout) {
-		LOG_WRN("legacy monolithic QSPI FAT detected; MainApplication update scan skipped");
+		LOG_WRN("legacy monolithic QSPI FAT detected; EF800Application update scan skipped");
 		return -ENOTSUP;
 	}
 	rc = fs_mount(&mount);
@@ -332,7 +332,7 @@ int ef800_boot_install_update(const struct flash_area *main_area,
 		ef800_boot_trace("boot update: installed image verification failed\r\n");
 		goto out;
 	}
-	LOG_INF("installed MainApplication image verified");
+	LOG_INF("installed EF800Application image verified");
 	ef800_boot_trace("boot update: image verified\r\n");
 	rc = fs_close(&file);
 	opened = false;
@@ -355,7 +355,7 @@ out:
 			rc = unmount_rc;
 		}
 	}
-	LOG_INF("MainApplication update scan complete: %d", rc);
+	LOG_INF("EF800Application update scan complete: %d", rc);
 	ef800_boot_trace_result("scan complete", rc);
 	return rc;
 }

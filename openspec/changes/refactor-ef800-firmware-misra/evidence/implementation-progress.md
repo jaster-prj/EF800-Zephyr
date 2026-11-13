@@ -31,12 +31,12 @@ hardware acceptance, which remains a closeout gate.
 ## Keyboard application extraction in progress
 
 - Moved matrix GPIO setup/scanning into
-  `application/ef800-keyboard/src/keyboard_matrix.c` and the pure debounce
+  `application/keyboard-application/src/keyboard_matrix.c` and the pure debounce
   transition policy into `shared/keyboard_protocol/keyboard_matrix_debounce.c`.
   The application still owns reporting/repeat behavior and UART command state.
 - Moved application I2C target callbacks, bounded updater request capture,
   status/version responses, and response handshaking into
-  `application/ef800-keyboard/src/keyboard_i2c_service.c`. Flash transaction
+  `application/keyboard-application/src/keyboard_i2c_service.c`. Flash transaction
   and updater session logic remain in `main.c` and run in main context.
 - Added debounce threshold/make-break and event-capacity atomicity coverage.
   Keyboard application build passed; keyboard application, bootloader, and
@@ -47,7 +47,7 @@ hardware acceptance, which remains a closeout gate.
   remain outstanding; task 3.1 is not marked complete.
 - A follow-on task 3.3 slice extracted the keyboard bootloader's
   architecture-specific vector validation and Cortex-M handoff cleanup into
-  `application/ef800-keyboard-bootloader/src/keyboard_boot_handoff.c`.
+  `application/keyboard-bootloader/src/keyboard_boot_handoff.c`.
   The bounded I2C/GPIO probe and watchdog-fed window are in
   `keyboard_boot_probe.c`; application/updater vector reads and validation are
   in `keyboard_boot_flash.c`; recovery-policy ordering remains in `main.c`.
@@ -58,7 +58,7 @@ hardware acceptance, which remains a closeout gate.
 - A partial task 3.4 slice moved the keyboard updater's bounded I2C transport,
   timeout/overflow metadata, response buffers, busy/ready coordination, and
   response-before-reboot handshaking into
-  `application/ef800-keyboard-updater/src/keyboard_updater_transport.c`.
+  `application/keyboard-updater/src/keyboard_updater_transport.c`.
   Command/session and Flash policy stay in the updater composition root. The
   updater was pristine-built (23,776/32,768-byte image) and its native update
   suite passed (1 configuration, 8 cases); task 3.4 remains open for session
@@ -96,7 +96,7 @@ hardware acceptance, which remains a closeout gate.
   other existing warnings remain and are not silently dispositioned.
 - Extracted keyboard scan-code formatting, command/session parsing, typematic
   repeat, and virtual debug-key state into
-  `application/ef800-keyboard/src/keyboard_uart_protocol.c`; its mutable command
+  `application/keyboard-application/src/keyboard_uart_protocol.c`; its mutable command
   and repeat state is module-owned, while UART transmission, baud configuration,
   matrix debounce reset, reboot, and updater entry are explicit platform
   callbacks. Added protocol regression tests for device-ID response,
@@ -109,10 +109,10 @@ hardware acceptance, which remains a closeout gate.
 - After integrating the UART protocol module into the shared native-test source
   manifest, the complete native suite passed all 26 configurations and 180 test
   cases. The plugin-host suite also passed all five CTest cases after removing
-  side effects from assertions. Reviewed and fixed the MainApplication's six
+  side effects from assertions. Reviewed and fixed the EF800Application's six
   remaining Cppcheck style findings: const-correct validation, token pointer
   qualification, encoded-buffer scope, and mutable registry lookup that no
-  longer casts away the public lookup's const result. MainApplication builds;
+  longer casts away the public lookup's const result. EF800Application builds;
   composition, persistence, and plugin native suites pass 47/47, and its
   configured Cppcheck database reports zero owned findings. The all-target
   rerun is in progress; other target/test/package groups remain unreviewed and
@@ -125,7 +125,7 @@ hardware acceptance, which remains a closeout gate.
   fault-reset suppressions because the test must reset injected faults between
   commit and recovery operations, and two callback-observation suppressions in
   the plugin service test. The affected native configurations pass 76/76 cases;
-  MainApplication Cppcheck remains zero. Follow-up Cppcheck review also cleared
+  EF800Application Cppcheck remains zero. Follow-up Cppcheck review also cleared
   the native-sim USB peer style findings and the measurement plugin host
   findings. Plugin host CTest passes 5/5, and the affected USB, keyboard, and
   LCD native suites pass 24/24. The latest all-target quality rerun passed:
@@ -164,22 +164,22 @@ hardware acceptance, which remains a closeout gate.
   C-quality results/profile, regression counts, image sizes/addresses, and
   remaining hardware qualifications.
 
-## MainApplication / external-SRAM sequencing
+## EF800Application / external-SRAM sequencing
 
 - Task 4.1 is completed by explicit sequencing, not by claiming the related
   `external-sram-memory-pool` OpenSpec change is complete. That change still has
   pending plugin declaration-validation/integration and target MPU/fault
   acceptance work.
-- MainApplication domain moves that relocate persistent state, alter static
+- EF800Application domain moves that relocate persistent state, alter static
   allocation, plugin admission, pool selection, or MPU layout are sequenced
   after those external-SRAM tasks. No memory-pool or plugin-host source was
   moved in this increment. Any future extraction must preserve internal-only
   fallback, plugin memory ownership, and common physical/native source
   composition, and must rerun the applicable pool/plugin checks.
 
-## MainApplication workspace editor increment
+## EF800Application workspace editor increment
 
-- Began task 4.2 with the selected narrow boundary: the MainApplication retains
+- Began task 4.2 with the selected narrow boundary: the EF800Application retains
   display/menu navigation, while `ef800_workspace_row_editor` owns bounded raw
   row text, caret, insert/overwrite mode, and character editing operations. Its
   host still commits through the version-checked, journaled workspace API, so
@@ -190,7 +190,7 @@ hardware acceptance, which remains a closeout gate.
   backspace/delete, row-ending metadata retention, and the 255-byte limit.
   Focused native-sim editor tests pass (1 configuration, 2 cases), and the
   workspace persistence suite passes (1 configuration, 15 cases).
-- Added the editor source to the common MainApplication source manifest. Both
+- Added the editor source to the common EF800Application source manifest. Both
   physical and native-sim pristine builds report 51 common sources and pass.
   Native-only build guards were corrected for target-specific STM32 UART
   headers, plugin arena capacity constants, and optional user-worker scratch

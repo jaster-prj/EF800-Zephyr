@@ -52,8 +52,8 @@ The byte values and translated event map are shared in
 
 ## Debug virtual keyboard
 
-MainApplication provides a shell interface for hardware interaction tests. It
-is available on the MainApplication console, not on the keyboard-controller
+EF800Application provides a shell interface for hardware interaction tests. It
+is available on the EF800Application console, not on the keyboard-controller
 UART:
 
 ```text
@@ -64,7 +64,7 @@ keyboard debug stop
 ```
 
 The keyboard controller owns the key-name-to-matrix-to-scancode mapping.
-MainApplication sends the requested name without interpreting its matrix key
+EF800Application sends the requested name without interpreting its matrix key
 or scancode. Names are case-insensitive. Common names are:
 
 ```text
@@ -101,7 +101,7 @@ See `docs/hardware-debug-keyboard.md` for the physical target procedure.
 
 ## RTC entry workflow
 
-The MainApplication keyboard editor is opened with `z`. It collects these
+The EF800Application keyboard editor is opened with `z`. It collects these
 fields in order and commits them on the final Enter. The weekday is shown as
 `Mon`, `Tue`, `Wed`, `Thu`, `Fri`, `Sat`, or `Sun`; use Up/Down to change it,
 then Enter to continue.

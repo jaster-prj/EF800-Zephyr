@@ -12,13 +12,13 @@
 - `adr/0002-isolate-external-plugin-execution.md` - leaves plugin isolation and physical qualification gates unchanged.
 - `adr/0003-use-native-sim-for-behavioral-ef800.md` - defines native-sim as behavioral evidence, not hardware qualification.
 - `adr/0004-use-web-gateway-for-virtual-ef800-front-panel.md` - keeps the browser behind the gateway and the simulator endpoint private.
-- `adr/0005-use-zephyr-device-emulation-for-production-native-sim.md` - requires native-sim to execute production MainApplication through Zephyr device APIs.
-- `adr/0006-use-single-ef800-main-target-for-physical-and-native-sim.md` - keeps physical and native-sim MainApplication source composition aligned.
+- `adr/0005-use-zephyr-device-emulation-for-production-native-sim.md` - requires native-sim to execute production EF800Application through Zephyr device APIs.
+- `adr/0006-use-single-ef800-application-target-for-physical-and-native-sim.md` - keeps physical and native-sim EF800Application source composition aligned.
 - `adr/0007-use-configurable-packed-t6963-renderer.md` - no storage or USB conflict.
 - `adr/0008-use-native-sim-package-control-and-restart-boundary.md` - preserves startup-only plugin discovery and bounded gateway control.
 - `adr/0009-use-bounded-native-sim-log-stream.md` - retains the single gateway-owned simulator connection for diagnostics.
 - `adr/0010-plugin-owned-measurement-navigation.md` - retains host-owned assignment and resource boundaries.
-- `adr/0011-use-mtp-for-concurrent-usb-file-access.md` - preserves MainApplication's approved MTP roots and MSC restart ownership boundary.
+- `adr/0011-use-mtp-for-concurrent-usb-file-access.md` - preserves EF800Application's approved MTP roots and MSC restart ownership boundary.
 - `adr/0012-use-file-backed-target-composition-profiles.md` - keeps composition profiles file-backed and restart-scoped in private configuration.
 
 ## Repository-Level ADRs Created
@@ -27,4 +27,4 @@
 
 ## Notes
 
-ADR-0013 complements ADR-0011: Configuration is available through the separate BackupApplication recovery MTP context, while MainApplication MTP remains limited to Data, Plugins, and FWU.
+ADR-0013 complements ADR-0011: Configuration is available through the separate BackupApplication recovery MTP context, while EF800Application MTP remains limited to Data, Plugins, and FWU.

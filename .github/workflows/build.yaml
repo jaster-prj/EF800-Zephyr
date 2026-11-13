@@ -69,8 +69,8 @@ jobs:
         working-directory: ./zephyr_workspace
         run: |
           /opt/venv/bin/west build -p always -b native_sim \
-            application/application/ef800-main \
-            --build-dir application/build/ef800-main-native-sim
+            application/application/ef800-application \
+            --build-dir application/build/ef800-application-native-sim
 
       - name: Run host front-panel tests
         working-directory: ./zephyr_workspace/application
@@ -96,16 +96,16 @@ jobs:
         working-directory: ./zephyr_workspace
         run: |
           /opt/venv/bin/west build -p always -b ef800_keyboard \
-            application/application/ef800-keyboard \
-            --build-dir application/build/ef800-keyboard -- \
+            application/application/keyboard-application \
+            --build-dir application/build/keyboard-application -- \
             -DCMAKE_EXPORT_COMPILE_COMMANDS=ON
 
-      - name: Build main application
+      - name: Build EF800 application
         working-directory: ./zephyr_workspace
         run: |
           /opt/venv/bin/west build -p always -b ef800 \
-            application/application/ef800-main \
-            --build-dir application/build/ef800-main -- \
+            application/application/ef800-application \
+            --build-dir application/build/ef800-application -- \
             -DCMAKE_EXPORT_COMPILE_COMMANDS=ON
 
       - name: Build backup application
@@ -128,16 +128,16 @@ jobs:
         working-directory: ./zephyr_workspace
         run: |
           /opt/venv/bin/west build -p always -b ef800_keyboard \
-            application/application/ef800-keyboard-bootloader \
-            --build-dir application/build/ef800-keyboard-bootloader -- \
+            application/application/keyboard-bootloader \
+            --build-dir application/build/keyboard-bootloader -- \
             -DCMAKE_EXPORT_COMPILE_COMMANDS=ON
 
       - name: Build keyboard updater
         working-directory: ./zephyr_workspace
         run: |
           /opt/venv/bin/west build -p always -b ef800_keyboard \
-            application/application/ef800-keyboard-updater \
-            --build-dir application/build/ef800-keyboard-updater -- \
+            application/application/keyboard-updater \
+            --build-dir application/build/keyboard-updater -- \
             -DCMAKE_EXPORT_COMPILE_COMMANDS=ON
 
       - name: Build hardware debug image
@@ -170,8 +170,8 @@ jobs:
           mkdir -p application/artifacts
           cp application/build/ef800-bootloader/zephyr/zephyr.bin application/artifacts/ef800-bootloader.bin
           cp application/build/ef800-backup/zephyr/zephyr.bin application/artifacts/ef800-backup.bin
-          cp application/build/ef800-main/zephyr/zephyr.bin application/artifacts/ef800-main.bin
-          cp application/build/ef800-keyboard/zephyr/zephyr.bin application/artifacts/ef800-keyboard.bin
+          cp application/build/ef800-application/zephyr/zephyr.bin application/artifacts/ef800-application.bin
+          cp application/build/keyboard-application/zephyr/zephyr.bin application/artifacts/keyboard-application.bin
 
       - name: Publish images
         uses: actions/upload-artifact@v4

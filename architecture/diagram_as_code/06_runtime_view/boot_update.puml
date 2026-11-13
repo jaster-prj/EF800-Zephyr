@@ -6,7 +6,7 @@ participant "STM32 reset / IWDG" as HW
 participant "Second-level Bootloader" as BL
 database "QSPI NVS + Shared Data FAT" as Q
 database "Internal flash" as IF
-participant MainApplication as Main
+participant EF800Application as Main
 participant BackupApplication as Backup
 
 HW -> BL : reset at 0x08000000

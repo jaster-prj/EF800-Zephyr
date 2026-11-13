@@ -18,7 +18,7 @@
 #include "ef800_runtime_state.h"
 #include "virtual_ef800_profile.h"
 
-int ef800_main_rtc_get_local_time(struct rtc_time *local)
+int ef800_app_rtc_get_local_time(struct rtc_time *local)
 {
 	ARG_UNUSED(local);
 	return -ENOTSUP;
