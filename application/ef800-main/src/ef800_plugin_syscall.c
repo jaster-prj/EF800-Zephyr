@@ -28,13 +28,15 @@ struct gateway_session {
 };
 
 static struct gateway_session active_session;
-#if defined(CONFIG_USERSPACE) && CONFIG_USERSPACE
+#if (defined(CONFIG_USERSPACE) && CONFIG_USERSPACE) || \
+	(defined(CONFIG_BOARD_NATIVE_SIM) && CONFIG_BOARD_NATIVE_SIM)
 static uint8_t input_staging[EF800_PLUGIN_GATEWAY_STAGING_SIZE];
 static uint8_t output_staging[EF800_PLUGIN_GATEWAY_STAGING_SIZE];
 #endif
 K_MUTEX_DEFINE(gateway_mutex);
 
-#if defined(CONFIG_USERSPACE) && CONFIG_USERSPACE
+#if (defined(CONFIG_USERSPACE) && CONFIG_USERSPACE) || \
+	(defined(CONFIG_BOARD_NATIVE_SIM) && CONFIG_BOARD_NATIVE_SIM)
 static uint32_t required_service(uint32_t operation)
 {
 	switch (operation) {
@@ -96,7 +98,8 @@ int ef800_plugin_gateway_session_bind(struct k_thread *worker,
 		.transport = transport,
 		.workspace = workspace,
 	};
-#if defined(CONFIG_USERSPACE) && CONFIG_USERSPACE
+#if (defined(CONFIG_USERSPACE) && CONFIG_USERSPACE) || \
+	(defined(CONFIG_BOARD_NATIVE_SIM) && CONFIG_BOARD_NATIVE_SIM)
 	memset(input_staging, 0, sizeof(input_staging));
 	memset(output_staging, 0, sizeof(output_staging));
 #endif
@@ -116,7 +119,8 @@ int ef800_plugin_gateway_session_unbind(uint32_t generation)
 		return -ESTALE;
 	}
 	active_session = (struct gateway_session){0};
-#if defined(CONFIG_USERSPACE) && CONFIG_USERSPACE
+#if (defined(CONFIG_USERSPACE) && CONFIG_USERSPACE) || \
+	(defined(CONFIG_BOARD_NATIVE_SIM) && CONFIG_BOARD_NATIVE_SIM)
 	memset(input_staging, 0, sizeof(input_staging));
 	memset(output_staging, 0, sizeof(output_staging));
 #endif
@@ -146,7 +150,8 @@ int ef800_plugin_gateway_session_set_deadline(uint32_t generation,
 	return ret;
 }
 
-#if defined(CONFIG_USERSPACE) && CONFIG_USERSPACE
+#if (defined(CONFIG_USERSPACE) && CONFIG_USERSPACE) || \
+	(defined(CONFIG_BOARD_NATIVE_SIM) && CONFIG_BOARD_NATIVE_SIM)
 static int copy_user_range(struct ef800_plugin_worker_mailbox *mailbox,
 	uint32_t offset, uint8_t *destination, uint32_t length, bool to_user)
 {
@@ -155,6 +160,14 @@ static int copy_user_range(struct ef800_plugin_worker_mailbox *mailbox,
 	if (length == 0U) {
 		return 0;
 	}
+#if defined(CONFIG_BOARD_NATIVE_SIM) && CONFIG_BOARD_NATIVE_SIM
+	if (to_user) {
+		memcpy(range, destination, length);
+	} else {
+		memcpy(destination, range, length);
+	}
+	return 0;
+#else
 	if (to_user) {
 		if (K_SYSCALL_MEMORY_WRITE(range, length)) {
 			return -EFAULT;
@@ -165,6 +178,7 @@ static int copy_user_range(struct ef800_plugin_worker_mailbox *mailbox,
 		return -EFAULT;
 	}
 	return k_usermode_from_copy(destination, range, length) == 0 ? 0 : -EFAULT;
+#endif
 }
 
 static int dispatch_service(struct gateway_session *session,
@@ -278,17 +292,62 @@ static int dispatch_service(struct gateway_session *session,
 	}
 	message->status = status;
 	message->response_length = response_length;
+#if defined(CONFIG_BOARD_NATIVE_SIM) && CONFIG_BOARD_NATIVE_SIM
+	mailbox->message = *message;
+	return 0;
+#else
 	return k_usermode_to_copy(&mailbox->message, message,
 		sizeof(*message)) == 0 ? 0 : -EFAULT;
-}
 #endif
+}
+#endif /* userspace verifier or native_sim gateway */
 
 int z_impl_ef800_plugin_worker_syscall(
 	struct ef800_plugin_worker_mailbox *mailbox)
 {
+#if defined(CONFIG_BOARD_NATIVE_SIM) && CONFIG_BOARD_NATIVE_SIM
+	struct ef800_plugin_worker_message message;
+	uint32_t required;
+	int ret;
+
+	if (mailbox == NULL || k_mutex_lock(&gateway_mutex, K_FOREVER) != 0) {
+		return -EFAULT;
+	}
+	if (!active_session.active || k_current_get() != active_session.worker ||
+		mailbox != active_session.mailbox) {
+		(void)k_mutex_unlock(&gateway_mutex);
+		return -EPERM;
+	}
+	message = mailbox->message;
+	message.deadline_ms = active_session.deadline_ms;
+	ret = ef800_plugin_worker_message_validate(&message,
+		EF800_PLUGIN_WORKER_MAILBOX_PAYLOAD_SIZE,
+		active_session.generation, (uint64_t)k_uptime_get());
+	if (ret != 0 || message.kind != EF800_PLUGIN_WORKER_HOST_SERVICE_REQUEST ||
+		message.capability != active_session.capability ||
+		message.sequence <= active_session.last_sequence) {
+		(void)k_mutex_unlock(&gateway_mutex);
+		return ret != 0 ? ret : -EPERM;
+	}
+	required = required_service(message.operation);
+	if (required == 0U ||
+		(active_session.allowed_services & required) == 0U) {
+		(void)k_mutex_unlock(&gateway_mutex);
+		return -EPERM;
+	}
+	active_session.last_sequence = message.sequence;
+	ef800_plugin_host_recovery_service_begin(active_session.generation,
+		message.operation);
+	ret = dispatch_service(&active_session, mailbox, &message);
+	ef800_plugin_host_recovery_service_end(active_session.generation,
+		message.operation);
+	(void)k_mutex_unlock(&gateway_mutex);
+	return ret;
+#else
 	ARG_UNUSED(mailbox);
 	/* Privileged callers must not use a worker-only service capability. */
 	return -EPERM;
+#endif
 }
 
 __pinned_func int ef800_plugin_worker_gateway_entry(

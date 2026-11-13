@@ -66,32 +66,32 @@ static int32_t measure(void *instance, struct ef800_measurement_result *result)
 	char log_message[160];
 
 	if (instance != &ef800_runtime.public_instance || result == 0) return PM_EINVAL;
-	(void)ef800_plugin_worker_log(&ef800_runtime.binding,
+	(void)ef800_plugin_runtime_log(
 		"FTS3XX: sending measurement request (11 0d 0a)",
 		(uint32_t)strlen("FTS3XX: sending measurement request (11 0d 0a)"));
 	status = ef800_protocol_write(&ef800_runtime.binding, command, sizeof(command));
 	if (status != PM_OK) {
 		(void)snprintf(log_message, sizeof(log_message),
 			"FTS3XX: request write failed status=%ld", (long)status);
-		(void)ef800_plugin_worker_log(&ef800_runtime.binding, log_message,
+		(void)ef800_plugin_runtime_log(log_message,
 			(uint32_t)strlen(log_message));
 		return status;
 	}
-	(void)ef800_plugin_worker_log(&ef800_runtime.binding,
+	(void)ef800_plugin_runtime_log(
 		"FTS3XX: request sent; waiting for response line",
 		(uint32_t)strlen("FTS3XX: request sent; waiting for response line"));
 	status = ef800_protocol_read_line(&ef800_runtime.binding, response, sizeof(response));
 	if (status < 0) {
 		(void)snprintf(log_message, sizeof(log_message),
 			"FTS3XX: response read failed status=%ld", (long)status);
-		(void)ef800_plugin_worker_log(&ef800_runtime.binding, log_message,
+		(void)ef800_plugin_runtime_log(log_message,
 			(uint32_t)strlen(log_message));
 		return status;
 	}
 	(void)snprintf(log_message, sizeof(log_message),
 		"FTS3XX: received %ld bytes: %.100s", (long)status, response);
-	(void)ef800_plugin_worker_log(&ef800_runtime.binding, log_message,
-		(uint32_t)strlen(log_message));
+	(void)ef800_plugin_runtime_log(log_message,
+			(uint32_t)strlen(log_message));
     result->struct_size = sizeof(*result);
     result->distance_mm = 0;
     result->horizontal_gon_1e4 = 0;
@@ -112,7 +112,7 @@ static int32_t measure(void *instance, struct ef800_measurement_result *result)
 		(void)snprintf(log_message, sizeof(log_message),
 			"FTS3XX: response parse failed status=%ld", (long)status);
 	}
-	(void)ef800_plugin_worker_log(&ef800_runtime.binding, log_message,
+	(void)ef800_plugin_runtime_log(log_message,
 		(uint32_t)strlen(log_message));
 	return status;
 }

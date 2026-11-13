@@ -4,7 +4,6 @@ menu "EF800 MainApplication foundation"
 
 config EF800_MAIN_PLUGIN_DEV_DIRECT_EXECUTION
 	bool "Allow trusted development plugins to execute inline"
-	default y if BOARD_NATIVE_SIM
 	default n
 	help
 	  Keep the legacy inline callback executor available for native_sim and
@@ -13,25 +12,27 @@ config EF800_MAIN_PLUGIN_DEV_DIRECT_EXECUTION
 	  unprivileged worker and mediated service gateway are enabled and qualified.
 
 config EF800_MAIN_PLUGIN_WORKER_STACK_SIZE
-	int "Plugin worker user stack size"
+	int "Plugin worker stack size"
 	default 2048
 	range 1024 8192
-	depends on USERSPACE
+	depends on USERSPACE || BOARD_NATIVE_SIM
 	help
 	  Stack allocation for the single serialized external-plugin worker. The
-	  worker stack is user-owned and receives Zephyr's MPU stack guard.
+	  physical EF800 worker receives MPU protection; native_sim uses this same
+	  worker ABI without hardware-enforced memory isolation.
 
 config EF800_MAIN_PLUGIN_USER_WORKER
-	bool "Run external plugins on the isolated userspace worker"
+	bool "Run external plugins on the worker ABI"
+	default y if BOARD_NATIVE_SIM
 	default n
-	depends on BOARD_EF800 && USERSPACE && !EF800_MAIN_PLUGIN_DEV_DIRECT_EXECUTION
+	depends on ((BOARD_EF800 && USERSPACE) || BOARD_NATIVE_SIM) && \
+		!EF800_MAIN_PLUGIN_DEV_DIRECT_EXECUTION
 	help
-	  Execute external plugin callbacks in the non-essential unprivileged worker
-	  with MPU-constrained memory and mediated host services. The physical EF800
-	  MainApplication board configuration enables this so external packages do
-	  not fall back to privileged inline execution. This is not release
-	  qualification or package-authenticity verification; those gates remain
-	  separate.
+	  Execute external plugin callbacks through the versioned worker ABI and
+	  mediated host services. EF800 additionally runs the worker unprivileged
+	  with MPU-constrained memory; native_sim emulates the worker protocol but
+	  does not provide MPU isolation. This is not package-authenticity or release
+	  qualification.
 
 config EF800_MAIN_SRAM_TEST_FAIL
 	bool "Force external SRAM validation failure for fallback testing"

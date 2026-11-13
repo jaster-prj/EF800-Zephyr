@@ -27,6 +27,13 @@ int pm_plugin_create(const struct pm_service_table *services, void **instance);
  */
 int pm_plugin_destroy(void *instance);
 
+/** @brief Send a bounded diagnostic message through the worker log service.
+ * @param message Message bytes; a NUL terminator is not required.
+ * @param length Number of message bytes.
+ * @return 0 on success; negative errno or service status on failure.
+ */
+int32_t ef800_plugin_runtime_log(const char *message, uint32_t length);
+
 /** @brief Initialize a bounded display model with title and action mask.
  * @param display Display model to clear and initialize.
  * @param title Display title.

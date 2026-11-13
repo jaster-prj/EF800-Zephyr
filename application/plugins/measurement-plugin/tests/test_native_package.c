@@ -65,6 +65,9 @@ int ef800_plugin_worker_syscall(
 		message->response_length = 1U;
 		message->status = 0;
 		break;
+	case EF800_PLUGIN_WORKER_LOG:
+		message->status = 0;
+		break;
 	default:
 		assert(false);
 	}

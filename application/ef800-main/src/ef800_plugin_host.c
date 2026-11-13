@@ -112,6 +112,9 @@ struct plugin_image_slot {
 	uint8_t *data;
 	uint8_t *bss;
 };
+#if CONFIG_BOARD_NATIVE_SIM
+static struct plugin_image_slot *plugin_worker_image;
+#endif
 
 #if !CONFIG_BOARD_NATIVE_SIM
 #define EF800_PLUGIN_INTERNAL_ARENA_SIZE 0x4000u
@@ -179,6 +182,43 @@ static struct plugin_mailbox_region plugin_mailbox_region __used;
 #if !CONFIG_BOARD_NATIVE_SIM
 #define plugin_rw_arena (plugin_mailbox_region.plugin_rw)
 #endif
+
+static uint8_t *worker_text_base(void)
+{
+#if CONFIG_BOARD_NATIVE_SIM
+	return plugin_worker_image == NULL ? NULL : plugin_worker_image->text;
+#else
+	return plugin_text_arena;
+#endif
+}
+
+static uint8_t *worker_rodata_base(void)
+{
+#if CONFIG_BOARD_NATIVE_SIM
+	return plugin_worker_image == NULL ? NULL : plugin_worker_image->rodata;
+#else
+	return plugin_rodata_arena;
+#endif
+}
+
+static uint8_t *worker_rw_base(void)
+{
+#if CONFIG_BOARD_NATIVE_SIM
+	return plugin_worker_image == NULL ? NULL : plugin_worker_image->data;
+#else
+	return plugin_rw_arena;
+#endif
+}
+
+static size_t worker_rw_size(void)
+{
+#if CONFIG_BOARD_NATIVE_SIM
+	return plugin_worker_image == NULL ? 0U :
+		EF800_PLUGIN_DATA_SIZE + EF800_PLUGIN_BSS_SIZE;
+#else
+	return sizeof(plugin_rw_arena);
+#endif
+}
 K_THREAD_STACK_DEFINE(plugin_worker_stack,
 	CONFIG_EF800_MAIN_PLUGIN_WORKER_STACK_SIZE);
 static struct k_thread plugin_worker_thread __used;
@@ -218,8 +258,12 @@ static struct k_mem_partition *plugin_worker_partitions[] = {
 BUILD_ASSERT(ARRAY_SIZE(plugin_worker_partitions) == 4U);
 static bool plugin_worker_domain_initialized;
 static struct k_thread *plugin_worker_domain_thread;
-static uint32_t plugin_worker_generation;
 K_MUTEX_DEFINE(plugin_worker_domain_mutex);
+#endif
+static uint32_t plugin_worker_generation;
+#if CONFIG_BOARD_NATIVE_SIM
+static uint32_t plugin_worker_generation_counter;
+static struct k_thread *plugin_worker_native_thread;
 #endif
 
 #if CONFIG_EF800_MAIN_PLUGIN_USER_WORKER
@@ -497,8 +541,14 @@ static int plugin_worker_prepare_thread(void)
 	memset(plugin_worker_stack, 0, K_THREAD_STACK_SIZEOF(plugin_worker_stack));
 	if (k_thread_create(&plugin_worker_thread, plugin_worker_stack,
 		K_THREAD_STACK_SIZEOF(plugin_worker_stack), ef800_plugin_worker_entry,
-		ef800_plugin_host_worker_mailbox(), plugin_text_arena,
-		plugin_rw_arena, 5, K_USER, K_FOREVER) == NULL) {
+		ef800_plugin_host_worker_mailbox(), worker_text_base(),
+		worker_rw_base(), 5,
+#if CONFIG_BOARD_NATIVE_SIM
+		K_INHERIT_PERMS,
+#else
+		K_USER,
+#endif
+		K_FOREVER) == NULL) {
 		return -ENOMEM;
 	}
 	k_object_access_grant(&plugin_worker_thread, k_current_get());
@@ -716,7 +766,13 @@ static int plugin_worker_start(void)
 	plugin_worker_reap_failed = false;
 	if (k_thread_create(&plugin_worker_thread, plugin_worker_stack,
 		K_THREAD_STACK_SIZEOF(plugin_worker_stack), ef800_plugin_worker_entry,
-		mailbox, plugin_text_arena, plugin_rw_arena, 5, K_USER, K_FOREVER) ==
+		mailbox, worker_text_base(), worker_rw_base(), 5,
+#if CONFIG_BOARD_NATIVE_SIM
+		K_INHERIT_PERMS,
+#else
+		K_USER,
+#endif
+		K_FOREVER) ==
 		NULL) {
 		return -ENOMEM;
 	}
@@ -727,12 +783,12 @@ static int plugin_worker_start(void)
 		k_thread_abort(&plugin_worker_thread);
 		return ret;
 	}
-	mailbox->plugin_text_base = (uint32_t)(uintptr_t)plugin_text_arena;
+	mailbox->plugin_text_base = (uint32_t)(uintptr_t)worker_text_base();
 	mailbox->plugin_text_size = plugin_text_capacity;
-	mailbox->plugin_rodata_base = (uint32_t)(uintptr_t)plugin_rodata_arena;
+	mailbox->plugin_rodata_base = (uint32_t)(uintptr_t)worker_rodata_base();
 	mailbox->plugin_rodata_size = plugin_rodata_capacity;
-	mailbox->plugin_rw_base = (uint32_t)(uintptr_t)plugin_rw_arena;
-	mailbox->plugin_rw_size = sizeof(plugin_rw_arena);
+	mailbox->plugin_rw_base = (uint32_t)(uintptr_t)worker_rw_base();
+	mailbox->plugin_rw_size = worker_rw_size();
 	mailbox->allowed_services = plugin_worker_allowed_services;
 	plugin_worker_generation = generation;
 	plugin_worker_capability = generation ^ (uint32_t)k_uptime_get_32() ^
@@ -848,7 +904,7 @@ static int plugin_worker_stop(bool abort_worker)
 static int worker_entry_offset(const void *entry, uint32_t *offset)
 {
 	uintptr_t address = (uintptr_t)entry & ~(uintptr_t)1U;
-	uintptr_t base = (uintptr_t)plugin_text_arena;
+	uintptr_t base = (uintptr_t)worker_text_base();
 
 	if (entry == NULL || offset == NULL || address < base ||
 		address - base >= plugin_text_capacity) {
@@ -874,9 +930,16 @@ static int configure_worker_services(uint32_t plugin_id,
 	plugin_worker_transport = transport;
 	plugin_worker_workspace = workspace;
 	key = k_spin_lock(&plugin_recovery_lock);
+#if CONFIG_BOARD_NATIVE_SIM
+	/* The virtual executor receives only the transport selected by the
+	 * simulator's active port assignment. Native has no target route recovery
+	 * ledger to authenticate that selection against. */
+	route_matches = transport != NULL;
+#else
 	route_matches = plugin_recovery_ledger.route_claimed &&
 		plugin_recovery_ledger.plugin_id == plugin_id &&
 		plugin_recovery_ledger.route_transport == transport;
+#endif
 	plugin_recovery_ledger.active = true;
 	plugin_recovery_ledger.plugin_id = plugin_id;
 	if (transport != NULL && !plugin_recovery_ledger.route_claimed) {
@@ -906,6 +969,24 @@ static int configure_worker_services(uint32_t plugin_id,
 	return 0;
 }
 
+#if CONFIG_BOARD_NATIVE_SIM
+static struct plugin_image_slot *image_for_entry(const void *entry)
+{
+	uintptr_t address = (uintptr_t)entry & ~(uintptr_t)1U;
+
+	for (size_t index = 0U; index < ARRAY_SIZE(plugin_image_slots); ++index) {
+		struct plugin_image_slot *slot = &plugin_image_slots[index];
+		uintptr_t base = (uintptr_t)slot->text;
+
+		if (slot->used && slot->text != NULL && address >= base &&
+			address - base < EF800_PLUGIN_TEXT_SIZE) {
+			return slot;
+		}
+	}
+	return NULL;
+}
+#endif
+
 static int execute_plugin_create_worker(void *context,
 	pm_plugin_create_fn entry, const struct pm_service_table *services,
 	void **instance)
@@ -919,15 +1000,27 @@ static int execute_plugin_create_worker(void *context,
 	if (entry == NULL || instance == NULL) {
 		return PM_EINVAL;
 	}
+#if CONFIG_BOARD_NATIVE_SIM
+	plugin_worker_image = image_for_entry((const void *)entry);
+	if (plugin_worker_image == NULL) {
+		return PM_EINVAL;
+	}
+#endif
 	if (!plugin_worker_running) {
 		ret = plugin_worker_start();
 		if (ret != 0) {
+			#if CONFIG_BOARD_NATIVE_SIM
+			plugin_worker_image = NULL;
+			#endif
 			return ret;
 		}
 	}
 	ret = worker_entry_offset((const void *)entry, &offset);
 	if (ret != 0) {
 		(void)plugin_worker_stop(true);
+		#if CONFIG_BOARD_NATIVE_SIM
+		plugin_worker_image = NULL;
+		#endif
 		return PM_EINVAL;
 	}
 	mailbox = ef800_plugin_host_worker_mailbox();
@@ -942,6 +1035,9 @@ static int execute_plugin_create_worker(void *context,
 	if (!plugin_worker_poisoned) {
 		(void)plugin_worker_stop(true);
 	}
+	#if CONFIG_BOARD_NATIVE_SIM
+	plugin_worker_image = NULL;
+	#endif
 	return ret == PM_OK ? PM_EPROTO : ret;
 }
 
@@ -968,6 +1064,9 @@ static int execute_plugin_destroy_worker(void *context,
 		plugin_worker_poisoned = true;
 		(void)plugin_worker_stop(true);
 	}
+	#if CONFIG_BOARD_NATIVE_SIM
+	plugin_worker_image = NULL;
+	#endif
 	return ret;
 }
 
@@ -1390,18 +1489,18 @@ static int allocate_image(void *context, size_t text_size, size_t rodata_size,
 			slot->rodata = mmap(NULL, EF800_PLUGIN_RODATA_SIZE,
 				PROT_READ | PROT_WRITE | PROT_EXEC,
 				MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
-			slot->data = mmap(NULL, EF800_PLUGIN_DATA_SIZE,
+			slot->data = mmap(NULL,
+				EF800_PLUGIN_DATA_SIZE + EF800_PLUGIN_BSS_SIZE,
 				PROT_READ | PROT_WRITE | PROT_EXEC,
 				MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
-			slot->bss = mmap(NULL, EF800_PLUGIN_BSS_SIZE,
-				PROT_READ | PROT_WRITE | PROT_EXEC,
-				MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
+			slot->bss = slot->data == MAP_FAILED ? MAP_FAILED :
+				slot->data + EF800_PLUGIN_DATA_SIZE;
 			if (slot->text == MAP_FAILED || slot->rodata == MAP_FAILED ||
 				slot->data == MAP_FAILED || slot->bss == MAP_FAILED) {
 				if (slot->text != MAP_FAILED) munmap(slot->text, EF800_PLUGIN_TEXT_SIZE);
 				if (slot->rodata != MAP_FAILED) munmap(slot->rodata, EF800_PLUGIN_RODATA_SIZE);
-				if (slot->data != MAP_FAILED) munmap(slot->data, EF800_PLUGIN_DATA_SIZE);
-				if (slot->bss != MAP_FAILED) munmap(slot->bss, EF800_PLUGIN_BSS_SIZE);
+				if (slot->data != MAP_FAILED) munmap(slot->data,
+					EF800_PLUGIN_DATA_SIZE + EF800_PLUGIN_BSS_SIZE);
 				slot->text = slot->rodata = slot->data = slot->bss = NULL;
 				return PM_ENOMEM;
 			}
@@ -1436,8 +1535,8 @@ static void free_image(void *context, uint8_t *text, uint8_t *rodata,
 #if CONFIG_BOARD_NATIVE_SIM
 			munmap(slot->text, EF800_PLUGIN_TEXT_SIZE);
 			munmap(slot->rodata, EF800_PLUGIN_RODATA_SIZE);
-			munmap(slot->data, EF800_PLUGIN_DATA_SIZE);
-			munmap(slot->bss, EF800_PLUGIN_BSS_SIZE);
+			munmap(slot->data,
+				EF800_PLUGIN_DATA_SIZE + EF800_PLUGIN_BSS_SIZE);
 			slot->text = slot->rodata = slot->data = slot->bss = NULL;
 #else
 			memset(plugin_text_arena, 0, plugin_text_capacity);
@@ -2946,9 +3045,26 @@ int ef800_plugin_host_worker_domain_attach(struct k_thread *worker,
 	uint32_t *generation)
 {
 #if CONFIG_BOARD_NATIVE_SIM
-	ARG_UNUSED(worker);
-	ARG_UNUSED(generation);
-	return -ENOTSUP;
+	if (worker == NULL || generation == NULL) {
+		return -EINVAL;
+	}
+	if (plugin_worker_native_thread != NULL &&
+		plugin_worker_native_thread != worker) {
+		return -EBUSY;
+	}
+	if (plugin_worker_generation == 0U) {
+		memset(&plugin_mailbox_region, 0, sizeof(plugin_mailbox_region));
+		plugin_worker_generation_counter++;
+		if (plugin_worker_generation_counter == 0U) {
+			plugin_worker_generation_counter++;
+		}
+		plugin_worker_generation = plugin_worker_generation_counter;
+		plugin_mailbox_region.mailbox.worker_generation =
+			plugin_worker_generation;
+	}
+	plugin_worker_native_thread = worker;
+	*generation = plugin_worker_generation;
+	return 0;
 #else
 	int ret;
 	uintptr_t text_start = (uintptr_t)plugin_text_arena;
@@ -3011,9 +3127,15 @@ int ef800_plugin_host_worker_domain_detach(struct k_thread *worker,
 	uint32_t generation)
 {
 #if CONFIG_BOARD_NATIVE_SIM
-	ARG_UNUSED(worker);
-	ARG_UNUSED(generation);
-	return -ENOTSUP;
+	if (worker == NULL || generation == 0U ||
+		plugin_worker_native_thread != worker ||
+		plugin_worker_generation != generation) {
+		return -ESTALE;
+	}
+	plugin_worker_native_thread = NULL;
+	memset(&plugin_mailbox_region, 0, sizeof(plugin_mailbox_region));
+	plugin_worker_generation = 0U;
+	return 0;
 #else
 	int ret;
 

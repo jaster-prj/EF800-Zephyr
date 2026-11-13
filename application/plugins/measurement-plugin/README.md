@@ -102,12 +102,20 @@ cmake --build build/native-sim
 ctest --test-dir build/native-sim --output-on-failure
 ```
 
-The native_sim artifacts use the constrained i386 relocatable profile. The
-package runtime test loads each `.pmp` through PluginManager, creates and
-destroys its instance through the executor API, then validates serial defaults
-and a measurement response. These tests exercise package parsing, relocation,
-descriptor binding, and lifecycle behavior, but are not evidence of ARM MPU
-isolation.
+Both native_sim and ARM artifacts use the same `user-worker` package metadata,
+worker ABI, pointer-free service binding, and mediated Port service. The native
+executor runs that worker ABI in a serialized Zephyr thread and validates the
+same generation, capability, sequence, service, and deadline fields. Zephyr
+native_sim has no STM32 userspace/MPU boundary, so this is behavioral execution,
+not an isolation claim. On physical EF800 the same packages run on the
+unprivileged MPU-constrained worker, and the executable/rodata arenas remain
+external-SRAM-backed when validated external SRAM is available.
+
+The package runtime test loads each `.pmp` through PluginManager, creates and
+destroys its instance through the native executor API, then validates serial
+defaults and a measurement response. These tests exercise package parsing,
+relocation, descriptor binding, lifecycle, and mediated Port-service behavior;
+they are not evidence of ARM MPU isolation.
 
 Cortex-M4 packages, using either the application packaging script or an
 optional PluginManager linker script:

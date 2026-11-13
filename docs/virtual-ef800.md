@@ -87,6 +87,13 @@ apply. Plugin discovery is startup-only; upload does not hot-load code. Request
 a simulator restart separately to make new packages available to normal startup
 discovery.
 
+Native-sim and physical EF800 use the same ELTA3/FTS3XX `user-worker` package
+ABI and pointer-free mediated services. Native-sim executes callbacks on a
+serialized worker thread and checks the worker session/capability protocol, but
+has no hardware MPU/userspace isolation. Physical EF800 retains the unprivileged
+worker and external-SRAM-backed executable/rodata arenas when external SRAM is
+validated.
+
 The gateway keeps `POST /api/simulator/restart` for scripted activation and
 `POST /api/devices/<1|2>` for bounded virtual serial profiles. The legacy
 `POST /api/plugins` package-upload endpoint remains for API compatibility, but
