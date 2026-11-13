@@ -40,9 +40,7 @@ static void console_uart_isr(const struct device *dev, void *user_data)
 	uint8_t data[32];
 
 	ARG_UNUSED(user_data);
-	if (uart_irq_update(dev) <= 0) {
-		return;
-	}
+	uart_irq_update(dev);
 	while (uart_irq_rx_ready(dev)) {
 		int count = uart_fifo_read(dev, data, sizeof(data));
 

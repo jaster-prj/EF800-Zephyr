@@ -88,9 +88,10 @@ static void zephyr_uart_callback(const struct device *dev,
 	uint8_t byte;
 	int sent;
 
-	if (transport == NULL || uart_irq_update(dev) <= 0) {
+	if (transport == NULL) {
 		return;
 	}
+	uart_irq_update(dev);
 	if (uart_irq_rx_ready(dev)) {
 		while (uart_fifo_read(dev, &byte, 1U) == 1) {
 			k_spinlock_key_t key = k_spin_lock(&transport->rx_lock);

@@ -1686,7 +1686,8 @@ static void console_rx_callback(const struct device *device, void *user_data)
 	int count;
 
 	ARG_UNUSED(user_data);
-	while (uart_irq_update(device) && uart_irq_is_pending(device)) {
+	uart_irq_update(device);
+	while (uart_irq_is_pending(device)) {
 		if (!uart_irq_rx_ready(device)) {
 			continue;
 		}

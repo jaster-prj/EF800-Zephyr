@@ -11,7 +11,7 @@ manifest:
   projects:
     - name: zephyr
       remote: upstream
-      revision: v4.4.2
+      revision: v4.5.0
       west-commands: scripts/west-commands.yml
       import: true
     - name: PluginManager
@@ -20,7 +20,7 @@ manifest:
       path: modules/lib/PluginManager
     - name: zephyr-mtp
       remote: jaster-prj
-      revision: 0f4dbd85861d1640a3bdbf32fa50492055400678
+      revision: cb1cad67b79771f8b9e56d66170e8c02c3f3e5b7
       path: modules/lib/ZephyrMTP
 
   self:

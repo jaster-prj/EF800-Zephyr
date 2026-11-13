@@ -148,9 +148,7 @@ static void uart_isr(const struct device *dev, void *user_data)
 	uint8_t byte;
 
 	ARG_UNUSED(user_data);
-	if (uart_irq_update(dev) <= 0) {
-		return;
-	}
+	uart_irq_update(dev);
 	if (!uart_irq_rx_ready(dev)) {
 		return;
 	}

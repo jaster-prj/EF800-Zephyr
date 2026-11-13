@@ -413,7 +413,8 @@ static void console_rx_callback(const struct device *device, void *user_data)
 {
 	uint8_t data[16]; int count;
 	ARG_UNUSED(user_data);
-	while (uart_irq_update(device) && uart_irq_is_pending(device)) {
+	uart_irq_update(device);
+	while (uart_irq_is_pending(device)) {
 		if (!uart_irq_rx_ready(device)) continue;
 		count = uart_fifo_read(device, data, sizeof(data));
 		for (int index = 0; index < count; ++index) (void)k_msgq_put(&console_rx_queue, &data[index], K_NO_WAIT);

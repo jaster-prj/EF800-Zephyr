@@ -350,7 +350,7 @@ int z_impl_ef800_plugin_worker_syscall(
 #endif
 }
 
-__pinned_func int ef800_plugin_worker_gateway_entry(
+int ef800_plugin_worker_gateway_entry(
 	struct ef800_plugin_worker_mailbox *mailbox)
 {
 	return ef800_plugin_worker_syscall(mailbox);

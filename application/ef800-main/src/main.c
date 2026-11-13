@@ -5199,7 +5199,8 @@ static void keyboard_uart_isr(const struct device *dev, void *user_data)
 	uint8_t byte;
 
 	ARG_UNUSED(user_data);
-	if (uart_irq_update(dev) <= 0 || !uart_irq_rx_ready(dev)) {
+	uart_irq_update(dev);
+	if (!uart_irq_rx_ready(dev)) {
 		return;
 	}
 	while (uart_fifo_read(dev, &byte, 1U) == 1) {

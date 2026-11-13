@@ -42,7 +42,7 @@ docker exec EF800_Devcontainer bash -lc "git -C /workspace/zephyr describe --tag
 ```
 
 The expected values are `/workspace`, `application/manifest-repo`, `west.yml`,
-and the Zephyr revision in `manifest-repo/west.yml` (currently `v4.4.1`). If
+and the Zephyr revision in `manifest-repo/west.yml` (currently `v4.5.0`). If
 those values match and the projects are present, build without an update.
 
 Run the following initialization only for a newly created container whose

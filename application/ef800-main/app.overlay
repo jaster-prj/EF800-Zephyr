@@ -112,11 +112,15 @@
 
 };
 
+&adc123_common {
+	st,adc-clock-source = "SYNC";
+	st,adc-prescaler = <4>;
+	status = "okay";
+};
+
 &adc1 {
 	pinctrl-0 = <&battery_adc_pc1>;
 	pinctrl-names = "default";
-	st,adc-clock-source = "SYNC";
-	st,adc-prescaler = <4>;
 	status = "okay";
 	#address-cells = <1>;
 	#size-cells = <0>;
@@ -166,7 +170,7 @@
 		compatible = "zephyr,cdc-acm-uart";
 		label = "EF800 USB CDC ACM";
 		rx-fifo-size = <256>;
-		tx-fifo-size = <256>;
+		tx-fifo-size = <1024>;
 	};
 };
 
