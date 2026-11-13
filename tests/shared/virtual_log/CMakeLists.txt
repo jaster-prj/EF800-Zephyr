@@ -3,14 +3,14 @@ cmake_minimum_required(VERSION 3.20.0)
 
 set(BOARD_ROOT ${CMAKE_CURRENT_LIST_DIR}/../../..)
 find_package(Zephyr REQUIRED HINTS $ENV{ZEPHYR_BASE})
-project(ef800_virtual_log_test)
+project(virtual_ef800_log_test)
 
 target_sources(app PRIVATE
 	src/main.c
-	${CMAKE_CURRENT_LIST_DIR}/../../../shared/ef800_virtual_log/ef800_virtual_log.c
+	${CMAKE_CURRENT_LIST_DIR}/../../../shared/virtual_ef800/log/virtual_ef800_log.c
 )
 
 target_include_directories(app PRIVATE
-	${CMAKE_CURRENT_LIST_DIR}/../../../shared/ef800_virtual_log
-	${CMAKE_CURRENT_LIST_DIR}/../../../shared/ef800_virtual_protocol
+	${CMAKE_CURRENT_LIST_DIR}/../../../shared/virtual_ef800/log
+	${CMAKE_CURRENT_LIST_DIR}/../../../shared/virtual_ef800/protocol
 )

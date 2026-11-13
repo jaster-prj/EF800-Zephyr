@@ -13,7 +13,7 @@
 
 #include "ef800_console.h"
 #include "ef800_main_usb_mtp.h"
-#include "ef800_virtual_usb_peer.h"
+#include "virtual_ef800_usb_peer.h"
 
 #define TEST_DATA_DISK "DATA"
 #define TEST_DATA_ROOT "/DATA:/data"
@@ -98,7 +98,7 @@ static void reset_test_filesystem(void)
 
 static void *virtual_usb_setup(void)
 {
-	zassert_ok(ef800_virtual_usb_peer_init(), NULL);
+	zassert_ok(virtual_ef800_usb_peer_init(), NULL);
 	return NULL;
 }
 
@@ -120,7 +120,7 @@ static void virtual_usb_after(void *fixture)
 		cdc_started = false;
 		ef800_console_clear_target();
 	}
-	ef800_virtual_usb_peer_invalidate_session();
+	virtual_ef800_usb_peer_invalidate_session();
 	if (data_mounted) {
 		(void)fs_unmount(&data_mount);
 		data_mounted = false;
@@ -131,10 +131,10 @@ static void start_mtp_context(void)
 {
 	zassert_ok(ef800_main_usb_mtp_start(), NULL);
 	mtp_started = true;
-	zassert_ok(ef800_virtual_usb_peer_wait_for_device(5000U), NULL);
+	zassert_ok(virtual_ef800_usb_peer_wait_for_device(5000U), NULL);
 }
 
-static bool entry_named(const struct ef800_virtual_mtp_entry *entries,
+static bool entry_named(const struct virtual_ef800_mtp_entry *entries,
 			size_t count, const char *name)
 {
 	for (size_t index = 0U; index < count; ++index) {
@@ -160,10 +160,10 @@ static void assert_file_contents(const char *path, const uint8_t *expected,
 	zassert_mem_equal(actual, expected, expected_length, NULL);
 }
 
-ZTEST(ef800_virtual_usb, test_real_main_mtp_lists_uploads_and_downloads)
+ZTEST(virtual_ef800_usb, test_real_main_mtp_lists_uploads_and_downloads)
 {
 	static const uint8_t upload[] = {0x45, 0x46, 0x38, 0x30, 0x30, 0x21, 0x0A, 0xFF};
-	struct ef800_virtual_mtp_entry entries[EF800_VIRTUAL_USB_MAX_OBJECTS];
+	struct virtual_ef800_mtp_entry entries[VIRTUAL_EF800_USB_MAX_OBJECTS];
 	uint8_t too_small[sizeof(upload) - 1U];
 	uint8_t downloaded[sizeof(upload)];
 	size_t count = 0U;
@@ -173,38 +173,38 @@ ZTEST(ef800_virtual_usb, test_real_main_mtp_lists_uploads_and_downloads)
 	int ret;
 
 	start_mtp_context();
-	ret = ef800_virtual_usb_peer_mtp_list(EF800_VIRTUAL_MTP_DATA,
+	ret = virtual_ef800_usb_peer_mtp_list(VIRTUAL_EF800_MTP_DATA,
 		"", entries, ARRAY_SIZE(entries), &count);
 	zassert_equal(ret, 0, "MTP root list failed: %d", ret);
 	zassert_true(entry_named(entries, count, "baseline.txt"), NULL);
 	zassert_true(entry_named(entries, count, "nested"), NULL);
 
-	zassert_ok(ef800_virtual_usb_peer_mtp_list(EF800_VIRTUAL_MTP_DATA,
+	zassert_ok(virtual_ef800_usb_peer_mtp_list(VIRTUAL_EF800_MTP_DATA,
 		"nested", entries, ARRAY_SIZE(entries), &count), NULL);
 	found_nested = entry_named(entries, count, "inside.txt");
 	zassert_true(found_nested, NULL);
 
-	zassert_ok(ef800_virtual_usb_peer_mtp_upload(EF800_VIRTUAL_MTP_DATA,
+	zassert_ok(virtual_ef800_usb_peer_mtp_upload(VIRTUAL_EF800_MTP_DATA,
 		"nested/peer-upload.bin", upload, sizeof(upload)), NULL);
 	assert_file_contents("/DATA:/data/nested/peer-upload.bin", upload,
 			     sizeof(upload));
-	zassert_ok(ef800_virtual_usb_peer_mtp_download(EF800_VIRTUAL_MTP_DATA,
+	zassert_ok(virtual_ef800_usb_peer_mtp_download(VIRTUAL_EF800_MTP_DATA,
 		"nested/peer-upload.bin", downloaded, sizeof(downloaded),
 		&downloaded_length), NULL);
 	zassert_equal(downloaded_length, sizeof(upload), NULL);
 	zassert_mem_equal(downloaded, upload, sizeof(upload), NULL);
 
-	zassert_equal(ef800_virtual_usb_peer_mtp_list(EF800_VIRTUAL_MTP_DATA,
+	zassert_equal(virtual_ef800_usb_peer_mtp_list(VIRTUAL_EF800_MTP_DATA,
 		"../", entries, ARRAY_SIZE(entries), &count), -EINVAL, NULL);
-	zassert_equal(ef800_virtual_usb_peer_mtp_download(EF800_VIRTUAL_MTP_DATA,
+	zassert_equal(virtual_ef800_usb_peer_mtp_download(VIRTUAL_EF800_MTP_DATA,
 		"nested/peer-upload.bin", too_small, sizeof(too_small),
 		&rejected_length), -ENOSPC, NULL);
 	zassert_equal(rejected_length, sizeof(upload), NULL);
-	zassert_equal(ef800_virtual_usb_peer_mtp_upload(EF800_VIRTUAL_MTP_DATA,
+	zassert_equal(virtual_ef800_usb_peer_mtp_upload(VIRTUAL_EF800_MTP_DATA,
 		"../escape.bin", upload, sizeof(upload)), -EINVAL, NULL);
 }
 
-ZTEST(ef800_virtual_usb, test_usbmsd0_keeps_shared_data_fat_owned)
+ZTEST(virtual_ef800_usb, test_usbmsd0_keeps_shared_data_fat_owned)
 {
 	struct fs_dirent entry;
 
@@ -215,7 +215,7 @@ ZTEST(ef800_virtual_usb, test_usbmsd0_keeps_shared_data_fat_owned)
 	zassert_equal(entry.type, FS_DIR_ENTRY_FILE, NULL);
 }
 
-ZTEST(ef800_virtual_usb, test_real_main_cdc_acm_exchanges_bytes)
+ZTEST(virtual_ef800_usb, test_real_main_cdc_acm_exchanges_bytes)
 {
 	static const uint8_t host_to_device[] = {0x43, 0x44, 0x43, 0x31};
 	static const uint8_t device_to_host[] = {0x44, 0x45, 0x56, 0x31};
@@ -229,9 +229,9 @@ ZTEST(ef800_virtual_usb, test_real_main_cdc_acm_exchanges_bytes)
 	zassert_ok(ef800_console_set_target(4U), NULL);
 	zassert_ok(ef800_console_usb_start(), NULL);
 	cdc_started = true;
-	zassert_ok(ef800_virtual_usb_peer_wait_for_device(5000U), NULL);
+	zassert_ok(virtual_ef800_usb_peer_wait_for_device(5000U), NULL);
 
-	zassert_ok(ef800_virtual_usb_peer_cdc_write(host_to_device,
+	zassert_ok(virtual_ef800_usb_peer_cdc_write(host_to_device,
 						     sizeof(host_to_device)), NULL);
 	deadline = k_uptime_get() + 1000;
 	for (size_t index = 0U; index < sizeof(received);) {
@@ -250,7 +250,7 @@ ZTEST(ef800_virtual_usb, test_real_main_cdc_acm_exchanges_bytes)
 	deadline = k_uptime_get() + 1500;
 	while (k_uptime_get() < deadline && !host_received_output) {
 		usb_length = 0U;
-		if (ef800_virtual_usb_peer_cdc_read(usb_data, sizeof(usb_data),
+		if (virtual_ef800_usb_peer_cdc_read(usb_data, sizeof(usb_data),
 						     &usb_length, 100U) == 0 &&
 			usb_length >= sizeof(device_to_host)) {
 			for (size_t index = 0U;
@@ -267,5 +267,5 @@ ZTEST(ef800_virtual_usb, test_real_main_cdc_acm_exchanges_bytes)
 		     "CDC ACM device output was not observed on the virtual host");
 }
 
-ZTEST_SUITE(ef800_virtual_usb, NULL, virtual_usb_setup, virtual_usb_before,
+ZTEST_SUITE(virtual_ef800_usb, NULL, virtual_usb_setup, virtual_usb_before,
 	virtual_usb_after, NULL);

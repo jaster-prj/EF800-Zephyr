@@ -48,20 +48,23 @@ fi
 /opt/venv/bin/python -m pip install -r zephyr/scripts/requirements.txt
 ```
 
-Build the four firmware targets with:
+Build the six firmware targets with:
 
 ```sh
 /opt/venv/bin/west build -p always -b ef800 application/application/ef800-main -d application/build/ef800-main
 /opt/venv/bin/west build -p always -b ef800 application/application/ef800-backup -d application/build/ef800-backup
 /opt/venv/bin/west build -p always -b ef800 application/application/ef800-bootloader -d application/build/ef800-bootloader
 /opt/venv/bin/west build -p always -b ef800_keyboard application/application/ef800-keyboard -d application/build/ef800-keyboard
+/opt/venv/bin/west build -p always -b ef800_keyboard application/application/ef800-keyboard-bootloader -d application/build/ef800-keyboard-bootloader
+/opt/venv/bin/west build -p always -b ef800_keyboard application/application/ef800-keyboard-updater -d application/build/ef800-keyboard-updater
+bash application/scripts/verify-images.sh
 ```
 
 For the temporary, read-only external-flash hardware-debug image:
 
 ```sh
-/opt/venv/bin/west build -p always -b ef800 application/application/ef800-hwdebug -d application/build/ef800-hwdebug
-bash application/scripts/verify-hwdebug-image.sh
+/opt/venv/bin/west build -p always -b ef800 application/application/test-hwdebug -d application/build/test-hwdebug
+bash application/scripts/verify-test-hwdebug-image.sh
 ```
 
 This image replaces the second-level bootloader at `0x08000000` and must only

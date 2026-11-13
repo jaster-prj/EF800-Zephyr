@@ -9,7 +9,7 @@
 
 LOG_MODULE_REGISTER(ef800_max17043, LOG_LEVEL_INF);
 
-__weak bool ef800_virtual_battery_available(void)
+__weak bool virtual_ef800_battery_available(void)
 {
 	return true;
 }
@@ -74,7 +74,7 @@ int ef800_max17043_init(struct ef800_max17043 *gauge,
 		return -ENODEV;
 	}
 	/* cppcheck-suppress knownConditionTrueFalse -- weak hook has target overrides */
-	if (!ef800_virtual_battery_available()) {
+	if (!virtual_ef800_battery_available()) {
 		return -ENODEV;
 	}
 
@@ -105,7 +105,7 @@ int ef800_max17043_read(struct ef800_max17043 *gauge,
 		return -ENODEV;
 	}
 	/* cppcheck-suppress knownConditionTrueFalse -- weak hook has target overrides */
-	if (!ef800_virtual_battery_available()) {
+	if (!virtual_ef800_battery_available()) {
 		return -ENODEV;
 	}
 

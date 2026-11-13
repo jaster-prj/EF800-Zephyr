@@ -1,0 +1,18 @@
+# SPDX-License-Identifier: Apache-2.0
+
+config TEST_USB_SAMPLE_WIPE_STORAGE
+	bool "Erase external flash storage before mounting"
+	default n
+	help
+		Erase only the external flash storage partition before mounting it.
+		This is destructive and must be enabled only for a controlled test.
+
+config TEST_USB_SAMPLE_VID
+	hex "USB vendor ID"
+	default 0x2fe3
+
+config TEST_USB_SAMPLE_PID
+	hex "USB product ID"
+	default 0xef84
+
+source "Kconfig.zephyr"

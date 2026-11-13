@@ -28,7 +28,7 @@
 #include "ef800_qspi_layout.h"
 #include "ef800_composition.h"
 #ifdef CONFIG_BOARD_NATIVE_SIM
-#include "ef800_virtual_profile.h"
+#include "virtual_ef800_profile.h"
 #endif
 
 uint32_t get_fattime(void)
@@ -939,7 +939,7 @@ int ef800_storage_mount(void)
 		return 0;
 	}
 #ifdef CONFIG_BOARD_NATIVE_SIM
-	if (!ef800_virtual_profile_available(5U)) {
+	if (!virtual_ef800_profile_available(5U)) {
 		return -ENODEV;
 	}
 #endif

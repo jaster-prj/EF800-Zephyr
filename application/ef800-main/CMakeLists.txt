@@ -57,36 +57,42 @@ if(BOARD STREQUAL "native_sim")
 		${CMAKE_CURRENT_LIST_DIR}/../../shared/ef800_ports/ef800_console_usb.c
 		${CMAKE_CURRENT_LIST_DIR}/../../shared/ef800_ports/ef800_main_usb_msc_native.c
 		${CMAKE_CURRENT_LIST_DIR}/../../shared/ef800_ports/ef800_main_usb_mtp.c
-		${CMAKE_CURRENT_LIST_DIR}/../../shared/ef800_virtual_usb/ef800_virtual_usb_peer.c
+		${CMAKE_CURRENT_LIST_DIR}/../../shared/virtual_ef800/usb/virtual_ef800_usb_peer.c
 		${CMAKE_CURRENT_LIST_DIR}/../../shared/ef800_watchdog/ef800_watchdog_native.c
-		${CMAKE_CURRENT_LIST_DIR}/../../shared/ef800_virtual_keyboard/ef800_virtual_keyboard_controller.c
-		${CMAKE_CURRENT_LIST_DIR}/../../shared/ef800_virtual/ef800_virtual_mcp23017.c
-		${CMAKE_CURRENT_LIST_DIR}/../../shared/ef800_virtual/ef800_virtual_ds3231.c
-		${CMAKE_CURRENT_LIST_DIR}/../../shared/ef800_virtual/ef800_virtual_gpio_emul.c
-		${CMAKE_CURRENT_LIST_DIR}/../../shared/ef800_virtual/ef800_virtual_t6963_bus.c
-		${CMAKE_CURRENT_LIST_DIR}/../../shared/ef800_virtual/ef800_virtual_wiring.c
-		${CMAKE_CURRENT_LIST_DIR}/../../shared/ef800_virtual/ef800_virtual_frontpanel_bridge.c
-		${CMAKE_CURRENT_LIST_DIR}/../../shared/ef800_virtual/ef800_virtual_serial_peers.c
-		${CMAKE_CURRENT_LIST_DIR}/../../shared/ef800_virtual/ef800_virtual_profile.c
-		${CMAKE_CURRENT_LIST_DIR}/../../shared/ef800_virtual/ef800_virtual_battery.c
-		${CMAKE_CURRENT_LIST_DIR}/../../shared/ef800_virtual_display/ef800_virtual_display.c
-		${CMAKE_CURRENT_LIST_DIR}/../../shared/ef800_virtual_frontpanel/ef800_virtual_frontpanel.c
-		${CMAKE_CURRENT_LIST_DIR}/../../shared/ef800_virtual_log/ef800_virtual_log.c
-		${CMAKE_CURRENT_LIST_DIR}/../../shared/ef800_virtual_protocol/ef800_virtual_protocol.c
-		${CMAKE_CURRENT_LIST_DIR}/../../shared/ef800_virtual_keyboard/ef800_virtual_keyboard.c
+		${CMAKE_CURRENT_LIST_DIR}/../../shared/virtual_ef800/keyboard/virtual_ef800_keyboard_controller.c
+		${CMAKE_CURRENT_LIST_DIR}/../../shared/virtual_ef800/gpio/virtual_ef800_mcp23017.c
+		${CMAKE_CURRENT_LIST_DIR}/../../shared/virtual_ef800/rtc/virtual_ef800_ds3231.c
+		${CMAKE_CURRENT_LIST_DIR}/../../shared/virtual_ef800/gpio/virtual_ef800_gpio_emul.c
+		${CMAKE_CURRENT_LIST_DIR}/../../shared/virtual_ef800/display/virtual_ef800_t6963_bus.c
+		${CMAKE_CURRENT_LIST_DIR}/../../shared/virtual_ef800/gpio/virtual_ef800_wiring.c
+		${CMAKE_CURRENT_LIST_DIR}/../../shared/virtual_ef800/frontpanel/virtual_ef800_frontpanel_bridge.c
+		${CMAKE_CURRENT_LIST_DIR}/../../shared/virtual_ef800/serial/virtual_ef800_serial_peers.c
+		${CMAKE_CURRENT_LIST_DIR}/../../shared/virtual_ef800/profile/virtual_ef800_profile.c
+		${CMAKE_CURRENT_LIST_DIR}/../../shared/virtual_ef800/battery/virtual_ef800_battery.c
+		${CMAKE_CURRENT_LIST_DIR}/../../shared/virtual_ef800/display/virtual_ef800_display.c
+		${CMAKE_CURRENT_LIST_DIR}/../../shared/virtual_ef800/frontpanel/virtual_ef800_frontpanel.c
+		${CMAKE_CURRENT_LIST_DIR}/../../shared/virtual_ef800/log/virtual_ef800_log.c
+		${CMAKE_CURRENT_LIST_DIR}/../../shared/virtual_ef800/protocol/virtual_ef800_protocol.c
+		${CMAKE_CURRENT_LIST_DIR}/../../shared/virtual_ef800/keyboard/virtual_ef800_keyboard.c
 		${CMAKE_CURRENT_LIST_DIR}/../../application/ef800-keyboard/src/keyboard_key_names.c
 		${CMAKE_CURRENT_LIST_DIR}/../../application/tlx-711a/src/t6963_emulator.c
 	)
 	target_include_directories(app PRIVATE
-		${CMAKE_CURRENT_LIST_DIR}/../../shared/ef800_virtual
-		${CMAKE_CURRENT_LIST_DIR}/../../shared/ef800_virtual_keyboard
-		${CMAKE_CURRENT_LIST_DIR}/../../shared/ef800_virtual_display
-		${CMAKE_CURRENT_LIST_DIR}/../../shared/ef800_virtual_frontpanel
-		${CMAKE_CURRENT_LIST_DIR}/../../shared/ef800_virtual_log
-		${CMAKE_CURRENT_LIST_DIR}/../../shared/ef800_virtual_protocol
+		${CMAKE_CURRENT_LIST_DIR}/../../shared/virtual_ef800
+		${CMAKE_CURRENT_LIST_DIR}/../../shared/virtual_ef800/keyboard
+		${CMAKE_CURRENT_LIST_DIR}/../../shared/virtual_ef800/display
+		${CMAKE_CURRENT_LIST_DIR}/../../shared/virtual_ef800/frontpanel
+		${CMAKE_CURRENT_LIST_DIR}/../../shared/virtual_ef800/log
+		${CMAKE_CURRENT_LIST_DIR}/../../shared/virtual_ef800/protocol
 		${CMAKE_CURRENT_LIST_DIR}/../../application/ef800-keyboard/src
 		${CMAKE_CURRENT_LIST_DIR}/../../application/tlx-711a/src
-		${CMAKE_CURRENT_LIST_DIR}/../../shared/ef800_virtual_usb
+		${CMAKE_CURRENT_LIST_DIR}/../../shared/virtual_ef800/usb
+		${CMAKE_CURRENT_LIST_DIR}/../../shared/virtual_ef800/battery
+		${CMAKE_CURRENT_LIST_DIR}/../../shared/virtual_ef800/core
+		${CMAKE_CURRENT_LIST_DIR}/../../shared/virtual_ef800/gpio
+		${CMAKE_CURRENT_LIST_DIR}/../../shared/virtual_ef800/profile
+		${CMAKE_CURRENT_LIST_DIR}/../../shared/virtual_ef800/rtc
+		${CMAKE_CURRENT_LIST_DIR}/../../shared/virtual_ef800/serial
 		${ZEPHYR_BASE}/subsys/usb/host
 	)
 else()

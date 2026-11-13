@@ -9,7 +9,7 @@
 
 #ifdef CONFIG_BOARD_NATIVE_SIM
 #include <zephyr/drivers/adc/adc_emul.h>
-#include "ef800_virtual_profile.h"
+#include "virtual_ef800_profile.h"
 #endif
 
 #include "ef800_battery_adc_ring.h"
@@ -60,11 +60,11 @@ int ef800_main_battery_adc_read(void *context,
 		return result;
 	}
 #ifdef CONFIG_BOARD_NATIVE_SIM
-	if (!ef800_virtual_profile_available(4U)) {
+	if (!virtual_ef800_profile_available(4U)) {
 		return -ENODEV;
 	}
 	result = ef800_battery_pin_mv_from_soc(&table,
-		ef800_virtual_profile_battery_soc(), &pin_mv_input);
+		virtual_ef800_profile_battery_soc(), &pin_mv_input);
 	if (result != 0) {
 		return result;
 	}

@@ -41,10 +41,10 @@ The measurement-plugin project builds separate deliverables with its own CMake c
 
 Additional application C projects discovered in the repository but outside the six firmware-image scope are classified separately rather than silently folded into those image inventories:
 
-- `application/ef800-hwdebug`: 11 EF800-authored hardware diagnostic sources; development/diagnostic target, not one of the six images.
-- `application/ef800-isolation-spike`: 4 sources including a dummy plugin; architectural spike, not a production image.
+- `application/test-hwdebug`: 11 EF800-authored hardware diagnostic sources; development/diagnostic target, not one of the six images.
+- `application/test-isolation-spike`: 4 sources including a dummy plugin; architectural spike, not a production image.
 - `application/tlx-711a`: 4 LCD/emulator utility sources; its `t6963_emulator.c` is reused by MainApplication native-sim.
-- `application/ef800_usb_sample` and `application/test-usb-mtp`: one source each, sample/diagnostic targets.
+- `application/test-usb-sample` and `application/test-usb-mtp`: one source each, sample/diagnostic targets.
 
 These auxiliary projects should be separately included or explicitly excluded in the final compliance policy according to the defined EF800-owned scope; they are not third-party code.
 

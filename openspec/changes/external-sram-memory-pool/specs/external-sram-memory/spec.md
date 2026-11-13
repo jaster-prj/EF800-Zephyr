@@ -39,7 +39,7 @@ When external SRAM is validated, MainApplication SHALL use it for designated eli
 - **THEN** the object remains owned and access-controlled by MainApplication and is not implicitly exposed to plugin workers
 
 ### Requirement: Validate external SRAM in the standalone hardware-debug image
-The external SRAM hardware bring-up SHALL be independently testable in `ef800-hwdebug` before MainApplication depends on the region.
+The external SRAM hardware bring-up SHALL be independently testable in `test-hwdebug` before MainApplication depends on the region.
 
 #### Scenario: Hardware-debug SRAM test passes
 - **WHEN** the hwdebug test exercises the configured SRAM range

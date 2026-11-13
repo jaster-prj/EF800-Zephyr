@@ -18,15 +18,16 @@ target_sources(app PRIVATE
 	${CMAKE_CURRENT_LIST_DIR}/../../../shared/ef800_battery/ef800_battery_soc_store.c
 	${CMAKE_CURRENT_LIST_DIR}/../../../shared/ef800_runtime/ef800_runtime_state.c
 	${CMAKE_CURRENT_LIST_DIR}/../../../shared/ef800_drivers/ef800_max17043.c
-	${CMAKE_CURRENT_LIST_DIR}/../../../shared/ef800_virtual/ef800_virtual_profile.c
-	${CMAKE_CURRENT_LIST_DIR}/../../../shared/ef800_virtual/ef800_virtual_battery.c
+	${CMAKE_CURRENT_LIST_DIR}/../../../shared/virtual_ef800/profile/virtual_ef800_profile.c
+	${CMAKE_CURRENT_LIST_DIR}/../../../shared/virtual_ef800/battery/virtual_ef800_battery.c
 	${CMAKE_CURRENT_LIST_DIR}/../../../shared/ef800_persistence/ef800_persistence.c
 	${CMAKE_CURRENT_LIST_DIR}/../../../shared/ef800_persistence/ef800_persistence_fake.c
 )
 target_include_directories(app PRIVATE
 	${CMAKE_CURRENT_LIST_DIR}/../../../shared/ef800_battery
 	${CMAKE_CURRENT_LIST_DIR}/../../../shared/ef800_drivers
-	${CMAKE_CURRENT_LIST_DIR}/../../../shared/ef800_virtual
+	${CMAKE_CURRENT_LIST_DIR}/../../../shared/virtual_ef800/profile
+	${CMAKE_CURRENT_LIST_DIR}/../../../shared/virtual_ef800/serial
 	${CMAKE_CURRENT_LIST_DIR}/../../../shared/ef800_runtime
 	${CMAKE_CURRENT_LIST_DIR}/../../../shared/ef800_main
 	${CMAKE_CURRENT_LIST_DIR}/../../../shared/ef800_persistence

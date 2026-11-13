@@ -75,6 +75,7 @@ docker exec -w /workspace EF800_Devcontainer /opt/venv/bin/west build -p always 
 docker exec -w /workspace EF800_Devcontainer /opt/venv/bin/west build -p always -b ef800 application/application/ef800-bootloader -d application/build/ef800-bootloader
 docker exec -w /workspace EF800_Devcontainer /opt/venv/bin/west build -p always -b ef800_keyboard application/application/ef800-keyboard -d application/build/ef800-keyboard
 docker exec -w /workspace EF800_Devcontainer /opt/venv/bin/west build -p always -b ef800_keyboard application/application/ef800-keyboard-bootloader -d application/build/ef800-keyboard-bootloader
+docker exec -w /workspace EF800_Devcontainer /opt/venv/bin/west build -p always -b ef800_keyboard application/application/ef800-keyboard-updater -d application/build/ef800-keyboard-updater
 ```
 
 For normal source-only iterations, reuse the configured build directory:
@@ -130,10 +131,10 @@ Use the detected device ID/name to identify the MCU, and verify EF800 PCB
 power and VTREF at the hardware instead of relying on the Programmer Voltage
 field. A Nucleo ST-LINK voltage reading does not replace those checks.
 
-Flash the temporary `ef800-hwdebug` image at `0x08000000`:
+Flash the temporary `test-hwdebug` image at `0x08000000`:
 
 ```powershell
-& "C:\Program Files\STMicroelectronics\STM32Cube\STM32CubeProgrammer\bin\STM32_Programmer_CLI.exe" -c port=SWD mode=UR reset=HWrst sn=066FFF504982494867074032 -d "build\ef800-hwdebug\zephyr\zephyr.bin" 0x08000000 -rst
+& "C:\Program Files\STMicroelectronics\STM32Cube\STM32CubeProgrammer\bin\STM32_Programmer_CLI.exe" -c port=SWD mode=UR reset=HWrst sn=066FFF504982494867074032 -d "build\test-hwdebug\zephyr\zephyr.bin" 0x08000000 -rst
 ```
 
 The command must use probe `066FFF504982494867074032` and report `Device ID : 0x461` and `Device name : STM32L496xx`.
@@ -159,9 +160,9 @@ mistake. The normal sequence is:
 
 ```powershell
 docker exec -w /workspace EF800_Devcontainer /opt/venv/bin/west build -p always -b ef800_keyboard application/application/ef800-keyboard -d application/build/ef800-keyboard
-docker exec -w /workspace EF800_Devcontainer /opt/venv/bin/west build -p always -b ef800 application/application/ef800-hwdebug -d application/build/ef800-hwdebug
+docker exec -w /workspace EF800_Devcontainer /opt/venv/bin/west build -p always -b ef800 application/application/test-hwdebug -d application/build/test-hwdebug
 & "C:\Program Files\STMicroelectronics\STM32Cube\STM32CubeProgrammer\bin\STM32_Programmer_CLI.exe" -c port=SWD mode=UR reset=HWrst sn=0672FF504955857567234934 -d "build\ef800-keyboard\zephyr\zephyr.bin" 0x08000000 -rst
-& "C:\Program Files\STMicroelectronics\STM32Cube\STM32CubeProgrammer\bin\STM32_Programmer_CLI.exe" -c port=SWD mode=UR reset=HWrst sn=066FFF504982494867074032 -d "build\ef800-hwdebug\zephyr\zephyr.bin" 0x08000000 -rst
+& "C:\Program Files\STMicroelectronics\STM32Cube\STM32CubeProgrammer\bin\STM32_Programmer_CLI.exe" -c port=SWD mode=UR reset=HWrst sn=066FFF504982494867074032 -d "build\test-hwdebug\zephyr\zephyr.bin" 0x08000000 -rst
 ```
 
 For the keyboard link, the physical L496 pin functions are `PG7=LPUART1_TX`
@@ -222,7 +223,7 @@ Build and run the native keyboard, protocol, RTC, and persistence tests with:
 docker exec -e ZEPHYR_BASE=/workspace/zephyr -w /workspace EF800_Devcontainer /opt/venv/bin/west twister -T application/tests -p native_sim --inline-logs --no-clean
 ```
 
-All four firmware builds and the native tests must pass before considering a
+All six firmware builds and the native tests must pass before considering a
 porting increment complete. The current closeout baseline is 31 native test
 cases. Keep `docs/migration-status.md` authoritative when the suite changes.
 
@@ -243,8 +244,9 @@ After a pristine build, verify both binary sizes and linked addresses:
 docker exec -w /workspace EF800_Devcontainer bash application/scripts/verify-images.sh
 ```
 
-Pass four alternate build directories when validating nonstandard local build
-names. Their order is bootloader, backup, main, and keyboard.
+Pass six alternate build directories when validating nonstandard local build
+names. Their order is bootloader, backup, main, keyboard, keyboard bootloader,
+and keyboard updater.
 
 Never flash a MainApplication image linked at `0x08000000`; it would overlap
 the second-level bootloader.

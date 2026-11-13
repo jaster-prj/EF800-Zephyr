@@ -1,7 +1,7 @@
 /* SPDX-License-Identifier: Apache-2.0 */
 #include <zephyr/ztest.h>
 
-#include "ef800_virtual_display.h"
+#include "virtual_ef800_display.h"
 #include "t6963_emulator.h"
 
 static struct t6963_emulator_config ef800_config = {
@@ -22,51 +22,51 @@ static void set_address(struct t6963_emulator *emu, uint16_t address)
 
 ZTEST(shared_virtual_display, test_pixel_bit_order_and_bounds)
 {
-	struct ef800_virtual_display display;
+	struct virtual_ef800_display display;
 
-	ef800_virtual_display_init(&display);
-	zassert_ok(ef800_virtual_display_set_pixel(&display, 0U, 0U, true), NULL);
-	zassert_ok(ef800_virtual_display_set_pixel(&display, 7U, 0U, true), NULL);
-	zassert_ok(ef800_virtual_display_set_pixel(&display, 8U, 0U, true), NULL);
+	virtual_ef800_display_init(&display);
+	zassert_ok(virtual_ef800_display_set_pixel(&display, 0U, 0U, true), NULL);
+	zassert_ok(virtual_ef800_display_set_pixel(&display, 7U, 0U, true), NULL);
+	zassert_ok(virtual_ef800_display_set_pixel(&display, 8U, 0U, true), NULL);
 	zassert_equal(display.frame[0], 0x81U, NULL);
 	zassert_equal(display.frame[1], 0x01U, NULL);
-	zassert_equal(ef800_virtual_display_set_pixel(&display, 240U, 0U, true),
+	zassert_equal(virtual_ef800_display_set_pixel(&display, 240U, 0U, true),
 		-EINVAL, NULL);
 }
 
 ZTEST(shared_virtual_display, test_snapshot_sequence_and_acknowledgement)
 {
-	struct ef800_virtual_display display;
-	uint8_t frame[EF800_VIRTUAL_DISPLAY_FRAME_SIZE];
+	struct virtual_ef800_display display;
+	uint8_t frame[VIRTUAL_EF800_DISPLAY_FRAME_SIZE];
 	uint32_t sequence;
 
-	ef800_virtual_display_init(&display);
-	zassert_true(ef800_virtual_display_is_dirty(&display), NULL);
-	zassert_ok(ef800_virtual_display_snapshot(&display, frame, sizeof(frame),
+	virtual_ef800_display_init(&display);
+	zassert_true(virtual_ef800_display_is_dirty(&display), NULL);
+	zassert_ok(virtual_ef800_display_snapshot(&display, frame, sizeof(frame),
 		&sequence), NULL);
-	zassert_equal(sequence, ef800_virtual_display_sequence(&display), NULL);
-	ef800_virtual_display_acknowledge(&display, sequence - 1U);
-	zassert_true(ef800_virtual_display_is_dirty(&display), NULL);
-	ef800_virtual_display_acknowledge(&display, sequence);
-	zassert_false(ef800_virtual_display_is_dirty(&display), NULL);
-	zassert_equal(ef800_virtual_display_snapshot(&display, frame,
+	zassert_equal(sequence, virtual_ef800_display_sequence(&display), NULL);
+	virtual_ef800_display_acknowledge(&display, sequence - 1U);
+	zassert_true(virtual_ef800_display_is_dirty(&display), NULL);
+	virtual_ef800_display_acknowledge(&display, sequence);
+	zassert_false(virtual_ef800_display_is_dirty(&display), NULL);
+	zassert_equal(virtual_ef800_display_snapshot(&display, frame,
 		sizeof(frame) - 1U, &sequence), -EINVAL, NULL);
 }
 
 ZTEST(shared_virtual_display, test_clear_and_structured_text_rows)
 {
-	struct ef800_virtual_display display;
+	struct virtual_ef800_display display;
 
-	ef800_virtual_display_init(&display);
-	zassert_ok(ef800_virtual_display_write_line(&display, 0U, "Main menu"), NULL);
+	virtual_ef800_display_init(&display);
+	zassert_ok(virtual_ef800_display_write_line(&display, 0U, "Main menu"), NULL);
 	zassert_mem_equal(display.text[0], "Main menu", 9U, NULL);
 	zassert_equal(display.text[0][9], '\0', NULL);
-	zassert_equal(ef800_virtual_display_write_line(&display, 8U, "bad"),
+	zassert_equal(virtual_ef800_display_write_line(&display, 8U, "bad"),
 		-EINVAL, NULL);
-	zassert_ok(ef800_virtual_display_set_pixel(&display, 3U, 3U, true), NULL);
-	ef800_virtual_display_clear(&display);
+	zassert_ok(virtual_ef800_display_set_pixel(&display, 3U, 3U, true), NULL);
+	virtual_ef800_display_clear(&display);
 	zassert_equal(display.frame[0], 0U, NULL);
-	for (size_t index = 0U; index < EF800_VIRTUAL_DISPLAY_TEXT_COLUMNS; ++index) {
+	for (size_t index = 0U; index < VIRTUAL_EF800_DISPLAY_TEXT_COLUMNS; ++index) {
 		zassert_equal(display.text[0][index], ' ', NULL);
 	}
 }

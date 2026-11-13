@@ -6,6 +6,8 @@ bootloader_dir="${1:-application/build/ef800-bootloader}"
 backup_dir="${2:-application/build/ef800-backup}"
 main_dir="${3:-application/build/ef800-main}"
 keyboard_dir="${4:-application/build/ef800-keyboard}"
+keyboard_bootloader_dir="${5:-application/build/ef800-keyboard-bootloader}"
+keyboard_updater_dir="${6:-application/build/ef800-keyboard-updater}"
 
 verify_image() {
 	name="$1"
@@ -49,3 +51,5 @@ verify_image bootloader "${bootloader_dir}" 08000000 65536
 verify_image backup "${backup_dir}" 08010000 131072
 verify_image main "${main_dir}" 08030000 851968
 verify_size keyboard "${keyboard_dir}" 262144
+verify_image keyboard-bootloader "${keyboard_bootloader_dir}" 08000000 32768
+verify_image keyboard-updater "${keyboard_updater_dir}" 08038000 32768

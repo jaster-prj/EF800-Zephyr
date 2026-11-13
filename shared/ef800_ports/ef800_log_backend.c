@@ -11,8 +11,8 @@
 #include "ef800_console.h"
 
 #if defined(CONFIG_BOARD_NATIVE_SIM)
-#include "ef800_virtual_frontpanel.h"
-#include "ef800_virtual_protocol.h"
+#include "virtual_ef800_frontpanel.h"
+#include "virtual_ef800_protocol.h"
 #endif
 
 LOG_MODULE_REGISTER(ef800_log_backend, LOG_LEVEL_NONE);
@@ -24,7 +24,7 @@ struct ef800_log_data {
 	bool in_panic;
 #if defined(CONFIG_BOARD_NATIVE_SIM)
 	uint8_t native_severity;
-	uint8_t native_buffer[EF800_VIRTUAL_LOG_MAX_TEXT];
+	uint8_t native_buffer[VIRTUAL_EF800_LOG_MAX_TEXT];
 	size_t native_length;
 #endif
 };
@@ -63,10 +63,10 @@ static void log_process(const struct log_backend *const backend,
 		uint32_t level = log_msg_get_level(&msg->log);
 
 		data->native_severity = level >= LOG_LEVEL_DBG ?
-			EF800_VIRTUAL_LOG_DEBUG : level == LOG_LEVEL_INF ?
-			EF800_VIRTUAL_LOG_INFO : level == LOG_LEVEL_WRN ?
-			EF800_VIRTUAL_LOG_WARNING : level == LOG_LEVEL_ERR ?
-			EF800_VIRTUAL_LOG_ERROR : EF800_VIRTUAL_LOG_PANIC;
+			VIRTUAL_EF800_LOG_DEBUG : level == LOG_LEVEL_INF ?
+			VIRTUAL_EF800_LOG_INFO : level == LOG_LEVEL_WRN ?
+			VIRTUAL_EF800_LOG_WARNING : level == LOG_LEVEL_ERR ?
+			VIRTUAL_EF800_LOG_ERROR : VIRTUAL_EF800_LOG_PANIC;
 		data->native_length = 0U;
 #endif
 		format(&ef800_log_output, &msg->log,
@@ -78,7 +78,7 @@ static void log_process(const struct log_backend *const backend,
 			data->native_length--;
 		}
 		if (data->native_length != 0U) {
-			ef800_virtual_frontpanel_log_record(data->native_severity,
+			virtual_ef800_frontpanel_log_record(data->native_severity,
 				data->native_buffer, data->native_length);
 		}
 #endif

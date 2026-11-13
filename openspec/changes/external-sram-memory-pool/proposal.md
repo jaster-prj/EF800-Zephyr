@@ -6,7 +6,7 @@ MainApplication already consumes most of the STM32L496's internal SRAM, while th
 
 ## What Changes
 
-- Bring up and validate the board's FMC-connected SRAM first in the standalone `ef800-hwdebug` application, using STM32L496 and IS61 datasheet-derived controller timings and the board schematic as the wiring source of truth.
+- Bring up and validate the board's FMC-connected SRAM first in the standalone `test-hwdebug` application, using STM32L496 and IS61 datasheet-derived controller timings and the board schematic as the wiring source of truth.
 - Integrate external SRAM as a fixed EF800 board/build memory resource, not a COMPOSITION-selected feature; make MainApplication's memory use of it explicit in the build and link/runtime layout.
 - Move suitable MainApplication-owned allocations to external SRAM where beneficial, keeping host hardware/service memory under MainApplication ownership.
 - Allow plugin packages to declare bounded plugin-owned memory needs and admit or reject each package against available memory, linker/MPU constraints, and the active runtime profile.
@@ -24,6 +24,6 @@ MainApplication already consumes most of the STM32L496's internal SRAM, while th
 ## Impact
 
 - `boards/ef800` DeviceTree/board configuration and memory/linker integration.
-- `application/ef800-hwdebug` for the initial SRAM test and `application/ef800-main` for runtime initialization, memory allocation, plugin admission, and fallback.
+- `application/test-hwdebug` for the initial SRAM test and `application/ef800-main` for runtime initialization, memory allocation, plugin admission, and fallback.
 - Plugin package metadata/loader ABI and `openspec/specs/plugin-execution-isolation`.
 - Target verification on STM32L496; external SRAM and internal SRAM must both retain the required protection properties.

@@ -16,7 +16,7 @@
 #include "ef800_max17043.h"
 #include "ef800_persistence_fake.h"
 #include "ef800_runtime_state.h"
-#include "ef800_virtual_profile.h"
+#include "virtual_ef800_profile.h"
 
 int ef800_main_rtc_get_local_time(struct rtc_time *local)
 {
@@ -24,14 +24,14 @@ int ef800_main_rtc_get_local_time(struct rtc_time *local)
 	return -ENOTSUP;
 }
 
-int ef800_virtual_serial_peer_set_profile(uint8_t port, uint8_t profile)
+int virtual_ef800_serial_peer_set_profile(uint8_t port, uint8_t profile)
 {
 	ARG_UNUSED(port);
 	ARG_UNUSED(profile);
 	return 0;
 }
 
-int ef800_virtual_serial_peer_set(uint8_t port, const uint8_t *response,
+int virtual_ef800_serial_peer_set(uint8_t port, const uint8_t *response,
 	size_t length, int32_t delay_ms, int32_t error, bool available)
 {
 	ARG_UNUSED(port);
@@ -199,9 +199,9 @@ ZTEST(battery_soc_adc, test_native_adc_path_converts_millivolts_and_soc_bounds)
 		uint8_t requested_soc = requested_values[index];
 
 		battery_control[2] = requested_soc;
-		zassert_ok(ef800_virtual_profile_apply(battery_control,
+		zassert_ok(virtual_ef800_profile_apply(battery_control,
 			sizeof(battery_control)), NULL);
-		requested_soc = ef800_virtual_profile_battery_soc();
+		requested_soc = virtual_ef800_profile_battery_soc();
 		zassert_ok(ef800_battery_pin_mv_from_soc(&table, requested_soc,
 			&requested_mv), NULL);
 		zassert_ok(adc_emul_const_value_set(test_battery_adc.dev,
@@ -231,23 +231,23 @@ ZTEST(battery_soc_gauge_emul, test_max17048_register_path_uses_virtual_soc)
 	uint8_t set_unavailable[] = { 4U, 1U, 0U };
 	uint8_t set_available[] = { 4U, 1U, 1U };
 
-	zassert_ok(ef800_virtual_profile_apply(set_zero, sizeof(set_zero)), NULL);
+	zassert_ok(virtual_ef800_profile_apply(set_zero, sizeof(set_zero)), NULL);
 	zassert_true(i2c_is_ready_dt(&gauge_spec), NULL);
 	zassert_ok(ef800_max17043_init(&gauge, &gauge_spec), NULL);
 	zassert_ok(ef800_max17043_read(&gauge, &status), NULL);
 	zassert_equal(status.soc_percent, 0U, "zero SOC must remain a valid sample");
 	zassert_equal(status.voltage_uv, 3800000U, NULL);
 
-	zassert_ok(ef800_virtual_profile_apply(set_full, sizeof(set_full)), NULL);
+	zassert_ok(virtual_ef800_profile_apply(set_full, sizeof(set_full)), NULL);
 	zassert_ok(ef800_max17043_read(&gauge, &status), NULL);
 	zassert_equal(status.soc_percent, 100U, NULL);
 	zassert_equal(status.voltage_uv, 3800000U, NULL);
 
-	zassert_ok(ef800_virtual_profile_apply(set_unavailable,
+	zassert_ok(virtual_ef800_profile_apply(set_unavailable,
 		sizeof(set_unavailable)), NULL);
 	zassert_equal(ef800_max17043_read(&gauge, &status), -ENODEV, NULL);
 	zassert_equal(ef800_max17043_init(&gauge, &gauge_spec), -ENODEV, NULL);
-	zassert_ok(ef800_virtual_profile_apply(set_available,
+	zassert_ok(virtual_ef800_profile_apply(set_available,
 		sizeof(set_available)), NULL);
 }
 

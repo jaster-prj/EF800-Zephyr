@@ -3,7 +3,7 @@
 ## 1. FMC SRAM Bring-Up in Hardware Debug
 
 - [x] 1.1 Derive FMC bank, address mapping, bus width, pin assignment, and timing from `schema/EF800_NEW.kicad_sch`, the STM32L496 documentation, the IS61 datasheet, and the board clock; record the derivation in hwdebug documentation and verify it against the schematic and datasheet timing limits.
-- [x] 1.2 Add FMC initialization and a bounded SRAM test to `ef800-hwdebug`; verify the full 512 KiB range with address/data patterns, boundaries, alias checks, and repeatable target runs, reporting failures without claiming the region usable.
+- [x] 1.2 Add FMC initialization and a bounded SRAM test to `test-hwdebug`; verify the full 512 KiB range with address/data patterns, boundaries, alias checks, and repeatable target runs, reporting failures without claiming the region usable.
 - [x] 1.3 Build the hwdebug image in the prescribed devcontainer and verify the new generated DeviceTree/link map and SRAM test command on STM32L496 hardware; document the test procedure and results in the hwdebug documentation.
 
 ## 2. Zephyr Memory Region and Protection Proof

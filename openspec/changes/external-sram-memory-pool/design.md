@@ -2,14 +2,14 @@
 
 ## Context
 
-See proposal.md for motivation. The EF800 board schematic identifies the fitted IS61WV5128FBLL-10TLI SRAM and FMC signal wiring. The EF800 DeviceTree currently exposes only internal `sram0`; `ef800-hwdebug` is a standalone peripheral-test image without FMC/SRAM setup. MainApplication currently has fixed plugin arenas (32 KiB text, 32 KiB rodata, 4 KiB plugin RW within a 16 KiB mailbox region), a 2 KiB worker stack, one physical image slot, and a 32 KiB libc malloc arena. The worker MPU domain maps text RX, rodata RO, and mailbox/RW separately.
+See proposal.md for motivation. The EF800 board schematic identifies the fitted IS61WV5128FBLL-10TLI SRAM and FMC signal wiring. The EF800 DeviceTree currently exposes only internal `sram0`; `test-hwdebug` is a standalone peripheral-test image without FMC/SRAM setup. MainApplication currently has fixed plugin arenas (32 KiB text, 32 KiB rodata, 4 KiB plugin RW within a 16 KiB mailbox region), a 2 KiB worker stack, one physical image slot, and a 32 KiB libc malloc arena. The worker MPU domain maps text RX, rodata RO, and mailbox/RW separately.
 
 The memory controller configuration must be derived from the STM32L496 and IS61 datasheets and schematic. The existing board clock is configured for 80 MHz. A build map and target measurements are needed before selecting application allocations to move or final arena sizes.
 
 ## Goals / Non-Goals
 
 **Goals:**
-- Prove FMC initialization and the SRAM address range in `ef800-hwdebug` before MainApplication depends on it.
+- Prove FMC initialization and the SRAM address range in `test-hwdebug` before MainApplication depends on it.
 - Make external SRAM a fixed EF800 board/build resource, with runtime validation and a safe internal-memory fallback.
 - Use external memory for eligible MainApplication allocations and plugin-owned memory, while preserving MainApplication ownership and worker MPU isolation.
 - Replace fixed plugin capacities with validated per-package owned-memory requirements within available memory and MPU constraints.
@@ -22,7 +22,7 @@ The memory controller configuration must be derived from the STM32L496 and IS61 
 
 ## Decisions
 
-### Stage hardware bring-up in `ef800-hwdebug`
+### Stage hardware bring-up in `test-hwdebug`
 
 Use the standalone hwdebug image to initialize FMC from the datasheets and board wiring, then test the complete 512 KiB range with address-sensitive patterns, boundaries, and alias checks. Test code must avoid corrupting the running image, stack, or other memory. Only after basic integrity passes, add Zephyr-visible region and MPU tests. MainApplication integration is gated on successful STM32L496 target evidence.
 
@@ -63,7 +63,7 @@ Capture a pristine MainApplication map and runtime high-water measurements befor
 
 ## Migration Plan
 
-1. Add and validate external SRAM support only in `ef800-hwdebug`; retain the current MainApplication image unchanged during this gate.
+1. Add and validate external SRAM support only in `test-hwdebug`; retain the current MainApplication image unchanged during this gate.
 2. Add Zephyr region, allocator, and MPU tests on the target; stop integration if they cannot meet isolation requirements.
 3. Integrate fixed board support and startup validation into MainApplication, preserving an internal-only startup path.
 4. Use link-map and runtime measurements to migrate selected MainApplication buffers and establish separate internal/external budgets.

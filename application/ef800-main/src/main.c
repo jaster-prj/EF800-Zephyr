@@ -69,10 +69,10 @@
 #include "ef800_measurement_plugin.h"
 #include "ef800_ui.h"
 #ifdef CONFIG_BOARD_NATIVE_SIM
-#include "ef800_virtual_frontpanel.h"
-#include "ef800_virtual_profile.h"
-#include "ef800_virtual_protocol.h"
-#include "ef800_virtual_usb_peer.h"
+#include "virtual_ef800_frontpanel.h"
+#include "virtual_ef800_profile.h"
+#include "virtual_ef800_protocol.h"
+#include "virtual_ef800_usb_peer.h"
 #endif
 
 LOG_MODULE_REGISTER(ef800_main_app, LOG_LEVEL_INF);
@@ -304,7 +304,7 @@ static const char *composition_group_token(
 
 static void publish_virtual_composition_state(void)
 {
-	char payload[EF800_VIRTUAL_COMPOSITION_STATE_MAX];
+	char payload[VIRTUAL_EF800_COMPOSITION_STATE_MAX];
 	size_t offset = 0U;
 	const struct ef800_composition_snapshot *active = composition_service_ready ?
 		ef800_composition_service_active(&composition_service) : NULL;
@@ -319,7 +319,7 @@ static void publish_virtual_composition_state(void)
 			"{\"type\":\"composition\",\"version\":1,"
 			"\"available\":false,\"restartRequired\":false,\"groups\":[]}";
 
-		ef800_virtual_frontpanel_set_composition_state(unavailable,
+		virtual_ef800_frontpanel_set_composition_state(unavailable,
 			sizeof(unavailable) - 1U);
 		return;
 	}
@@ -395,7 +395,7 @@ static void publish_virtual_composition_state(void)
 	written = snprintk(&payload[offset], sizeof(payload) - offset, "]}");
 	if (written >= 0 && (size_t)written < sizeof(payload) - offset) {
 		offset += (size_t)written;
-		ef800_virtual_frontpanel_set_composition_state(payload, offset);
+		virtual_ef800_frontpanel_set_composition_state(payload, offset);
 	}
 }
 
@@ -450,7 +450,7 @@ static void main_contrast_state_changed(void *context,
 {
 	ARG_UNUSED(context);
 #ifdef CONFIG_BOARD_NATIVE_SIM
-	ef800_virtual_frontpanel_set_lcd_contrast(
+	virtual_ef800_frontpanel_set_lcd_contrast(
 		mode == EF800_LCD_CONTRAST_PWM, duty_percent);
 #else
 	ARG_UNUSED(mode);
@@ -5388,7 +5388,7 @@ int main(void)
 		LOG_ERR("Built-in plugin registry initialization failed: %d", result);
 	}
 #ifdef CONFIG_BOARD_NATIVE_SIM
-	ef800_virtual_frontpanel_set_composition_callback(
+	virtual_ef800_frontpanel_set_composition_callback(
 		virtual_set_composition, NULL);
 #endif
 	result = ef800_persistence_init(&persistence,
@@ -5468,9 +5468,9 @@ int main(void)
 			LOG_ERR("Port assignment service initialization failed: %d", result);
 		} else {
 #ifdef CONFIG_BOARD_NATIVE_SIM
-			ef800_virtual_frontpanel_set_plugin_assign_callback(
+			virtual_ef800_frontpanel_set_plugin_assign_callback(
 				virtual_assign_plugin, NULL);
-			ef800_virtual_frontpanel_set_plugin_execute_callback(
+			virtual_ef800_frontpanel_set_plugin_execute_callback(
 				virtual_execute_plugin, NULL);
 #endif
 			result = ef800_workspace_init(&workspace, &persistence);
@@ -5737,7 +5737,7 @@ result = ef800_mcp23017_open(&mcp23017,
 	display_menu();
 
 #ifdef CONFIG_BOARD_NATIVE_SIM
-	result = ef800_virtual_usb_peer_init();
+	result = virtual_ef800_usb_peer_init();
 	if (result != 0) {
 		LOG_WRN("Virtual USB host peer unavailable: %d", result);
 	}

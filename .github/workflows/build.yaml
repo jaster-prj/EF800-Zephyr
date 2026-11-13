@@ -144,9 +144,9 @@ jobs:
         working-directory: ./zephyr_workspace
         run: |
           /opt/venv/bin/west build -p always -b ef800 \
-            application/application/ef800-hwdebug \
-            --build-dir application/build/ef800-hwdebug
-          bash application/scripts/verify-hwdebug-image.sh
+            application/application/test-hwdebug \
+            --build-dir application/build/test-hwdebug
+          bash application/scripts/verify-test-hwdebug-image.sh
 
       - name: Verify image contract
         working-directory: ./zephyr_workspace
