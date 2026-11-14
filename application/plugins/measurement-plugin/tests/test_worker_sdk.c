@@ -24,7 +24,8 @@ int ef800_plugin_worker_syscall(struct ef800_plugin_worker_mailbox *request_mail
 	assert(ret == 0);
 	assert(message->kind == EF800_PLUGIN_WORKER_HOST_SERVICE_REQUEST);
 	assert(message->capability == expected_capability);
-	assert(message->sequence == ++expected_sequence);
+	expected_sequence++;
+	assert(message->sequence == expected_sequence);
 	assert(message->deadline_ms == 500U);
 
 	switch (message->operation) {

@@ -1,9 +1,9 @@
 ## Context
 
-The original MainApplication invoked external plugin callbacks synchronously on
+The original EF800 Application invoked external plugin callbacks synchronously on
 its privileged thread. The isolated worker, syscall gateway, and fault recovery
 path are now implemented and enabled in the standard physical EF800
-MainApplication configuration. The physical build scans the normal
+EF800 Application configuration. The physical build scans the normal
 `Plugins` directory; only the separate recovery-test build scans synthetic
 packages from Shared Data.
 
@@ -12,7 +12,7 @@ The physical EF800 configuration enables `CONFIG_USERSPACE` and the worker.
 The remaining hardware and authenticity gaps still prevent treating the
 development image as a production plugin release. The accepted package-owned
 Measurement UI decision remains in force: packages own their bounded logical
-behavior while MainApplication owns hardware, resource lifetime, raw
+behavior while EF800 Application owns hardware, resource lifetime, raw
 protocols, and global navigation.
 
 The critical safety distinction is between abandoning an isolated worker and resuming a faulted call stack. Recovery is allowed only by the former. The design must also respect the fixed internal-flash layout and limited SRAM/MPU resources, and it must be proven on STM32L496 because `native_sim` cannot validate ARM exception or MPU behavior.
@@ -22,7 +22,7 @@ The critical safety distinction is between abandoning an isolated worker and res
 **Goals:**
 
 - Run every external plugin entry point in an unprivileged, MPU-constrained execution domain.
-- Keep MainApplication's UI/navigation thread alive and independently schedulable during plugin work.
+- Keep EF800 Application's UI/navigation thread alive and independently schedulable during plugin work.
 - Mediate and validate every host-resource operation across the privilege boundary.
 - Recover from attributable plugin-worker faults and timeouts by discarding the worker, cleaning up host-owned state, quarantining the package, and returning through host navigation.
 - Preserve normal Elta3, FTS3XX, Measurement UI, Calculation, UART ownership, and workspace behavior for successful invocations.
@@ -32,17 +32,17 @@ The critical safety distinction is between abandoning an isolated worker and res
 **Non-Goals:**
 
 - Resuming at the instruction after a faulting plugin call, editing the exception frame to skip instructions, or performing `longjmp`-style recovery from HardFault.
-- Recovering MainApplication, kernel, ISR, privileged service-handler, or ambiguous faults.
+- Recovering EF800 Application, kernel, ISR, privileged service-handler, or ambiguous faults.
 - Protecting against denial of service that also defeats the hardware watchdog or against physical/debug access.
 - Package signatures, anti-rollback, hot replacement, persistent automatic package disabling, or QSPI production qualification.
 - Allowing plugins to create threads, access Zephyr APIs directly, map peripherals, access files, or perform unmediated workspace mutation.
-- Isolating built-in trusted MainApplication code; the boundary applies to external executable packages.
+- Isolating built-in trusted EF800 Application code; the boundary applies to external executable packages.
 
 ## Decisions
 
 ### Use a supervised worker, not exception-frame continuation
 
-The privileged host submits one bounded invocation descriptor to a dedicated plugin worker and waits asynchronously for completion while the main UI remains runnable. A single privileged supervisor thread serializes submissions; MainApplication submits a copied request and polls its token-tagged completion without waiting for plugin code. The worker executes the complete external lifecycle needed by that activation, including package create and destroy when healthy. A generation-tagged completion record distinguishes a valid result from a stale response after timeout or replacement. The current policy uses 30 seconds for create/measurement, 3 seconds for destroy, 60 seconds for calculation, and 1 second for interactive, render, and workspace callbacks; every worker call converts its policy limit to an absolute monotonic deadline and rejects late or mismatched generation/sequence responses.
+The privileged host submits one bounded invocation descriptor to a dedicated plugin worker and waits asynchronously for completion while the main UI remains runnable. A single privileged supervisor thread serializes submissions; EF800 Application submits a copied request and polls its token-tagged completion without waiting for plugin code. The worker executes the complete external lifecycle needed by that activation, including package create and destroy when healthy. A generation-tagged completion record distinguishes a valid result from a stale response after timeout or replacement. The current policy uses 30 seconds for create/measurement, 3 seconds for destroy, 60 seconds for calculation, and 1 second for interactive, render, and workspace callbacks; every worker call converts its policy limit to an absolute monotonic deadline and rejects late or mismatched generation/sequence responses.
 
 Calculation snapshots are captured by the host and submitted asynchronously. The
 worker's bounded output remains in host memory until the user explicitly
@@ -74,7 +74,7 @@ Alternatives considered:
 
 ### Use one unprivileged worker domain with per-activation MPU mappings
 
-MainApplication enables Zephyr userspace and creates the plugin worker as a non-essential unprivileged thread with its own guarded stack. Before activation, privileged loader code validates and maps only:
+EF800 Application enables Zephyr userspace and creates the plugin worker as a non-essential unprivileged thread with its own guarded stack. Before activation, privileged loader code validates and maps only:
 
 - plugin text as user-readable and executable, not writable;
 - plugin rodata as user-readable, execute-never, not writable;
@@ -86,7 +86,7 @@ Host RAM, other thread stacks, kernel objects, MMIO, package staging buffers, fi
 
 The current independently declared buffers are replaced or aligned as needed by a loader-owned isolation arena whose layout is representable by the STM32L496 MPU. The exact region budget, alignment, SRAM placement, and Zephyr memory-domain behavior are verified in an early target spike before worker activation is enabled on hardware. Software contract/loader work may proceed while that evidence is pending, but failure to represent RX/RO/RW/XN mappings rejects the package; it never causes a permissive fallback.
 
-MainApplication enables `CONFIG_USERSPACE`, ARM MPU, execute-XOR-write,
+EF800 Application enables `CONFIG_USERSPACE`, ARM MPU, execute-XOR-write,
 hardware/MPU stack guards, thread monitoring, and exception diagnostics on the
 physical EF800 composition. The static loader arena has 32 KiB RX text, 32 KiB
 RO/XN constants, a 16 KiB RW/XN shared mailbox region with the 4 KiB plugin
@@ -100,7 +100,7 @@ including the allocator mutex, is not mapped to the worker. User code cannot
 write the exposed window. The linker map and target MPU behavior confirm these
 alignments and permissions.
 
-The standard physical MainApplication now enables the isolated worker, scans
+The standard physical EF800 Application now enables the isolated worker, scans
 up to 16 normal Plugins-directory entries, and bounds PluginManager to the
 two independently packaged production instruments. Its 16 KiB malloc arena
 can stage their verified 14,444-byte and 13,284-byte packages. The build uses
@@ -113,7 +113,7 @@ The separate recovery-test image uses a test-only Shared Data directory, a
 nine-entry discovery/descriptor table, and two loaded-manager slots; it uses
 255,936 of 262,144 bytes of RAM (97.6%) and produces a 373,216-byte
 `zephyr.bin`. Its one-second Calculation deadline and synthetic packages do not
-apply to the standard MainApplication.
+apply to the standard EF800 Application.
 The recovery-test linker map places the 2 KiB plugin worker stack at
 `0x20039000`; Zephyr reserves MPU-aligned user-stack space for it and the
 4 KiB privileged supervisor stack. The image verifier passes the fixed
@@ -137,7 +137,7 @@ Plugins no longer receive privileged transport pointers or callbacks that execut
 - the claimed UART/workspace/UI capability is still owned by the host session;
 - the request and its blocking work fit the remaining invocation deadline.
 
-Privileged service execution copies inputs into host-owned storage before use and copies validated outputs back only within the declared range. Driver handles, Zephyr objects, host context pointers, workspace objects, and MMIO addresses never cross into user memory. Port reads and writes continue to run through MainApplication's existing host-owned route and transport policy.
+Privileged service execution copies inputs into host-owned storage before use and copies validated outputs back only within the declared range. Driver handles, Zephyr objects, host context pointers, workspace objects, and MMIO addresses never cross into user memory. Port reads and writes continue to run through EF800 Application's existing host-owned route and transport policy.
 
 The mailbox ABI is fixed-width and pointer-free. It carries a generation and sequence, a bounded operation code, mailbox-relative input/output ranges, an absolute monotonic deadline, and a session-scoped opaque capability. The operation verifier applies per-service size limits (including the existing 128-byte serial transfer bound) before touching payload bytes. Host-to-worker lifecycle, measurement, calculation, render, input, and workspace-record callbacks are explicit worker invocations; UI display and workspace mutation remain host-owned copies/decisions rather than plugin callbacks into host objects.
 
@@ -169,7 +169,7 @@ If any predicate is false, or Zephyr cannot support the required plugin-thread t
 
 Each invocation has a privileged recovery ledger recording host-owned resources and completed lifecycle transitions. Fault cleanup uses the ledger rather than plugin memory:
 
-MainApplication now keeps a host-only ledger snapshot with package and manager
+EF800 Application now keeps a host-only ledger snapshot with package and manager
 IDs, active lifecycle state, claimed port/connection and privileged transport
 binding, worker generation/domain state, pending operation and service,
 deadline, host-owned output capacity, last status, and a cleanup-step bitset.
@@ -199,7 +199,7 @@ supervisor. It accepts only thread-mode faults from the active `K_USER` worker
 with a PC inside its mapped plugin regions and an L496-tested MPU/instruction/
 undefined-instruction reason. All other fatal contexts retain the non-recovery
 controlled-reboot path after Zephyr's fatal diagnostic. Cleanup failures are
-also escalated by MainApplication to `sys_reboot(SYS_REBOOT_COLD)`.
+also escalated by EF800 Application to `sys_reboot(SYS_REBOOT_COLD)`.
 
 The target Calculation fault tests exposed two recovery defects that are now
 fixed: the custom domain initially omitted the TLS pointer needed by Zephyr's
@@ -230,10 +230,10 @@ invocation without quarantine.
 Stack-overflow plugin 15 raised Zephyr fatal reason 2 with a stacking error and
 stacked PC `0x00000000`; the conservative PC predicate correctly rejected
 plugin attribution and used controlled reboot. That reboot exposed an IWDG
-adoption gap (`Watchdog start failed: -19`). MainApplication now adopts and
+adoption gap (`Watchdog start failed: -19`). EF800 Application now adopts and
 directly feeds the bootloader-started IWDG when the device driver is not ready
 or reports `-ENODEV` while installing the timeout; the repeated stack-fault
-reboot and a separate software reboot both returned to a stable MainApplication
+reboot and a separate software reboot both returned to a stable EF800 Application
 boot with the watchdog task active. Measurement
 lifecycle faults, UART route recovery, privileged/ISR/nested fault injection,
 and normal hardware protocol acceptance remain open.
@@ -266,7 +266,7 @@ the Measurement fault matrix remain unverified in tasks 8.3–8.5.
 
 A fault or timeout records plugin ID, operation, failure class, worker generation,
 and available architecture status in the host-owned completion record. After
-cleanup succeeds, MainApplication marks only that registry entry `FAULTED` or
+cleanup succeeds, EF800 Application marks only that registry entry `FAULTED` or
 `TIMED_OUT`; host activation checks and menu counts ignore non-ready entries.
 The registry is RAM-only and is initialized again on boot, so quarantine is
 boot-scoped. Other packages remain usable only after all shared resources and
@@ -277,7 +277,7 @@ diagnostic may be added without changing activation policy.
 
 ### Use a host-owned recovery screen and navigation event
 
-The supervisor posts a failure event to MainApplication rather than touching LCD/menu state from fatal context. MainApplication closes its logical plugin session, renders a bounded host-owned message containing plugin name and fault/timeout class, and returns to the Measurement or Calculation parent after acknowledgement. A failed cleanup posts a reboot event instead. Plugin-provided display content is never used after the fault.
+The supervisor posts a failure event to EF800 Application rather than touching LCD/menu state from fatal context. EF800 Application closes its logical plugin session, renders a bounded host-owned message containing plugin name and fault/timeout class, and returns to the Measurement or Calculation parent after acknowledgement. A failed cleanup posts a reboot event instead. Plugin-provided display content is never used after the fault.
 
 ### Apply operation-specific deadlines
 
@@ -302,7 +302,7 @@ The hardware watchdog remains a final system recovery layer, not the normal plug
 - [Aborting a worker leaves PluginManager lifecycle bookkeeping inconsistent] -> Add an explicit host-only abandon path and test every lifecycle phase; never call package destroy after fault.
 - [A blocked UART operation delays timeout cleanup] -> Propagate absolute deadlines, use cancellable/bounded transport operations, reset hardware during cleanup, and reboot if ownership cannot be proven safe.
 - [Userspace/syscall and extra stacks increase flash/RAM usage] -> Measure pristine build/map deltas against the fixed image contract before completing the change.
-- [One worker serializes plugins] -> Accept this because MainApplication already serializes plugin/resource ownership and the LCD supports one active session; preserve UI responsiveness through asynchronous supervision.
+- [One worker serializes plugins] -> Accept this because EF800 Application already serializes plugin/resource ownership and the LCD supports one active session; preserve UI responsiveness through asynchronous supervision.
 - [Old packages stop loading] -> Version the isolation contract, report incompatibility clearly, and rebuild the independently packaged Elta3 and FTS3XX artifacts with the matching SDK.
 - [MPU containment is mistaken for package authenticity] -> Keep signature, anti-rollback, and storage qualification gates explicitly separate and continue release-disabling arbitrary packages until all relevant gates pass.
 
@@ -315,7 +315,7 @@ The hardware watchdog remains a final system recovery layer, not the normal plug
 5. Integrate boot-scoped registry quarantine, diagnostics, LCD recovery, parent-menu navigation, and resource-reset escalation.
 6. Run native contract/lifecycle tests, malicious/faulting target packages, normal hardware protocol tests, all four pristine firmware builds, and image/layout verification. Keep arbitrary package execution release-disabled until every gate passes.
 
-Rollback during development disables external package activation and restores the last known-good MainApplication image through the existing boot/update process. Runtime rollback after a contained fault means package quarantine for that boot; uncertainty in host integrity causes controlled reboot, not continued operation.
+Rollback during development disables external package activation and restores the last known-good EF800 Application image through the existing boot/update process. Runtime rollback after a contained fault means package quarantine for that boot; uncertainty in host integrity causes controlled reboot, not continued operation.
 
 ## Open Questions
 

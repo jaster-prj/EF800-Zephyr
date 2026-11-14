@@ -44,7 +44,7 @@ The Compose deployment SHALL publish only the web-front-panel HTTP endpoint on t
 - **THEN** the host has no published simulator port and the web endpoint is bound to `127.0.0.1` rather than all host interfaces
 
 ### Requirement: Gateway mediates browser MTP operations through the simulator
-The web gateway SHALL provide bounded file-list, upload, download, and transfer-status operations for the native-sim MainApplication MTP peer over the existing private simulator control connection. The browser SHALL connect only to the gateway and SHALL NOT connect directly to the simulator or USB host controller.
+The web gateway SHALL provide bounded file-list, upload, download, and transfer-status operations for the native-sim EF800 Application MTP peer over the existing private simulator control connection. The browser SHALL connect only to the gateway and SHALL NOT connect directly to the simulator or USB host controller.
 
 #### Scenario: Browser starts an MTP transfer
 - **WHEN** a connected browser requests an MTP file operation

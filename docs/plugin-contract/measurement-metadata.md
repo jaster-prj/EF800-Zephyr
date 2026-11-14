@@ -26,6 +26,6 @@ Hardware bits are defined by `enum ef800_plugin_hardware_capability`:
 - `EF800_PLUGIN_HARDWARE_I2C`
 - `EF800_PLUGIN_HARDWARE_SPI`
 
-The extension is validated by MainApplication after package load. A malformed,
+The extension is validated by EF800 Application after package load. A malformed,
 unknown-version, or unknown-UUID extension leaves the plugin unavailable for
 hardware assignment.

@@ -7,8 +7,8 @@
 #include <zephyr/kernel.h>
 
 #include "ef800_console.h"
-#include "ef800_main_usb_mtp.h"
-#include "ef800_main_usb_msc.h"
+#include "ef800_app_usb_mtp.h"
+#include "ef800_app_usb_msc.h"
 
 K_MUTEX_DEFINE(usb_manager_lock);
 static enum ef800_usb_personality active_personality;
@@ -19,11 +19,11 @@ static int stop_personality(enum ef800_usb_personality personality)
 	case EF800_USB_PERSONALITY_DEBUG_CDC:
 		return ef800_console_usb_stop();
 	case EF800_USB_PERSONALITY_MTP:
-		return ef800_main_usb_mtp_stop();
+		return ef800_app_usb_mtp_stop();
 	case EF800_USB_PERSONALITY_NONE:
 		return 0;
 	case EF800_USB_PERSONALITY_MSC:
-		return ef800_main_usb_msc_stop();
+		return ef800_app_usb_msc_stop();
 	default:
 		return -EINVAL;
 	}
@@ -35,11 +35,11 @@ static int start_personality(enum ef800_usb_personality personality)
 	case EF800_USB_PERSONALITY_DEBUG_CDC:
 		return ef800_console_usb_start();
 	case EF800_USB_PERSONALITY_MTP:
-		return ef800_main_usb_mtp_start();
+		return ef800_app_usb_mtp_start();
 	case EF800_USB_PERSONALITY_NONE:
 		return 0;
 	case EF800_USB_PERSONALITY_MSC:
-		return ef800_main_usb_msc_start();
+		return ef800_app_usb_msc_start();
 	default:
 		return -EINVAL;
 	}

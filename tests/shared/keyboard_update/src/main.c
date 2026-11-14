@@ -1,11 +1,17 @@
 /* SPDX-License-Identifier: Apache-2.0 */
+#include <errno.h>
 #include <string.h>
 
 #include <zephyr/ztest.h>
 
 #include "ef800_keyboard_update.h"
+#undef EF800_KB_UPDATE_ACK
+#undef EF800_KB_UPDATE_NACK
 #include "ef800_keyboard_update_protocol.h"
 #include "ef800_update.h"
+#include "ef800_firmware_coordinator.h"
+#include "ef800_keyboard_update_service.h"
+#include "ef800_keyboard_i2c.h"
 
 static void put_le32(uint8_t *p, uint32_t value)
 {
@@ -23,6 +29,504 @@ static void make_header(uint8_t wire[EF800_KB_UPDATE_HEADER_SIZE],
 	wire[4] = target;
 	put_le32(&wire[8], size);
 	put_le32(&wire[12], crc);
+}
+
+struct coordinator_test_context {
+	bool present[3];
+	const char *run_paths[3];
+	size_t run_count;
+	enum ef800_firmware_target_id reported_targets[6];
+	enum ef800_keyboard_update_result reported_status[6];
+	int reported_results[6];
+	size_t report_count;
+	int fail_run_index;
+	int presence_error_index;
+};
+
+static int coordinator_test_present(void *context, const char *path,
+				    bool *present)
+{
+	struct coordinator_test_context *test = context;
+	size_t index;
+
+	if (strcmp(path, "updater") == 0) {
+		index = 0U;
+	} else if (strcmp(path, "bootloader") == 0) {
+		index = 1U;
+	} else if (strcmp(path, "application") == 0) {
+		index = 2U;
+	} else {
+		return -EINVAL;
+	}
+	if ((int)index == test->presence_error_index) {
+		return -EIO;
+	}
+	*present = test->present[index];
+	return 0;
+}
+
+static int coordinator_test_run(void *context, const char *path)
+{
+	struct coordinator_test_context *test = context;
+	size_t index = test->run_count++;
+
+	if (index < ARRAY_SIZE(test->run_paths)) {
+		test->run_paths[index] = path;
+	}
+	return (int)index == test->fail_run_index ? -EHOSTDOWN : 0;
+}
+
+static int coordinator_test_report(void *context,
+	enum ef800_firmware_target_id target,
+	enum ef800_keyboard_update_result status, int result)
+{
+	struct coordinator_test_context *test = context;
+	size_t index = test->report_count++;
+
+	if (index < ARRAY_SIZE(test->reported_targets)) {
+		test->reported_targets[index] = target;
+		test->reported_status[index] = status;
+		test->reported_results[index] = result;
+	}
+	return 0;
+}
+
+static const char *const coordinator_test_paths[] = {
+	"updater", "bootloader", "application",
+};
+
+static struct ef800_keyboard_update_coordinator make_test_coordinator(
+	struct coordinator_test_context *context)
+{
+	return (struct ef800_keyboard_update_coordinator){
+		.context = context,
+		.package_present = coordinator_test_present,
+		.run_package = coordinator_test_run,
+		.report = coordinator_test_report,
+	};
+}
+
+static bool update_test_storage_mounted(void *context)
+{
+	ARG_UNUSED(context);
+	return true;
+}
+
+static bool update_test_storage_externally_owned(void *context)
+{
+	ARG_UNUSED(context);
+	return true;
+}
+
+static int update_test_callback(void *context)
+{
+	ARG_UNUSED(context);
+	return 0;
+}
+
+static int update_test_identify(void *context, uint16_t address)
+{
+	ARG_UNUSED(context);
+	ARG_UNUSED(address);
+	return 0;
+}
+
+static int update_test_fallback(void *context, uint8_t *version)
+{
+	ARG_UNUSED(context);
+	ARG_UNUSED(version);
+	return 0;
+}
+
+static int update_test_wait_application(
+	void *context, const struct ef800_keyboard_package_header *header)
+{
+	ARG_UNUSED(context);
+	ARG_UNUSED(header);
+	return 0;
+}
+
+struct full_update_test_context {
+	bool ready;
+	bool present[6];
+	int fail_target;
+	int unsupported_target;
+	enum ef800_firmware_target_id run_targets[6];
+	size_t run_count;
+	enum ef800_firmware_target_id report_targets[12];
+	enum ef800_firmware_coordinator_status report_status[12];
+	int report_results[12];
+	size_t report_count;
+};
+
+static const enum ef800_firmware_target_id full_update_targets[] = {
+	EF800_FIRMWARE_TARGET_APPLICATION,
+	EF800_FIRMWARE_TARGET_BACKUP,
+	EF800_FIRMWARE_TARGET_KEYBOARD_UPDATER,
+	EF800_FIRMWARE_TARGET_KEYBOARD_BOOTLOADER,
+	EF800_FIRMWARE_TARGET_KEYBOARD_APPLICATION,
+	EF800_FIRMWARE_TARGET_BOOTLOADER,
+};
+
+static const char *const full_update_paths[] = {
+	"/DATA:/fwu/EF800_APP.pkg",
+	"/DATA:/fwu/EF800_BACKUP.pkg",
+	"/DATA:/fwu/EF800_KEYBOARD_UPDATER.pkg",
+	"/DATA:/fwu/EF800_KEYBOARD_BOOT.pkg",
+	"/DATA:/fwu/EF800_KEYBOARD_APP.pkg",
+	"/DATA:/fwu/EF800_BOOT.pkg",
+};
+
+static bool full_update_ready(void *context)
+{
+	return ((struct full_update_test_context *)context)->ready;
+}
+
+static int full_update_package_present(void *context, const char *path,
+	bool *present)
+{
+	struct full_update_test_context *test = context;
+
+	for (size_t i = 0U; i < ARRAY_SIZE(full_update_paths); ++i) {
+		if (strcmp(path, full_update_paths[i]) == 0) {
+			*present = test->present[i];
+			return 0;
+		}
+	}
+	return -EINVAL;
+}
+
+static int full_update_run_target(void *context,
+	enum ef800_firmware_target_id target, const char *path)
+{
+	struct full_update_test_context *test = context;
+	size_t run_index = test->run_count++;
+
+	ARG_UNUSED(path);
+	if (run_index < ARRAY_SIZE(test->run_targets)) {
+		test->run_targets[run_index] = target;
+	}
+	if ((int)target == test->unsupported_target) {
+		return -ENOTSUP;
+	}
+	if ((int)target == test->fail_target) {
+		return -EIO;
+	}
+	for (size_t i = 0U; i < ARRAY_SIZE(full_update_targets); ++i) {
+		if (full_update_targets[i] == target) {
+			/* Successful install cleans only its own staged package. */
+			test->present[i] = false;
+			break;
+		}
+	}
+	return 0;
+}
+
+static int full_update_report(void *context,
+	enum ef800_firmware_target_id target,
+	const char *path,
+	enum ef800_firmware_coordinator_status status, int result)
+{
+	struct full_update_test_context *test = context;
+	size_t index = test->report_count++;
+
+	ARG_UNUSED(path);
+	if (index < ARRAY_SIZE(test->report_targets)) {
+		test->report_targets[index] = target;
+		test->report_status[index] = status;
+		test->report_results[index] = result;
+	}
+	return 0;
+}
+
+static struct ef800_firmware_coordinator make_full_update_coordinator(
+	struct full_update_test_context *context)
+{
+	return (struct ef800_firmware_coordinator){
+		.context = context,
+		.ready = full_update_ready,
+		.package_present = full_update_package_present,
+		.run_target = full_update_run_target,
+		.report = full_update_report,
+	};
+}
+
+ZTEST(ef800_keyboard_update, test_versioned_package_names_select_exact_keyboard_target)
+{
+	enum ef800_firmware_target_id target = 0U;
+
+	zassert_ok(ef800_keyboard_update_package_select(
+		"/DATA:/fwu/EF800_KEYBOARD_UPDATER.pkg", &target), NULL);
+	zassert_equal(target, EF800_FIRMWARE_TARGET_KEYBOARD_UPDATER, NULL);
+	zassert_ok(ef800_keyboard_update_package_select(
+		"/DATA:/fwu/EF800_KEYBOARD_BOOT.pkg", &target), NULL);
+	zassert_equal(target, EF800_FIRMWARE_TARGET_KEYBOARD_BOOTLOADER, NULL);
+	zassert_ok(ef800_keyboard_update_package_select(
+		"/DATA:/fwu/EF800_KEYBOARD_APP.pkg", &target), NULL);
+	zassert_equal(target, EF800_FIRMWARE_TARGET_KEYBOARD_APPLICATION, NULL);
+	zassert_equal(ef800_keyboard_update_package_select(
+		"/DATA:/fwu/EF800_BACKUP.pkg", &target), -EINVAL, NULL);
+	zassert_equal(ef800_keyboard_update_package_select(
+		"/DATA:/fwu/EF800_KEYBOARD_APP.pkg", NULL), -EINVAL, NULL);
+}
+
+ZTEST(ef800_keyboard_update, test_coordinator_reports_missing_packages_as_skipped)
+{
+	struct coordinator_test_context context = {
+		.fail_run_index = -1,
+		.presence_error_index = -1,
+	};
+	struct ef800_keyboard_update_coordinator coordinator =
+		make_test_coordinator(&context);
+
+	zassert_ok(ef800_keyboard_update_coordinate(&coordinator,
+		coordinator_test_paths), NULL);
+	zassert_equal(context.run_count, 0U, NULL);
+	zassert_equal(context.report_count, 3U, NULL);
+	zassert_equal(context.reported_targets[0],
+		EF800_FIRMWARE_TARGET_KEYBOARD_UPDATER, NULL);
+	zassert_equal(context.reported_targets[1],
+		EF800_FIRMWARE_TARGET_KEYBOARD_BOOTLOADER, NULL);
+	zassert_equal(context.reported_targets[2],
+		EF800_FIRMWARE_TARGET_KEYBOARD_APPLICATION, NULL);
+	for (size_t i = 0U; i < context.report_count; ++i) {
+		zassert_equal(context.reported_status[i],
+			EF800_KEYBOARD_UPDATE_SKIPPED, NULL);
+		zassert_equal(context.reported_results[i], 0, NULL);
+	}
+}
+
+ZTEST(ef800_keyboard_update, test_full_update_progresses_all_six_targets_in_order)
+{
+	struct full_update_test_context context = {
+		.ready = true,
+		.present = {true, true, true, true, true, true},
+		.fail_target = -1,
+		.unsupported_target = -1,
+	};
+	struct ef800_firmware_coordinator coordinator =
+		make_full_update_coordinator(&context);
+
+	zassert_ok(ef800_firmware_coordinate(&coordinator, full_update_paths), NULL);
+	zassert_equal(context.run_count, ARRAY_SIZE(full_update_targets), NULL);
+	zassert_equal(context.report_count, ARRAY_SIZE(full_update_targets), NULL);
+	for (size_t i = 0U; i < ARRAY_SIZE(full_update_targets); ++i) {
+		zassert_equal(context.run_targets[i], full_update_targets[i], NULL);
+		zassert_equal(context.report_targets[i], full_update_targets[i], NULL);
+		zassert_equal(context.report_status[i],
+			EF800_FIRMWARE_COORDINATOR_COMPLETE, NULL);
+		zassert_equal(context.report_results[i], 0, NULL);
+	}
+}
+
+ZTEST(ef800_keyboard_update, test_full_update_partial_set_skips_absent_targets)
+{
+	static const enum ef800_firmware_coordinator_status expected_status[] = {
+		EF800_FIRMWARE_COORDINATOR_SKIPPED,
+		EF800_FIRMWARE_COORDINATOR_COMPLETE,
+		EF800_FIRMWARE_COORDINATOR_SKIPPED,
+		EF800_FIRMWARE_COORDINATOR_COMPLETE,
+		EF800_FIRMWARE_COORDINATOR_SKIPPED,
+		EF800_FIRMWARE_COORDINATOR_SKIPPED,
+	};
+	struct full_update_test_context context = {
+		.ready = true,
+		.present = {false, true, false, true, false, false},
+		.fail_target = -1,
+		.unsupported_target = -1,
+	};
+	struct ef800_firmware_coordinator coordinator =
+		make_full_update_coordinator(&context);
+
+	zassert_ok(ef800_firmware_coordinate(&coordinator, full_update_paths), NULL);
+	zassert_equal(context.run_count, 2U, NULL);
+	zassert_equal(context.run_targets[0], EF800_FIRMWARE_TARGET_BACKUP, NULL);
+	zassert_equal(context.run_targets[1],
+		EF800_FIRMWARE_TARGET_KEYBOARD_BOOTLOADER, NULL);
+	zassert_equal(context.report_count, ARRAY_SIZE(full_update_targets), NULL);
+	for (size_t i = 0U; i < ARRAY_SIZE(full_update_targets); ++i) {
+		zassert_equal(context.report_targets[i], full_update_targets[i], NULL);
+		zassert_equal(context.report_status[i],
+			expected_status[i], NULL);
+	}
+}
+
+ZTEST(ef800_keyboard_update, test_full_update_restart_resumes_after_interrupted_target)
+{
+	struct full_update_test_context context = {
+		.ready = true,
+		.present = {true, true, true, true, true, false},
+		.fail_target = EF800_FIRMWARE_TARGET_KEYBOARD_BOOTLOADER,
+		.unsupported_target = -1,
+	};
+	struct ef800_firmware_coordinator coordinator =
+		make_full_update_coordinator(&context);
+
+	zassert_equal(ef800_firmware_coordinate(&coordinator, full_update_paths),
+		-EIO, NULL);
+	zassert_equal(context.run_count, 4U, NULL);
+	zassert_true(context.present[3], "failed target package must remain staged");
+	zassert_true(context.present[4], "later target must remain staged");
+
+	context.ready = true; /* Simulated reboot: persisted files are re-inspected. */
+	context.fail_target = -1;
+	context.run_count = 0U;
+	context.report_count = 0U;
+	zassert_ok(ef800_firmware_coordinate(&coordinator, full_update_paths), NULL);
+	zassert_equal(context.run_count, 2U, NULL);
+	zassert_equal(context.run_targets[0],
+		EF800_FIRMWARE_TARGET_KEYBOARD_BOOTLOADER, NULL);
+	zassert_equal(context.run_targets[1],
+		EF800_FIRMWARE_TARGET_KEYBOARD_APPLICATION, NULL);
+}
+
+ZTEST(ef800_keyboard_update, test_full_update_does_not_start_while_storage_is_owned)
+{
+	struct full_update_test_context context = {
+		.ready = false,
+		.present = {true, true, true, true, true, true},
+		.fail_target = -1,
+		.unsupported_target = -1,
+	};
+	struct ef800_firmware_coordinator coordinator =
+		make_full_update_coordinator(&context);
+
+	zassert_equal(ef800_firmware_coordinate(&coordinator, full_update_paths),
+		-EAGAIN, NULL);
+	zassert_equal(context.run_count, 0U, NULL);
+	zassert_equal(context.report_count, 0U, NULL);
+}
+
+ZTEST(ef800_keyboard_update, test_coordinator_orders_updates_and_reports_completion)
+{
+	struct coordinator_test_context context = {
+		.present = {true, true, true},
+		.fail_run_index = -1,
+		.presence_error_index = -1,
+	};
+	struct ef800_keyboard_update_coordinator coordinator =
+		make_test_coordinator(&context);
+	static const enum ef800_firmware_target_id expected_targets[] = {
+		EF800_FIRMWARE_TARGET_KEYBOARD_UPDATER,
+		EF800_FIRMWARE_TARGET_KEYBOARD_BOOTLOADER,
+		EF800_FIRMWARE_TARGET_KEYBOARD_APPLICATION,
+	};
+
+	zassert_ok(ef800_keyboard_update_coordinate(&coordinator,
+		coordinator_test_paths), NULL);
+	zassert_equal(context.run_count, 3U, NULL);
+	zassert_equal(context.report_count, 3U, NULL);
+	for (size_t i = 0U; i < 3U; ++i) {
+		zassert_equal(strcmp(context.run_paths[i],
+			coordinator_test_paths[i]), 0, NULL);
+		zassert_equal(context.reported_targets[i], expected_targets[i], NULL);
+		zassert_equal(context.reported_status[i],
+			EF800_KEYBOARD_UPDATE_COMPLETE, NULL);
+		zassert_equal(context.reported_results[i], 0, NULL);
+	}
+}
+
+ZTEST(ef800_keyboard_update, test_failed_updater_handoff_stops_later_targets)
+{
+	struct coordinator_test_context context = {
+		.present = {true, true, true},
+		.fail_run_index = 0,
+		.presence_error_index = -1,
+	};
+	struct ef800_keyboard_update_coordinator coordinator =
+		make_test_coordinator(&context);
+	int result = ef800_keyboard_update_coordinate(&coordinator,
+		coordinator_test_paths);
+
+	zassert_equal(result, -EHOSTDOWN, NULL);
+	zassert_equal(context.run_count, 1U, NULL);
+	zassert_equal(context.report_count, 1U, NULL);
+	zassert_equal(context.reported_targets[0],
+		EF800_FIRMWARE_TARGET_KEYBOARD_UPDATER, NULL);
+	zassert_equal(context.reported_status[0],
+		EF800_KEYBOARD_UPDATE_FAILED, NULL);
+	zassert_equal(context.reported_results[0], -EHOSTDOWN, NULL);
+}
+
+ZTEST(ef800_keyboard_update, test_coordinator_reports_presence_failure_and_stops)
+{
+	struct coordinator_test_context context = {
+		.present = {true, true, true},
+		.fail_run_index = -1,
+		.presence_error_index = 1,
+	};
+	struct ef800_keyboard_update_coordinator coordinator =
+		make_test_coordinator(&context);
+	int result = ef800_keyboard_update_coordinate(&coordinator,
+		coordinator_test_paths);
+
+	zassert_equal(result, -EIO, NULL);
+	zassert_equal(context.run_count, 1U, NULL);
+	zassert_equal(context.report_count, 2U, NULL);
+	zassert_equal(context.reported_targets[0],
+		EF800_FIRMWARE_TARGET_KEYBOARD_UPDATER, NULL);
+	zassert_equal(context.reported_status[0],
+		EF800_KEYBOARD_UPDATE_COMPLETE, NULL);
+	zassert_equal(context.reported_targets[1],
+		EF800_FIRMWARE_TARGET_KEYBOARD_BOOTLOADER, NULL);
+	zassert_equal(context.reported_status[1],
+		EF800_KEYBOARD_UPDATE_FAILED, NULL);
+}
+
+ZTEST(ef800_keyboard_update, test_image_kind_selects_bounded_update_plan)
+{
+	struct ef800_keyboard_update_plan plan;
+
+	zassert_ok(ef800_keyboard_update_plan_select(
+		EF800_KEYBOARD_IMAGE_APPLICATION, &plan), NULL);
+	zassert_equal(plan.image_base, EF800_KEYBOARD_PACKAGE_BASE, NULL);
+	zassert_equal(plan.image_limit, EF800_KEYBOARD_PACKAGE_LIMIT, NULL);
+	zassert_equal(plan.target, EF800_KB_UPDATE_TARGET_APPLICATION, NULL);
+	zassert_equal(plan.service_address, EF800_KEYBOARD_UPDATER_I2C_ADDRESS,
+		NULL);
+	zassert_ok(ef800_keyboard_update_plan_select(
+		EF800_KEYBOARD_IMAGE_BOOTLOADER, &plan), NULL);
+	zassert_equal(plan.image_base, EF800_KEYBOARD_BOOT_BASE, NULL);
+	zassert_equal(plan.image_limit, EF800_KEYBOARD_BOOT_LIMIT, NULL);
+	zassert_equal(plan.target, EF800_KB_UPDATE_TARGET_BOOTLOADER, NULL);
+	zassert_ok(ef800_keyboard_update_plan_select(
+		EF800_KEYBOARD_IMAGE_UPDATER, &plan), NULL);
+	zassert_equal(plan.image_base, EF800_KEYBOARD_UPDATER_BASE, NULL);
+	zassert_equal(plan.image_limit, EF800_KEYBOARD_UPDATER_LIMIT, NULL);
+	zassert_equal(plan.target, EF800_KB_UPDATE_TARGET_UPDATER, NULL);
+	zassert_equal(plan.service_address, EF800_KEYBOARD_I2C_ADDRESS, NULL);
+	zassert_equal(ef800_keyboard_update_plan_select(0U, &plan), -EINVAL, NULL);
+	zassert_equal(ef800_keyboard_update_plan_select(
+		EF800_KEYBOARD_IMAGE_APPLICATION, NULL), -EINVAL, NULL);
+}
+
+ZTEST(ef800_keyboard_update, test_transaction_requires_complete_adapter_context)
+{
+	struct ef800_keyboard_update_transaction transaction = {0};
+
+	zassert_equal(ef800_keyboard_update_transaction_run(NULL), -EINVAL, NULL);
+	zassert_equal(ef800_keyboard_update_transaction_run(&transaction), -EINVAL,
+		NULL);
+}
+
+ZTEST(ef800_keyboard_update, test_transaction_defers_when_mtp_or_msc_owns_storage)
+{
+	bool active = false;
+	const struct ef800_keyboard_update_transaction transaction = {
+		.package_path = "/DATA:/fwu/EF800_KEYBOARD_APP.pkg",
+		.active = &active,
+		.storage_mounted = update_test_storage_mounted,
+		.storage_externally_owned = update_test_storage_externally_owned,
+		.enter_resident_updater = update_test_callback,
+		.wait_application_service = update_test_callback,
+		.identify = update_test_identify,
+		.enter_updater_fallback = update_test_fallback,
+		.wait_application = update_test_wait_application,
+	};
+
+	zassert_equal(ef800_keyboard_update_transaction_run(&transaction),
+		-EAGAIN, NULL);
+	zassert_false(active, NULL);
 }
 
 ZTEST(ef800_keyboard_update, test_valid_targets_decode_with_fixed_sizes)
@@ -205,6 +709,22 @@ ZTEST(ef800_keyboard_update, test_package_targets_match_partition_map)
 	header.image_base = EF800_KEYBOARD_PACKAGE_BASE;
 	zassert_false(ef800_keyboard_package_valid(&header,
 		EF800_KEYBOARD_PACKAGE_HEADER_SIZE + header.image_size), NULL);
+}
+
+ZTEST(ef800_keyboard_update, test_update_service_little_endian_helpers)
+{
+	uint8_t bytes[4];
+
+	ef800_keyboard_update_put_le16(bytes, UINT16_C(0xA17C));
+	zassert_equal(bytes[0], 0x7CU, NULL);
+	zassert_equal(bytes[1], 0xA1U, NULL);
+	ef800_keyboard_update_put_le32(bytes, UINT32_C(0x78563412));
+	zassert_equal(bytes[0], 0x12U, NULL);
+	zassert_equal(bytes[1], 0x34U, NULL);
+	zassert_equal(bytes[2], 0x56U, NULL);
+	zassert_equal(bytes[3], 0x78U, NULL);
+	zassert_equal(ef800_keyboard_update_get_le32(bytes),
+		UINT32_C(0x78563412), NULL);
 }
 
 ZTEST(ef800_keyboard_update, test_fixed_partition_page_and_write_bounds)

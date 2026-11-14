@@ -6,7 +6,7 @@
 
 ## Context
 
-EF800 targets need a durable way to identify approved combinations of hardware and software behavior without embedding target-specific conditionals throughout MainApplication. Composition selections must remain serviceable in the existing private configuration storage, tolerate older and newer firmware, survive interrupted updates, and provide a stable construction boundary for future hardware-specific factories. The initial mechanism must not assign meaning to example component identifiers or alter current target behavior.
+EF800 targets need a durable way to identify approved combinations of hardware and software behavior without embedding target-specific conditionals throughout EF800 Application. Composition selections must remain serviceable in the existing private configuration storage, tolerate older and newer firmware, survive interrupted updates, and provide a stable construction boundary for future hardware-specific factories. The initial mechanism must not assign meaning to example component identifiers or alter current target behavior.
 
 ## Decision
 

@@ -1,4 +1,5 @@
 /* SPDX-License-Identifier: Apache-2.0 */
+/** @file @brief Exercise USB MTP enumeration and object transfers. */
 
 #include <errno.h>
 #include <string.h>

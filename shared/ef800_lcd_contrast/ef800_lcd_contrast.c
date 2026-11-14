@@ -103,8 +103,6 @@ int ef800_lcd_contrast_init(struct ef800_lcd_contrast *contrast,
 			    const struct ef800_lcd_contrast_ops *ops,
 			    void *context)
 {
-	int ret;
-
 	if (contrast == NULL || ops == NULL || ops->load_duty == NULL ||
 	    ops->save_duty == NULL || ops->set_pwm == NULL ||
 	    (mode != EF800_LCD_CONTRAST_STATIC && mode != EF800_LCD_CONTRAST_PWM)) {
@@ -119,6 +117,8 @@ int ef800_lcd_contrast_init(struct ef800_lcd_contrast *contrast,
 	contrast->initialized = true;
 
 	if (mode == EF800_LCD_CONTRAST_PWM) {
+		int ret;
+
 		(void)load_duty_or_default(contrast, &contrast->duty_percent);
 		ret = contrast->ops.set_pwm(contrast->context, contrast->duty_percent);
 		if (ret != 0) {

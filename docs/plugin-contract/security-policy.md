@@ -5,9 +5,9 @@ is production-secure.
 
 ## Current Status
 
-The physical EF800 MainApplication now runs compatible external packages in
+The physical EF800 Application now runs compatible external packages in
 the isolated unprivileged worker. It scans the normal `Plugins` directory and
-the current MainApplication build discovered Elta3 and FTS3XX on the L496.
+the current EF800 Application build discovered Elta3 and FTS3XX on the L496.
 This is development bring-up, not a production security qualification: the
 loader validates package structure, target ELF constraints, image CRC,
 descriptor identity, service requirements, and bounded memory allocations,
@@ -17,7 +17,7 @@ trusted or the image as a production release.
 
 ## STM32L496 Bring-up Evidence
 
-On 2026-11-05, a dedicated test-only MainApplication image on the L496 ran
+On 2026-11-05, a dedicated test-only EF800 Application image on the L496 ran
 faulting Calculation packages in an unprivileged worker. Tested recoverable
 cases included an undefined instruction, unauthorized read and write of the
 malloc partition, execute-never fetch from plugin RW memory, an infinite loop
@@ -33,7 +33,7 @@ Measurement lifecycle and UART-route target cases remain untested. A subsequent
 software reboot verified the boot-scoped registry reset and stable
 inherited-IWDG feeding.
 
-The standard worker-enabled MainApplication uses a 16 KiB allocator and a
+The standard worker-enabled EF800 Application uses a 16 KiB allocator and a
 2 KiB worker stack, bounds PluginManager to the two current physical packages,
 and links at `0x08030000`. Its build uses 247,744 of 262,144 bytes of RAM
 (94.5%); on the L496 it booted with the watchdog active and discovered package
@@ -45,12 +45,12 @@ trust policy. Adding installed packages requires a fresh arena/RAM budget and
 does not make unsigned packages authentic.
 
 The separate recovery-test image scans a synthetic Shared Data directory and
-uses the one-second Calculation deadline. It is not the normal MainApplication
+uses the one-second Calculation deadline. It is not the normal EF800 Application
 configuration.
 
 These are targeted bring-up observations, not the full fault/lifecycle/UART
 acceptance matrix and not package-authenticity evidence. The normal
-MainApplication now uses the worker, but production qualification and package
+EF800 Application now uses the worker, but production qualification and package
 authenticity gates remain open.
 
 ## Required Release Controls

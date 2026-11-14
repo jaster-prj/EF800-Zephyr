@@ -13,7 +13,7 @@ Native-sim SHALL provide a source-independent battery SOC input from 0 through 1
 
 #### Scenario: Native-sim uses BATSOC0
 - **WHEN** `BATSOC0` is active
-- **THEN** neither the MAX17048-compatible gauge nor the ADC model supplies a valid SOC reading to MainApplication
+- **THEN** neither the MAX17048-compatible gauge nor the ADC model supplies a valid SOC reading to EF800 Application
 
 #### Scenario: Virtual SOC input is zero
 - **WHEN** the browser sets the virtual SOC input to 0 percent while BATSOC1 or BATSOC2 is active

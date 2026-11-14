@@ -1,4 +1,5 @@
 /* SPDX-License-Identifier: Apache-2.0 */
+/** @file @brief Implement the FTS3xx serial measurement plugin and UI. */
 #include "plugin_runtime.h"
 #include "protocol.h"
 
@@ -29,6 +30,7 @@ static uint8_t editing_code;
 static uint8_t editing_point;
 static uint8_t editing_staff;
 
+/* cppcheck-suppress constParameterCallback -- plugin ABI callback type is fixed as void * */
 static int32_t defaults(void *instance, struct ef800_serial_defaults *value)
 {
     if (instance != &ef800_runtime.public_instance || value == 0) return PM_EINVAL;
@@ -55,6 +57,7 @@ static uint32_t action_mask(void)
     }
 }
 
+/* cppcheck-suppress constParameterCallback -- plugin ABI callback type is fixed as void * */
 static int32_t measure(void *instance, struct ef800_measurement_result *result)
 {
     static const uint8_t command[] = {0x11u, '\r', '\n'};
@@ -63,32 +66,32 @@ static int32_t measure(void *instance, struct ef800_measurement_result *result)
 	char log_message[160];
 
 	if (instance != &ef800_runtime.public_instance || result == 0) return PM_EINVAL;
-	(void)ef800_plugin_worker_log(&ef800_runtime.binding,
+	(void)ef800_plugin_runtime_log(
 		"FTS3XX: sending measurement request (11 0d 0a)",
 		(uint32_t)strlen("FTS3XX: sending measurement request (11 0d 0a)"));
 	status = ef800_protocol_write(&ef800_runtime.binding, command, sizeof(command));
 	if (status != PM_OK) {
 		(void)snprintf(log_message, sizeof(log_message),
 			"FTS3XX: request write failed status=%ld", (long)status);
-		(void)ef800_plugin_worker_log(&ef800_runtime.binding, log_message,
+		(void)ef800_plugin_runtime_log(log_message,
 			(uint32_t)strlen(log_message));
 		return status;
 	}
-	(void)ef800_plugin_worker_log(&ef800_runtime.binding,
+	(void)ef800_plugin_runtime_log(
 		"FTS3XX: request sent; waiting for response line",
 		(uint32_t)strlen("FTS3XX: request sent; waiting for response line"));
 	status = ef800_protocol_read_line(&ef800_runtime.binding, response, sizeof(response));
 	if (status < 0) {
 		(void)snprintf(log_message, sizeof(log_message),
 			"FTS3XX: response read failed status=%ld", (long)status);
-		(void)ef800_plugin_worker_log(&ef800_runtime.binding, log_message,
+		(void)ef800_plugin_runtime_log(log_message,
 			(uint32_t)strlen(log_message));
 		return status;
 	}
 	(void)snprintf(log_message, sizeof(log_message),
 		"FTS3XX: received %ld bytes: %.100s", (long)status, response);
-	(void)ef800_plugin_worker_log(&ef800_runtime.binding, log_message,
-		(uint32_t)strlen(log_message));
+	(void)ef800_plugin_runtime_log(log_message,
+			(uint32_t)strlen(log_message));
     result->struct_size = sizeof(*result);
     result->distance_mm = 0;
     result->horizontal_gon_1e4 = 0;
@@ -109,7 +112,7 @@ static int32_t measure(void *instance, struct ef800_measurement_result *result)
 		(void)snprintf(log_message, sizeof(log_message),
 			"FTS3XX: response parse failed status=%ld", (long)status);
 	}
-	(void)ef800_plugin_worker_log(&ef800_runtime.binding, log_message,
+	(void)ef800_plugin_runtime_log(log_message,
 		(uint32_t)strlen(log_message));
 	return status;
 }
@@ -127,6 +130,7 @@ static int append_scaled(char *buffer, uint32_t capacity, uint32_t *offset,
     return PM_OK;
 }
 
+/* cppcheck-suppress constParameterCallback -- plugin ABI callback type is fixed as void * */
 static int32_t get_workspace_record(void *instance, char *buffer,
     uint32_t capacity, uint32_t *length)
 {
@@ -187,6 +191,7 @@ static int32_t workspace_record_result(void *instance, int32_t status)
     return PM_OK;
 }
 
+/* cppcheck-suppress constParameterCallback -- plugin ABI callback type is fixed as void * */
 static int32_t set_context(void *instance,
     const struct ef800_measurement_context *value)
 {
@@ -245,6 +250,7 @@ static int32_t input(void *instance, uint32_t value)
     return PM_OK;
 }
 
+/* cppcheck-suppress constParameterCallback -- plugin ABI callback type is fixed as void * */
 static int32_t render(void *instance, struct ef800_measurement_display *display)
 {
     if (instance != &ef800_runtime.public_instance || display == 0) return PM_EINVAL;

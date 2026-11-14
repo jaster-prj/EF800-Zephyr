@@ -10,7 +10,7 @@
 - [x] 2.1 Define bounded protocol messages for upload begin, upload chunk, upload commit, package status, restart request, acknowledgements, and errors.
 - [x] 2.2 Implement ordered chunk handling with upload IDs, offsets, total-size limits, digest verification, timeout cleanup, and no partial final files.
 - [x] 2.3 Implement atomic temporary-file installation into the virtual FAT plugin directory and validate packages before rename.
-- [x] 2.4 Add supervised simulator restart behavior that releases plugin sessions and virtual ports, preserves the flash volume, and reruns MainApplication startup discovery.
+- [x] 2.4 Add supervised simulator restart behavior that releases plugin sessions and virtual ports, preserves the flash volume, and reruns EF800 Application startup discovery.
 - [x] 2.5 Expose package inventory, validation diagnostics, restart-required state, and post-restart registry state through the simulator control protocol.
 
 ## 3. Browser gateway and UI

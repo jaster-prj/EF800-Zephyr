@@ -1,4 +1,5 @@
 /* SPDX-License-Identifier: Apache-2.0 */
+/** @file @brief Implement bounded serial framing and measurement response parsing. */
 #include "protocol.h"
 
 #include <errno.h>
@@ -23,7 +24,7 @@ int32_t ef800_protocol_write(ef800_port_binding *port,
     int32_t written;
     if (port == 0 || (data == 0 && length != 0u))
         return PM_EINVAL;
-    written = ef800_plugin_worker_port_write(port, data, length);
+    written = ef800_plugin_port_write(port, data, length);
     return written < 0 ? written : ((uint32_t)written == length ? PM_OK : PM_EIO);
 }
 
@@ -36,8 +37,8 @@ int32_t ef800_protocol_read_line(ef800_port_binding *port,
     while (length + 1u < capacity) {
         uint8_t byte;
         uint32_t count = 0u;
-        int32_t status = ef800_plugin_worker_port_read(port, &byte, 1u,
-            &count, 1000);
+        int32_t status = ef800_plugin_port_read(port, &byte, 1u,
+			&count, 1000);
         int32_t count_result = status == 0 ? (int32_t)count : status;
 
         if (count_result < 0) return count_result;

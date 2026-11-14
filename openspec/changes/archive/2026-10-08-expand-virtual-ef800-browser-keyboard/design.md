@@ -34,7 +34,7 @@ not introduce a second keyboard protocol or direct application manipulation.
 - Showing duplicate aliases (`return`, `escape`, `back`, or `control`) as extra
   controls.
 - Adding a raw matrix diagnostic view in this change.
-- Changing keyboard hardware firmware, scancode translation, or MainApplication
+- Changing keyboard hardware firmware, scancode translation, or EF800 Application
   input handling.
 - Adding browser text-entry synthesis that bypasses the EF800 keyboard path.
 

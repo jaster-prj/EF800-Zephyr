@@ -1,0 +1,10 @@
+tests:
+  ef800.shared.backup_update:
+    tags:
+      - ef800
+      - update
+      - flash
+    platform_allow:
+      - native_sim
+    integration_platforms:
+      - native_sim

@@ -1,0 +1,31 @@
+# SPDX-License-Identifier: Apache-2.0
+
+menu "test hardware debug"
+
+config TEST_HWDEBUG_QSPI_HAL
+	bool "Use the STM32 QSPI HAL for direct probing"
+	default y
+	select USE_STM32_HAL_DMA
+	select USE_STM32_HAL_QSPI
+	help
+	  Link the STM32 QSPI HAL for the direct read-only hardware probe without
+	  enabling the generic Zephyr external-flash driver.
+
+endmenu
+
+config EF800_APPLICATION_LCD_STATUS_TIMEOUT_US
+	int "T6963 status polling timeout (us)"
+	default 1000
+	range 100 100000
+	help
+		Bounded status polling timeout used by the shared T6963 driver.
+
+config EF800_USB_VID
+	hex "Hardware-debug USB vendor ID"
+	default 0x2fe3
+
+config EF800_USB_PID
+	hex "Hardware-debug USB product ID"
+	default 0xef82
+
+source "Kconfig.zephyr"

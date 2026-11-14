@@ -17,7 +17,7 @@
 - [x] 3.1 Replace port-oriented Measurement-menu entries with ready assigned plugin entries using registry names and stable plugin IDs.
 - [x] 3.2 Resolve a selected plugin entry to its assigned port and initialized transport internally while keeping port IDs out of the user-facing identity.
 - [x] 3.3 Render plugin-owned submenu titles, rows, footers, and action bitmaps through the generic session contract.
-- [x] 3.4 Route selected plugin actions and logical input without instrument-specific MainApplication branches, then close sessions safely.
+- [x] 3.4 Route selected plugin actions and logical input without instrument-specific EF800 Application branches, then close sessions safely.
 - [ ] 3.5 Add navigation tests covering assignment, plugin selection, submenu entry, measure action, and no-ready-plugin behavior.
 
 ## 4. Measurement Persistence and Regression Coverage

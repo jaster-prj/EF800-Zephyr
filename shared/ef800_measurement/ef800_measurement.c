@@ -396,7 +396,7 @@ static bool measurement_code_valid(const char *code)
 		return false;
 	}
 	for (const char *cursor = code; *cursor != '\0'; ++cursor) {
-		if (*cursor <= ' ' || *cursor == '\r' || *cursor == '\n') {
+		if (*cursor <= ' ') {
 			return false;
 		}
 	}

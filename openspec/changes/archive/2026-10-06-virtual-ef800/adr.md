@@ -8,7 +8,7 @@
 
 ## In-Force ADR Context Reviewed
 
-- `adr/0001-package-owned-measurement-ui.md` - Keeps package logical UI portable while MainApplication owns hardware and navigation.
+- `adr/0001-package-owned-measurement-ui.md` - Keeps package logical UI portable while EF800 Application owns hardware and navigation.
 - `adr/0002-isolate-external-plugin-execution.md` - Requires supervised plugin execution and preserves STM32L496 MPU/fault target gates that virtual testing cannot replace.
 
 ## Repository-Level ADRs Created

@@ -45,7 +45,7 @@ static int fake_read(void *context, enum ef800_persistence_root root,
 			     const char *name, void *buffer, size_t capacity, size_t *length)
 {
 	struct ef800_persistence_fake *fake = context;
-	struct ef800_persistence_fake_file *file = find_file(fake, root, name);
+	const struct ef800_persistence_fake_file *file = find_file(fake, root, name);
 
 	if (file == NULL) {
 		return -ENOENT;
@@ -65,7 +65,7 @@ static int fake_read_range(void *context, enum ef800_persistence_root root,
 				   size_t capacity, size_t *length)
 {
 	struct ef800_persistence_fake *fake = context;
-	struct ef800_persistence_fake_file *file = find_file(fake, root, name);
+	const struct ef800_persistence_fake_file *file = find_file(fake, root, name);
 	size_t available;
 
 	if (file == NULL) {
@@ -123,7 +123,7 @@ static int fake_stat(void *context, enum ef800_persistence_root root,
 			     const char *name, struct ef800_persistence_entry *entry)
 {
 	struct ef800_persistence_fake *fake = context;
-	struct ef800_persistence_fake_file *file = find_file(fake, root, name);
+	const struct ef800_persistence_fake_file *file = find_file(fake, root, name);
 
 	if (file == NULL) {
 		return -ENOENT;
@@ -140,7 +140,7 @@ static int fake_list(void *context, enum ef800_persistence_root root,
 	struct ef800_persistence_fake *fake = context;
 
 	for (size_t index = 0U; index < EF800_PERSISTENCE_FAKE_FILE_COUNT; ++index) {
-		struct ef800_persistence_fake_file *file = &fake->files[index];
+		const struct ef800_persistence_fake_file *file = &fake->files[index];
 		struct ef800_persistence_entry entry;
 
 		if (!file->used || file->root != root) {

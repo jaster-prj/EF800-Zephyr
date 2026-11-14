@@ -1,8 +1,8 @@
 ## Context
 
-The current MainApplication has a plugin instrument menu and a generic measurement editor, but they are joined in the wrong order. A plugin measurement is executed before point metadata is collected. After the result is returned, the display can show the legacy host actions while activation still dispatches through the plugin action bitmap. Fennel1 declares only `Measure`, so its pending result cannot reach staff-height, save, discard, or fixed-measurement actions. Elta3's instrument actions are likewise being confused with post-measurement actions.
+The current EF800 Application has a plugin instrument menu and a generic measurement editor, but they are joined in the wrong order. A plugin measurement is executed before point metadata is collected. After the result is returned, the display can show the legacy host actions while activation still dispatches through the plugin action bitmap. Fennel1 declares only `Measure`, so its pending result cannot reach staff-height, save, discard, or fixed-measurement actions. Elta3's instrument actions are likewise being confused with post-measurement actions.
 
-The legacy Mbed workflow collected point code and point number before the instrument request, then used a common result menu for staff height, save, discard, and fixed measurement. The desired architecture places that complete workflow inside each measurement plugin. The workspace service remains host-owned, but owns only the current generic point context and opaque line append. The design must preserve the package-owned instrument boundary from ADR-0001 and ADR-0010 without making MainApplication understand measurement actions or record fields.
+The legacy Mbed workflow collected point code and point number before the instrument request, then used a common result menu for staff height, save, discard, and fixed measurement. The desired architecture places that complete workflow inside each measurement plugin. The workspace service remains host-owned, but owns only the current generic point context and opaque line append. The design must preserve the package-owned instrument boundary from ADR-0001 and ADR-0010 without making EF800 Application understand measurement actions or record fields.
 
 ## Goals / Non-Goals
 
@@ -20,7 +20,7 @@ The legacy Mbed workflow collected point code and point number before the instru
 
 - Changing the workspace file format or moving persistence into plugin packages.
 - Adding directional commands to Fennel1.
-- Adding instrument-specific branches for Elta3 or Fennel1 to MainApplication.
+- Adding instrument-specific branches for Elta3 or Fennel1 to EF800 Application.
 - Changing plugin ABI ownership of instrument actions, bounded display models, or host services.
 - Reworking port assignment, UART ownership, or plugin discovery.
 
@@ -28,7 +28,7 @@ The legacy Mbed workflow collected point code and point number before the instru
 
 ### Keep complete workflow state in plugins
 
-Each plugin will distinguish its instrument and pending-result states internally. MainApplication will only distinguish whether a generic plugin session is active and whether a plugin has returned a serialized line for the workspace service:
+Each plugin will distinguish its instrument and pending-result states internally. EF800 Application will only distinguish whether a generic plugin session is active and whether a plugin has returned a serialized line for the workspace service:
 
 ```text
 PLUGIN_SESSION
@@ -45,11 +45,11 @@ The host will render the plugin's bounded display model and forward generic logi
 
 ### Keep workflow behavior in plugins and workspace context in the host
 
-The plugin session is responsible for the complete measurement transaction, display, logical input, point metadata, pending result, save/discard, fixed measurement, and serialized record generation. MainApplication supplies a generic session context and host services, then appends the returned opaque line. Plugins receive no direct filesystem or workspace object pointer.
+The plugin session is responsible for the complete measurement transaction, display, logical input, point metadata, pending result, save/discard, fixed measurement, and serialized record generation. EF800 Application supplies a generic session context and host services, then appends the returned opaque line. Plugins receive no direct filesystem or workspace object pointer.
 
 ### Collect metadata before measurement
 
-When a plugin session opens, MainApplication supplies the current code and point number held by the workspace object. The plugin uses those values as defaults and owns editing and validation. The plugin measurement runs only after its own workflow accepts the required metadata. Measurement failures will not produce a serialized line or workspace append.
+When a plugin session opens, EF800 Application supplies the current code and point number held by the workspace object. The plugin uses those values as defaults and owns editing and validation. The plugin measurement runs only after its own workflow accepts the required metadata. Measurement failures will not produce a serialized line or workspace append.
 
 ### Make fixed measurement advance the point
 
@@ -65,7 +65,7 @@ Tests will verify workspace context extraction/update, ABI context initializatio
 
 ## Risks / Trade-offs
 
-- **[Risk]** A plugin can return an invalid or oversized workspace line. -> Validate bounded output and record syntax at the generic workspace append boundary without interpreting instrument-specific fields in MainApplication.
+- **[Risk]** A plugin can return an invalid or oversized workspace line. -> Validate bounded output and record syntax at the generic workspace append boundary without interpreting instrument-specific fields in EF800 Application.
 - **[Risk]** Point numbers can diverge from existing workspace contents after reboot. -> Extract the last relevant measurement context during workspace load and update it after successful append.
 - **[Risk]** Fixed measurement can append duplicate records if incrementing occurs at the wrong transition. -> Have the workspace context provide the next point number and assert strictly increasing values in repeated fixed-measurement tests.
 - **[Risk]** Native-sim protocol success may not prove persistence success. -> Assert both plugin workflow output and the resulting opaque workspace line.
@@ -75,11 +75,11 @@ Tests will verify workspace context extraction/update, ABI context initializatio
 1. Extend the workspace object with current measurement context extraction/update.
 2. Extend the plugin ABI and host session wrapper with context initialization and bounded serialized output.
 3. Move the complete measurement workflow into Fennel1 and Elta3.
-4. Reduce MainApplication integration to generic context transfer and opaque workspace append.
+4. Reduce EF800 Application integration to generic context transfer and opaque workspace append.
 5. Add unit, plugin-host, and native-sim workflow tests, including repeated `Fixmessung`.
 6. Run the required firmware builds and native test suite; no persisted-data migration is expected.
 
-Rollback consists of restoring the previous MainApplication image and plugin package set together. Existing workspace files remain readable because their format is unchanged.
+Rollback consists of restoring the previous EF800 Application image and plugin package set together. Existing workspace files remain readable because their format is unchanged.
 
 ## Open Questions
 

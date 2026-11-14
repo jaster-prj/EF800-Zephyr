@@ -1,4 +1,5 @@
 /* SPDX-License-Identifier: Apache-2.0 */
+/** @file @brief Define stable plugin descriptor, UI, key, and calculation ABIs. */
 #ifndef EF800_PLUGIN_CONTRACT_H
 #define EF800_PLUGIN_CONTRACT_H
 
@@ -79,6 +80,7 @@ struct ef800_plugin_uuid {
 struct ef800_calculation_api {
 	uint32_t abi_version;
 	uint32_t struct_size;
+	/* Transform snapshot bytes into bounded output; return 0 or negative errno. */
 	int32_t (*transform)(void *instance, const char *snapshot,
 		size_t snapshot_length, char *output, size_t capacity,
 		size_t *written);
@@ -147,9 +149,12 @@ enum ef800_plugin_key_result {
 struct ef800_plugin_ui_api {
 	uint32_t abi_version;
 	uint32_t struct_size;
+	/* Fill validated plugin metadata for menu registration. */
 	int32_t (*get_menu_info)(void *instance,
 		struct ef800_plugin_descriptor_info *info);
+	/* Populate a bounded screen model; host validates all fields afterward. */
 	int32_t (*render)(void *instance, struct ef800_plugin_screen *screen);
+	/* Handle one normalized key and report consumed/back/error outcome. */
 	int32_t (*handle_key)(void *instance,
 		const struct ef800_plugin_key_event *event,
 		enum ef800_plugin_key_result *result);

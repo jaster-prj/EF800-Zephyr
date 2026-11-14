@@ -1,0 +1,8 @@
+tests:
+  ef800.shared.firmware_package:
+    platform_allow:
+      - native_sim
+    tags:
+      - ef800
+      - update
+      - package

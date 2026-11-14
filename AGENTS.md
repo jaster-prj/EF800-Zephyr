@@ -42,7 +42,7 @@ docker exec EF800_Devcontainer bash -lc "git -C /workspace/zephyr describe --tag
 ```
 
 The expected values are `/workspace`, `application/manifest-repo`, `west.yml`,
-and the Zephyr revision in `manifest-repo/west.yml` (currently `v4.4.1`). If
+and the Zephyr revision in `manifest-repo/west.yml` (currently `v4.5.0`). If
 those values match and the projects are present, build without an update.
 
 Run the following initialization only for a newly created container whose
@@ -70,17 +70,18 @@ Git.
 Configure or pristine-build each firmware target with:
 
 ```powershell
-docker exec -w /workspace EF800_Devcontainer /opt/venv/bin/west build -p always -b ef800 application/application/ef800-main -d application/build/ef800-main
+docker exec -w /workspace EF800_Devcontainer /opt/venv/bin/west build -p always -b ef800 application/application/ef800-application -d application/build/ef800-application
 docker exec -w /workspace EF800_Devcontainer /opt/venv/bin/west build -p always -b ef800 application/application/ef800-backup -d application/build/ef800-backup
 docker exec -w /workspace EF800_Devcontainer /opt/venv/bin/west build -p always -b ef800 application/application/ef800-bootloader -d application/build/ef800-bootloader
-docker exec -w /workspace EF800_Devcontainer /opt/venv/bin/west build -p always -b ef800_keyboard application/application/ef800-keyboard -d application/build/ef800-keyboard
-docker exec -w /workspace EF800_Devcontainer /opt/venv/bin/west build -p always -b ef800_keyboard application/application/ef800-keyboard-bootloader -d application/build/ef800-keyboard-bootloader
+docker exec -w /workspace EF800_Devcontainer /opt/venv/bin/west build -p always -b ef800_keyboard application/application/keyboard-application -d application/build/keyboard-application
+docker exec -w /workspace EF800_Devcontainer /opt/venv/bin/west build -p always -b ef800_keyboard application/application/keyboard-bootloader -d application/build/keyboard-bootloader
+docker exec -w /workspace EF800_Devcontainer /opt/venv/bin/west build -p always -b ef800_keyboard application/application/keyboard-updater -d application/build/keyboard-updater
 ```
 
 For normal source-only iterations, reuse the configured build directory:
 
 ```powershell
-docker exec -w /workspace EF800_Devcontainer /opt/venv/bin/west build -d application/build/ef800-main
+docker exec -w /workspace EF800_Devcontainer /opt/venv/bin/west build -d application/build/ef800-application
 ```
 
 Every build keeps the generated firmware inside its build directory. The
@@ -130,10 +131,10 @@ Use the detected device ID/name to identify the MCU, and verify EF800 PCB
 power and VTREF at the hardware instead of relying on the Programmer Voltage
 field. A Nucleo ST-LINK voltage reading does not replace those checks.
 
-Flash the temporary `ef800-hwdebug` image at `0x08000000`:
+Flash the temporary `test-hwdebug` image at `0x08000000`:
 
 ```powershell
-& "C:\Program Files\STMicroelectronics\STM32Cube\STM32CubeProgrammer\bin\STM32_Programmer_CLI.exe" -c port=SWD mode=UR reset=HWrst sn=066FFF504982494867074032 -d "build\ef800-hwdebug\zephyr\zephyr.bin" 0x08000000 -rst
+& "C:\Program Files\STMicroelectronics\STM32Cube\STM32CubeProgrammer\bin\STM32_Programmer_CLI.exe" -c port=SWD mode=UR reset=HWrst sn=066FFF504982494867074032 -d "build\test-hwdebug\zephyr\zephyr.bin" 0x08000000 -rst
 ```
 
 The command must use probe `066FFF504982494867074032` and report `Device ID : 0x461` and `Device name : STM32L496xx`.
@@ -144,7 +145,7 @@ Flash the keyboard-controller image at `0x08000000` only when the ST-LINK is
 connected to the STM32L431:
 
 ```powershell
-& "C:\Program Files\STMicroelectronics\STM32Cube\STM32CubeProgrammer\bin\STM32_Programmer_CLI.exe" -c port=SWD mode=UR reset=HWrst sn=0672FF504955857567234934 -d "build\ef800-keyboard\zephyr\zephyr.bin" 0x08000000 -rst
+& "C:\Program Files\STMicroelectronics\STM32Cube\STM32CubeProgrammer\bin\STM32_Programmer_CLI.exe" -c port=SWD mode=UR reset=HWrst sn=0672FF504955857567234934 -d "build\keyboard-application\zephyr\zephyr.bin" 0x08000000 -rst
 ```
 
 The command must report `Device ID : 0x435` and `Device name : STM32L43xxx/STM32L44xxx`.
@@ -158,10 +159,10 @@ probe result; a successful download to the wrong MCU is still a destructive
 mistake. The normal sequence is:
 
 ```powershell
-docker exec -w /workspace EF800_Devcontainer /opt/venv/bin/west build -p always -b ef800_keyboard application/application/ef800-keyboard -d application/build/ef800-keyboard
-docker exec -w /workspace EF800_Devcontainer /opt/venv/bin/west build -p always -b ef800 application/application/ef800-hwdebug -d application/build/ef800-hwdebug
-& "C:\Program Files\STMicroelectronics\STM32Cube\STM32CubeProgrammer\bin\STM32_Programmer_CLI.exe" -c port=SWD mode=UR reset=HWrst sn=0672FF504955857567234934 -d "build\ef800-keyboard\zephyr\zephyr.bin" 0x08000000 -rst
-& "C:\Program Files\STMicroelectronics\STM32Cube\STM32CubeProgrammer\bin\STM32_Programmer_CLI.exe" -c port=SWD mode=UR reset=HWrst sn=066FFF504982494867074032 -d "build\ef800-hwdebug\zephyr\zephyr.bin" 0x08000000 -rst
+docker exec -w /workspace EF800_Devcontainer /opt/venv/bin/west build -p always -b ef800_keyboard application/application/keyboard-application -d application/build/keyboard-application
+docker exec -w /workspace EF800_Devcontainer /opt/venv/bin/west build -p always -b ef800 application/application/test-hwdebug -d application/build/test-hwdebug
+& "C:\Program Files\STMicroelectronics\STM32Cube\STM32CubeProgrammer\bin\STM32_Programmer_CLI.exe" -c port=SWD mode=UR reset=HWrst sn=0672FF504955857567234934 -d "build\keyboard-application\zephyr\zephyr.bin" 0x08000000 -rst
+& "C:\Program Files\STMicroelectronics\STM32Cube\STM32CubeProgrammer\bin\STM32_Programmer_CLI.exe" -c port=SWD mode=UR reset=HWrst sn=066FFF504982494867074032 -d "build\test-hwdebug\zephyr\zephyr.bin" 0x08000000 -rst
 ```
 
 For the keyboard link, the physical L496 pin functions are `PG7=LPUART1_TX`
@@ -222,7 +223,7 @@ Build and run the native keyboard, protocol, RTC, and persistence tests with:
 docker exec -e ZEPHYR_BASE=/workspace/zephyr -w /workspace EF800_Devcontainer /opt/venv/bin/west twister -T application/tests -p native_sim --inline-logs --no-clean
 ```
 
-All four firmware builds and the native tests must pass before considering a
+All six firmware builds and the native tests must pass before considering a
 porting increment complete. The current closeout baseline is 31 native test
 cases. Keep `docs/migration-status.md` authoritative when the suite changes.
 
@@ -231,11 +232,13 @@ cases. Keep `docs/migration-status.md` authoritative when the suite changes.
 The fixed internal-flash layout is part of the compatibility contract:
 
 ```text
-bootloader  0x08000000  0x00010000
-backup      0x08010000  0x00018000
-metadata    0x08028000  0x00008000
-main        0x08030000  0x000D0000
+EF800 Bootloader    0x08000000  0x00010000
+EF800 Backup        0x08010000  0x00020000
+EF800 Application   0x08030000  0x000D0000
 ```
+
+The internal-flash map has no metadata partition. Boot-state metadata is stored
+in the first 32 KiB QSPI partition at offset `0x00000000`.
 
 After a pristine build, verify both binary sizes and linked addresses:
 
@@ -243,20 +246,21 @@ After a pristine build, verify both binary sizes and linked addresses:
 docker exec -w /workspace EF800_Devcontainer bash application/scripts/verify-images.sh
 ```
 
-Pass four alternate build directories when validating nonstandard local build
-names. Their order is bootloader, backup, main, and keyboard.
+Pass six alternate build directories when validating nonstandard local build
+names. Their order is bootloader, backup, main, keyboard, keyboard bootloader,
+and keyboard updater.
 
-Never flash a MainApplication image linked at `0x08000000`; it would overlap
+Never flash an EF800 Application image linked at `0x08000000`; it would overlap
 the second-level bootloader.
 
 ## Hardware Gates
 
-Keep MainApplication FAT mounting, bootloader update storage, and USB sharing
+Keep EF800 Application FAT mounting, bootloader update storage, and USB sharing
 release-gated until the fitted QSPI part, capacity, erase geometry, maximum
 frequency, and existing FAT volume are fully verified. The current recoverable
 bring-up target has mounted FAT successfully, but this is not production
-qualification. Never allow MainApplication to mount the QSPI FAT volume while
-BackupApplication exposes the same disk through USB MSC.
+qualification. Never allow EF800 Application to mount the QSPI FAT volume while
+EF800 Backup exposes the same disk through USB MSC.
 
 Hardware changes must also validate the MCP23017 wiring, USB-select polarity,
 keyboard reset and UART protocol, T6963 timing and polarity, board oscillator,

@@ -9,8 +9,8 @@ Defines the keyboard's custom I²C update service, dedicated updater partition, 
 ### Requirement: Keyboard update service has a stable I²C entry
 The keyboard application service SHALL remain at 7-bit I²C address `0x2a`; the dedicated updater service SHALL use 7-bit address `0x48`. The bootloader SHALL select the updater after an address-only probe to `0x48` during its bounded startup window; without that probe it SHALL continue normal boot.
 
-#### Scenario: MainApplication requests updater after reset
-- **WHEN** MainApplication sends an address-only write probe to `0x48` during the bootloader's update-entry window
+#### Scenario: EF800 Application requests updater after reset
+- **WHEN** EF800 Application sends an address-only write probe to `0x48` during the bootloader's update-entry window
 - **THEN** the bootloader launches the updater and the updater responds at `0x48`
 
 #### Scenario: No update probe is received
@@ -18,23 +18,23 @@ The keyboard application service SHALL remain at 7-bit I²C address `0x2a`; the 
 - **THEN** the bootloader follows its watchdog policy and starts the keyboard application
 
 #### Scenario: Application requests updater directly
-- **WHEN** MainApplication requests updater entry through the running keyboard application
+- **WHEN** EF800 Application requests updater entry through the running keyboard application
 - **THEN** the application transfers control to the verified updater without entering the factory ROM bootloader
 
 ### Requirement: Application and updater report their own version
 Each service SHALL support the one-byte `VERSION` command `0xf2` at its own I²C address and return five bytes: `0xf2`, major, minor, patch, ACK (`0x06`). The keyboard application service uses `0x2a`; the updater service uses `0x48`. A version response from one address SHALL NOT be presented as the version of the other image.
 
 #### Scenario: Keyboard application version is queried
-- **WHEN** MainApplication sends `VERSION` to the keyboard application's `0x2a` service
+- **WHEN** EF800 Application sends `VERSION` to the keyboard application's `0x2a` service
 - **THEN** the response identifies the keyboard-application version
 
 #### Scenario: Updater version is queried
-- **WHEN** MainApplication sends `VERSION` to the updater's `0x48` service
+- **WHEN** EF800 Application sends `VERSION` to the updater's `0x48` service
 - **THEN** the response identifies the updater-application version
 
 #### Scenario: Version query has no valid response
 - **WHEN** a service does not respond with a complete valid `VERSION` response
-- **THEN** MainApplication reports that service version as unavailable and does not substitute a cached or other-image version
+- **THEN** EF800 Application reports that service version as unavailable and does not substitute a cached or other-image version
 
 ### Requirement: Updater command framing is bounded and checked
 The updater SHALL use one checked write frame per I²C transaction and expose distinct ACK, NACK, and BUSY statuses. It SHALL bound request size and inter-byte time, and SHALL NOT require factory-ROM synchronization or claim factory-ROM compatibility.
@@ -89,11 +89,11 @@ The updater SHALL accept explicit erase-partition or erase-block requests for on
 - **THEN** it rejects the request without changing the updater image
 
 ### Requirement: Update package integrity is checked before and after programming
-MainApplication SHALL validate package metadata, target, size, and source CRC before transfer. The updater SHALL validate session bounds, calculate integrity while streaming, and provide a final Flash check/readback result; success SHALL NOT be reported unless the complete programmed image matches the declared integrity and its vector table is valid.
+EF800 Application SHALL validate package metadata, target, size, and source CRC before transfer. The updater SHALL validate session bounds, calculate integrity while streaming, and provide a final Flash check/readback result; success SHALL NOT be reported unless the complete programmed image matches the declared integrity and its vector table is valid.
 
 #### Scenario: Complete image passes checks
 - **WHEN** all chunks are written and the final Flash CRC/readback and vector checks pass
-- **THEN** MainApplication reports success and requests startup of the verified target
+- **THEN** EF800 Application reports success and requests startup of the verified target
 
 #### Scenario: CRC or readback fails
 - **WHEN** streamed data or Flash readback differs from the declared image
@@ -103,7 +103,7 @@ MainApplication SHALL validate package metadata, target, size, and source CRC be
 The keyboard application SHALL implement the custom update framing with a restricted policy that permits erase/write/check operations only for the updater partition. The application SHALL verify the installed updater before jumping to it.
 
 #### Scenario: Updater image is refreshed from the application
-- **WHEN** MainApplication selects the updater target while the keyboard application is servicing the update protocol
+- **WHEN** EF800 Application selects the updater target while the keyboard application is servicing the update protocol
 - **THEN** the application updates and checks only `0x08038000..0x0803ffff` and does not erase its executing application image
 
 #### Scenario: Invalid updater image is supplied
@@ -115,7 +115,7 @@ The updater SHALL remain independent of the application and bootloader targets i
 
 #### Scenario: Application or bootloader transfer is interrupted
 - **WHEN** power or I²C communication is lost while the updater writes the application or bootloader
-- **THEN** the target may be partial, but MainApplication can re-enter the intact updater and retry the selected target
+- **THEN** the target may be partial, but EF800 Application can re-enter the intact updater and retry the selected target
 
 #### Scenario: Updater refresh is interrupted
 - **WHEN** power or I²C communication is lost while the keyboard application writes the updater partition

@@ -1,10 +1,10 @@
 ## Context
 
-The native-sim Virtual EF800 already runs the production MainApplication, exposes a localhost browser front panel, and provides virtual serial peers and peripheral profiles. PluginManager discovery is startup-only and the physical plugin build currently targets ARM. The browser gateway currently owns one simulator connection for LCD and keypad traffic but has no package-management or virtual-device administration surface.
+The native-sim Virtual EF800 already runs the production EF800 Application, exposes a localhost browser front panel, and provides virtual serial peers and peripheral profiles. PluginManager discovery is startup-only and the physical plugin build currently targets ARM. The browser gateway currently owns one simulator connection for LCD and keypad traffic but has no package-management or virtual-device administration surface.
 
 The simulator's storage is a Zephyr virtual FAT volume backed by a flash image inside the runtime container. A Linux Docker bind mount is not the same filesystem as the Zephyr FAT volume and cannot directly populate the production plugin scan path. Native-sim plugin deployment must therefore cross the existing simulator control boundary and write packages through the simulator's own filesystem path.
 
-The existing plugin lifecycle deliberately avoids hot replacement. The safe activation boundary is an explicit simulator restart followed by normal MainApplication startup discovery. This change extends that lifecycle for native-sim only; it does not change physical USB ownership or claim ARM package qualification.
+The existing plugin lifecycle deliberately avoids hot replacement. The safe activation boundary is an explicit simulator restart followed by normal EF800 Application startup discovery. This change extends that lifecycle for native-sim only; it does not change physical USB ownership or claim ARM package qualification.
 
 ## Goals / Non-Goals
 
@@ -58,7 +58,7 @@ The simulator will write an upload to a temporary file in the configured plugin 
 
 ### Make restart explicit and supervised
 
-The browser will show a separate Restart simulator action after a successful upload. The simulator will stop accepting new plugin work, release active sessions and virtual ports, flush storage, and exit with a restart status. The runtime entrypoint will restart the native_sim process while preserving the virtual flash volume. MainApplication then performs its existing startup-only plugin scan.
+The browser will show a separate Restart simulator action after a successful upload. The simulator will stop accepting new plugin work, release active sessions and virtual ports, flush storage, and exit with a restart status. The runtime entrypoint will restart the native_sim process while preserving the virtual flash volume. EF800 Application then performs its existing startup-only plugin scan.
 
 ### Keep virtual device docking declarative and bounded
 

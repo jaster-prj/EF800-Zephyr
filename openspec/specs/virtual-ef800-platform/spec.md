@@ -2,40 +2,40 @@
 
 ## Purpose
 
-Provide a behavioral EF800 simulation on Zephyr `native_sim` so MainApplication, display, keyboard, peripheral, and plugin-supervision behavior can be tested interactively and headlessly without physical EF800 hardware, while preserving the boundary between behavioral evidence and hardware qualification.
+Provide a behavioral EF800 simulation on Zephyr `native_sim` so EF800 Application, display, keyboard, peripheral, and plugin-supervision behavior can be tested interactively and headlessly without physical EF800 hardware, while preserving the boundary between behavioral evidence and hardware qualification.
 
 ## Requirements
 
 ### Requirement: Run EF800 behavior as a native simulator application
-The system SHALL provide a buildable and runnable Zephyr `native_sim` application that executes the production `ef800-main` composition root and its MainApplication domain, menu, plugin, synchronization, and thread-supervision behavior while substituting required physical EF800 devices with Zephyr-compatible emulated or simulated peripherals.
+The system SHALL provide a buildable and runnable Zephyr `native_sim` application that executes the production `ef800-application` composition root and its EF800 Application domain, menu, plugin, synchronization, and thread-supervision behavior while substituting required physical EF800 devices with Zephyr-compatible emulated or simulated peripherals.
 
 #### Scenario: Start the virtual EF800
 - **WHEN** a developer builds and starts the virtual EF800 target
 - **THEN** the application initializes without an STM32 MCU or physical EF800 and exposes its virtual front-panel interface
 
 #### Scenario: Run concurrent plugin behavior
-- **WHEN** MainApplication starts a plugin operation on a worker thread
-- **THEN** the virtual target uses Zephyr scheduling and synchronization primitives and keeps the MainApplication UI path independently schedulable
+- **WHEN** EF800 Application starts a plugin operation on a worker thread
+- **THEN** the virtual target uses Zephyr scheduling and synchronization primitives and keeps the EF800 Application UI path independently schedulable
 
 ### Requirement: Keep physical and native-sim production source composition aligned
 The physical `ef800` and native-sim builds SHALL consume one shared production source manifest, with target differences limited to explicitly selected configuration, devicetree, and platform-adapter sources.
 
 #### Scenario: A shared application source changes
-- **WHEN** a production MainApplication source is added to the shared source manifest
+- **WHEN** a production EF800 Application source is added to the shared source manifest
 - **THEN** both the physical EF800 and native-sim builds include that source without editing two application wrappers
 
 #### Scenario: Native-only adapter is selected
-- **WHEN** `application/ef800-main` is built for `native_sim`
+- **WHEN** `application/ef800-application` is built for `native_sim`
 - **THEN** native peripheral adapters are selected while physical STM32 adapters remain excluded from the native image
 
 ### Requirement: Present a live virtual EF800 LCD
 The virtual EF800 SHALL maintain the observable state of a 240 x 64 monochrome EF800 display and SHALL publish complete, consistently framed display updates produced through the production T6963 driver operating against the emulated GPIO bus and configurable virtual T6963 device. The display framebuffer SHALL use one bit per pixel, and the virtual device SHALL perform text/graphics composition and dirty-region rendering before publishing a changed snapshot.
 
-#### Scenario: MainApplication changes the display
-- **WHEN** MainApplication writes or clears EF800 display content
+#### Scenario: EF800 Application changes the display
+- **WHEN** EF800 Application writes or clears EF800 display content
 - **THEN** the virtual front panel renders the resulting 240 x 64 state through the production T6963 path without requiring physical GPIO or a T6963 controller
 
-#### Scenario: MainApplication changes only one display region
+#### Scenario: EF800 Application changes only one display region
 - **WHEN** a text cell, graphics byte, custom character, cursor, attribute, or display-mode state changes
 - **THEN** the virtual T6963 model refreshes the affected packed one-bit pixels and preserves unrelated framebuffer pixels
 
@@ -49,7 +49,7 @@ set through distinct press and release operations. The set SHALL contain the
 59 unique keys represented by the existing keyboard map: 54 occupied matrix
 positions and 5 special keys. Duplicate aliases and unused raw matrix
 positions SHALL NOT be exposed as separate user-facing controls. Accepted
-input SHALL continue through the normal MainApplication keyboard translation,
+input SHALL continue through the normal EF800 Application keyboard translation,
 parser, and application-handling path rather than directly mutating menu or
 plugin state.
 
@@ -64,7 +64,7 @@ disconnects, or the simulator connection is lost.
 - **WHEN** the controlling user presses and releases any one of the 59
   canonical browser keys
 - **THEN** the gateway sends the corresponding key-down and key-up operations
-  through the normal simulator keyboard path and MainApplication receives the
+  through the normal simulator keyboard path and EF800 Application receives the
   resulting make and break behavior
 
 #### Scenario: User holds a virtual key
@@ -109,7 +109,7 @@ The virtual EF800 SHALL use its documented, versioned binary transport between t
 
 #### Scenario: No front panel is connected
 - **WHEN** the simulator runs headlessly for an automated test
-- **THEN** MainApplication continues to run and the test interface remains usable without a desktop window
+- **THEN** EF800 Application continues to run and the test interface remains usable without a desktop window
 
 #### Scenario: Simulator starts after the gateway
 - **WHEN** the gateway starts before the simulator endpoint is available
@@ -143,15 +143,15 @@ unused raw matrix positions as actionable controls.
   text, editing, navigation, power, and modifier keys, in a keyboard-like
   arrangement
 
-### Requirement: Browser file operations exercise MainApplication MTP
-The Virtual EF800 browser SHALL provide a file view for the MainApplication MTP-visible Data, Plugins, and FWU storages. Browser listing, download, and drag-and-drop upload operations SHALL be performed by an in-process software USB host through the native-sim virtual UHC/bus/UDC and the production MainApplication MTP class. The browser gateway SHALL NOT implement these operations by directly reading or writing the simulator filesystem.
+### Requirement: Browser file operations exercise EF800 Application MTP
+The Virtual EF800 browser SHALL provide a file view for the EF800 Application MTP-visible Data, Plugins, and FWU storages. Browser listing, download, and drag-and-drop upload operations SHALL be performed by an in-process software USB host through the native-sim virtual UHC/bus/UDC and the production EF800 Application MTP class. The browser gateway SHALL NOT implement these operations by directly reading or writing the simulator filesystem.
 
-#### Scenario: Browser lists MainApplication MTP storages
-- **WHEN** a browser opens the virtual EF800 file view and the MainApplication MTP session is active
+#### Scenario: Browser lists EF800 Application MTP storages
+- **WHEN** a browser opens the virtual EF800 file view and the EF800 Application MTP session is active
 - **THEN** it lists Data, Plugins, and FWU using MTP operations and does not expose the private Configuration storage
 
 #### Scenario: Browser uploads a file by drag and drop
-- **WHEN** a user drops a file onto an approved MainApplication MTP storage
+- **WHEN** a user drops a file onto an approved EF800 Application MTP storage
 - **THEN** the gateway sends the bytes to the in-process host peer, which transfers them through USB MTP into the corresponding FAT root and reports completion only after the MTP operation succeeds
 
 #### Scenario: Browser downloads a file
@@ -174,7 +174,7 @@ The web gateway SHALL allow multiple browser sessions to observe display and con
 - **THEN** the gateway sends release-all before making control available to another browser
 
 ### Requirement: Provide deterministic virtual peripheral behavior
-The virtual EF800 SHALL provide the minimum storage, time, battery, serial-peer, display, keyboard, and device-state behaviors required by enabled MainApplication workflows through Zephyr-compatible emulated or simulated peripherals, and SHALL permit tests to configure normal responses, delays, unavailable devices, and bounded failures without modifying production workflow logic.
+The virtual EF800 SHALL provide the minimum storage, time, battery, serial-peer, display, keyboard, and device-state behaviors required by enabled EF800 Application workflows through Zephyr-compatible emulated or simulated peripherals, and SHALL permit tests to configure normal responses, delays, unavailable devices, and bounded failures without modifying production workflow logic.
 
 #### Scenario: Test configures a virtual serial instrument
 - **WHEN** an automated scenario assigns a supported response script to a virtual EF800 port
@@ -182,7 +182,7 @@ The virtual EF800 SHALL provide the minimum storage, time, battery, serial-peer,
 
 #### Scenario: Test injects a peripheral failure
 - **WHEN** a scenario marks a virtual peripheral unavailable or configures a bounded operation failure
-- **THEN** MainApplication follows its normal degraded or recovery behavior and the failure is observable by the test
+- **THEN** EF800 Application follows its normal degraded or recovery behavior and the failure is observable by the test
 
 ### Requirement: Exercise plugin supervision behavior without hardware
 The virtual EF800 SHALL permit behavioral tests to run healthy, delayed, non-returning, stale-completion, malformed-request, and host-service-failure plugin scenarios while observing UI responsiveness, deadlines, cleanup, quarantine, navigation, and workspace integrity.
@@ -193,14 +193,14 @@ The virtual EF800 SHALL permit behavioral tests to run healthy, delayed, non-ret
 
 #### Scenario: UI input arrives during plugin work
 - **WHEN** a plugin worker is active and the test submits a supported keypad event
-- **THEN** the MainApplication UI path remains schedulable and processes or deliberately defers the input according to production policy
+- **THEN** the EF800 Application UI path remains schedulable and processes or deliberately defers the input according to production policy
 
 #### Scenario: Healthy plugin follows a failed plugin
 - **WHEN** one virtual plugin is quarantined after safe cleanup and another valid plugin is selected
 - **THEN** the unrelated plugin remains operable if shared virtual resources are in a known-safe state
 
 ### Requirement: Discover and assign plugins through generic metadata
-The virtual EF800 SHALL expose compatible discovered plugins in port-assignment configuration using plugin-declared names, hardware capabilities, serial defaults, and readiness state. MainApplication SHALL NOT require plugin-specific IDs, names, protocol defaults, or device-builder branches to present or commit an assignment.
+The virtual EF800 SHALL expose compatible discovered plugins in port-assignment configuration using plugin-declared names, hardware capabilities, serial defaults, and readiness state. EF800 Application SHALL NOT require plugin-specific IDs, names, protocol defaults, or device-builder branches to present or commit an assignment.
 
 #### Scenario: Compatible plugin appears for a port
 - **WHEN** a discovered measurement plugin is ready and its required hardware capability is supported by a selected port
@@ -208,14 +208,14 @@ The virtual EF800 SHALL expose compatible discovered plugins in port-assignment 
 
 #### Scenario: Plugin assignment configures the port
 - **WHEN** the user assigns a discovered plugin to a compatible port
-- **THEN** MainApplication obtains serial configuration from the plugin metadata or generic plugin-host contract, initializes the port transport, persists the plugin assignment, and reports the assignment ready only after all steps succeed
+- **THEN** EF800 Application obtains serial configuration from the plugin metadata or generic plugin-host contract, initializes the port transport, persists the plugin assignment, and reports the assignment ready only after all steps succeed
 
 #### Scenario: Incompatible or unavailable plugin is excluded
 - **WHEN** a plugin is missing, invalid, incompatible, unavailable, or requires hardware unsupported by the selected port
 - **THEN** the configuration menu does not offer it as a valid assignment and does not create a measurement entry for it
 
 ### Requirement: Present assigned measurement plugins as the measurement menu
-The virtual EF800 Measurement menu SHALL contain one entry per ready assigned measurement plugin, using each plugin's declared name. Menu entries SHALL NOT be represented primarily as port numbers; MainApplication SHALL resolve the selected plugin to its assigned port and initialized transport internally.
+The virtual EF800 Measurement menu SHALL contain one entry per ready assigned measurement plugin, using each plugin's declared name. Menu entries SHALL NOT be represented primarily as port numbers; EF800 Application SHALL resolve the selected plugin to its assigned port and initialized transport internally.
 
 #### Scenario: User opens the Measurement menu
 - **WHEN** one or more ready measurement plugins are assigned to compatible ports
@@ -223,26 +223,26 @@ The virtual EF800 Measurement menu SHALL contain one entry per ready assigned me
 
 #### Scenario: User selects an assigned plugin
 - **WHEN** the user selects a plugin entry from the Measurement menu
-- **THEN** MainApplication resolves that plugin's assignment and opens a session using the associated initialized transport
+- **THEN** EF800 Application resolves that plugin's assignment and opens a session using the associated initialized transport
 
 #### Scenario: No ready plugin is assigned
 - **WHEN** no discovered measurement plugin has a valid assignment and ready transport
-- **THEN** MainApplication reports that no measurement device is ready and does not enter a plugin submenu
+- **THEN** EF800 Application reports that no measurement device is ready and does not enter a plugin submenu
 
 ### Requirement: Render and execute plugin-owned measurement submenus
-The selected measurement plugin SHALL provide its submenu title, action labels, available action bitmap, and plugin-owned display model through the generic plugin contract. MainApplication SHALL render and route those actions without hardcoded knowledge of a specific instrument or plugin ID.
+The selected measurement plugin SHALL provide its submenu title, action labels, available action bitmap, and plugin-owned display model through the generic plugin contract. EF800 Application SHALL render and route those actions without hardcoded knowledge of a specific instrument or plugin ID.
 
 #### Scenario: Plugin declares a measurement submenu
 - **WHEN** a selected plugin session provides a valid display model and action bitmap
-- **THEN** MainApplication renders the plugin-owned submenu and exposes only the actions declared by that plugin
+- **THEN** EF800 Application renders the plugin-owned submenu and exposes only the actions declared by that plugin
 
 #### Scenario: User executes the plugin's measure action
 - **WHEN** the user selects the plugin-owned Measure action
-- **THEN** MainApplication invokes the generic plugin session and displays the returned measurement data
+- **THEN** EF800 Application invokes the generic plugin session and displays the returned measurement data
 
 #### Scenario: Measurement is saved to the workspace
 - **WHEN** the user completes the plugin-owned measurement workflow and saves a successful measurement
-- **THEN** MainApplication appends one measurement entry to the selected workspace using the plugin-produced result and does not require plugin-specific persistence logic
+- **THEN** EF800 Application appends one measurement entry to the selected workspace using the plugin-produced result and does not require plugin-specific persistence logic
 
 ### Requirement: Exercise workspace browsing in the virtual EF800
 The virtual EF800 SHALL expose the production workspace menu hierarchy and SHALL support deterministic automated scenarios for mixed workspace-line viewing, chronological paging, line truncation, large-file access, latest-position extraction, and no-workspace or read-failure handling.
@@ -268,7 +268,7 @@ Virtual EF800 results SHALL be identified as behavioral simulation evidence and 
 
 #### Scenario: Virtual behavioral suite passes
 - **WHEN** all virtual EF800 scenarios pass
-- **THEN** the project may claim the covered MainApplication and plugin behaviors passed without hardware but retains every applicable hardware-specific release gate
+- **THEN** the project may claim the covered EF800 Application and plugin behaviors passed without hardware but retains every applicable hardware-specific release gate
 
 #### Scenario: MPU containment requires qualification
 - **WHEN** a requirement depends on preventing an unauthorized memory access or classifying an ARM fault
@@ -287,7 +287,7 @@ The native-sim web front panel SHALL provide an accessible battery SOC control a
 
 #### Scenario: User changes simulated SOC with BATSOC0 active
 - **WHEN** the controller submits a SOC percentage and `BATSOC0` is active
-- **THEN** the front panel reports that no SOC source is active and MainApplication continues to report SOC as unavailable
+- **THEN** the front panel reports that no SOC source is active and EF800 Application continues to report SOC as unavailable
 
 #### Scenario: A viewer or invalid request attempts an update
 - **WHEN** a non-controller submits a battery update or the request contains a value outside 0–100
@@ -295,4 +295,4 @@ The native-sim web front panel SHALL provide an accessible battery SOC control a
 
 #### Scenario: Battery input is updated
 - **WHEN** a valid controller update is accepted
-- **THEN** the browser reports acceptance and MainApplication reflects the selected source's resulting SOC within its normal battery-sampling interval
+- **THEN** the browser reports acceptance and EF800 Application reflects the selected source's resulting SOC within its normal battery-sampling interval

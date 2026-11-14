@@ -26,6 +26,20 @@ static int register_entry(struct ef800_plugin_registry *registry,
 	return 0;
 }
 
+static struct ef800_plugin_registry_entry *find_mutable_entry(
+	struct ef800_plugin_registry *registry, uint32_t plugin_id)
+{
+	if (registry == NULL) {
+		return NULL;
+	}
+	for (size_t index = 0U; index < registry->count; ++index) {
+		if (registry->entries[index].info.plugin_id == plugin_id) {
+			return &registry->entries[index];
+		}
+	}
+	return NULL;
+}
+
 void ef800_plugin_registry_init(struct ef800_plugin_registry *registry)
 {
 	if (registry != NULL) {
@@ -34,7 +48,7 @@ void ef800_plugin_registry_init(struct ef800_plugin_registry *registry)
 }
 
 int ef800_plugin_registry_register_builtins(
-	struct ef800_plugin_registry *registry)
+	const struct ef800_plugin_registry *registry)
 {
 	if (registry == NULL) {
 		return -EINVAL;
@@ -61,8 +75,7 @@ int ef800_plugin_registry_set_hardware(
 	if (registry == NULL || required_hardware == 0U) {
 		return -EINVAL;
 	}
-	entry = (struct ef800_plugin_registry_entry *)
-		ef800_plugin_registry_find(registry, plugin_id);
+	entry = find_mutable_entry(registry, plugin_id);
 	if (entry == NULL) {
 		return -ENOENT;
 	}
@@ -88,8 +101,7 @@ int ef800_plugin_registry_record_diagnostic(
 	}
 	{
 		struct ef800_plugin_registry_entry *existing =
-			(struct ef800_plugin_registry_entry *)
-			ef800_plugin_registry_find(registry, plugin_id);
+			find_mutable_entry(registry, plugin_id);
 
 		if (existing != NULL) {
 			existing->state = state;
@@ -115,8 +127,7 @@ int ef800_plugin_registry_set_state(struct ef800_plugin_registry *registry,
 		state > EF800_PLUGIN_REGISTRY_TIMED_OUT) {
 		return -EINVAL;
 	}
-	entry = (struct ef800_plugin_registry_entry *)
-		ef800_plugin_registry_find(registry, plugin_id);
+	entry = find_mutable_entry(registry, plugin_id);
 	if (entry == NULL) {
 		return -ENOENT;
 	}

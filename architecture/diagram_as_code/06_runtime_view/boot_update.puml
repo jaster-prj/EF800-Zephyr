@@ -6,8 +6,8 @@ participant "STM32 reset / IWDG" as HW
 participant "Second-level Bootloader" as BL
 database "QSPI NVS + Shared Data FAT" as Q
 database "Internal flash" as IF
-participant MainApplication as Main
-participant BackupApplication as Backup
+participant EF800 Application as Main
+participant EF800 Backup as Backup
 
 HW -> BL : reset at 0x08000000
 BL -> BL : start/feed watchdog; initialize console

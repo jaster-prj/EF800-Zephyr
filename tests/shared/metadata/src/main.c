@@ -8,6 +8,7 @@
 #include <zephyr/kvss/nvs.h>
 #include <zephyr/storage/flash_map.h>
 #include <zephyr/sys/byteorder.h>
+#include <zephyr/sys/util.h>
 #include <zephyr/ztest.h>
 
 #include "ef800_boot_decision.h"
@@ -285,6 +286,178 @@ ZTEST(ef800_shared_metadata, test_v2_metadata_migrates_boot_state_only)
 	zassert_ok(ef800_metadata_read_current(&metadata, &valid), NULL);
 	zassert_true(valid, NULL);
 	zassert_equal(metadata.main_failures, 5U, NULL);
+}
+
+ZTEST(ef800_shared_metadata, test_update_journal_persists_independently_and_recovers)
+{
+	const struct flash_area *boot_state;
+	struct ef800_boot_metadata metadata;
+	struct ef800_firmware_journal journal = {
+		.target_count = 2U,
+		.targets = {
+			{
+				.target_id = EF800_FIRMWARE_TARGET_BACKUP,
+				.phase = EF800_FIRMWARE_JOURNAL_PROGRAMMING,
+				.result = EF800_FIRMWARE_JOURNAL_RESULT_NONE,
+				.package_crc32 = 0x12345678U,
+				.image_crc32 = 0x87654321U,
+				.image_version = { 1U, 0U, 0U },
+			},
+			{
+				.target_id = EF800_FIRMWARE_TARGET_KEYBOARD_APPLICATION,
+				.phase = EF800_FIRMWARE_JOURNAL_VALIDATED,
+				.result = EF800_FIRMWARE_JOURNAL_RESULT_NONE,
+				.package_crc32 = 0xAABBCCDDU,
+				.image_crc32 = 0xDDCCBBAAU,
+				.image_version = { 1U, 2U, 3U },
+			},
+		},
+	};
+	struct ef800_firmware_journal recovered;
+	bool valid;
+
+	zassert_ok(flash_area_open(PARTITION_ID(metadata_partition), &boot_state), NULL);
+	zassert_ok(flash_erase(boot_state->fa_dev, 0U, 4096U), NULL);
+	zassert_ok(flash_area_erase(boot_state, 0U, boot_state->fa_size), NULL);
+	ef800_metadata_test_forget_state();
+
+	ef800_boot_metadata_init(&metadata);
+	metadata.main_failures = 7U;
+	zassert_ok(ef800_metadata_write(boot_state, &metadata), NULL);
+	zassert_ok(ef800_firmware_journal_write(boot_state, &journal), NULL);
+	zassert_equal(journal.sequence, 1U);
+
+	/* Simulate process/device restart: NVS state is reconstructed from flash. */
+	ef800_metadata_test_forget_state();
+	zassert_ok(ef800_firmware_journal_read(boot_state, &recovered), NULL);
+	zassert_equal(recovered.sequence, 1U);
+	zassert_equal(recovered.target_count, 2U);
+	zassert_equal(recovered.targets[0].package_crc32, 0x12345678U);
+	zassert_false(ef800_firmware_journal_cleanup_allowed(
+		&recovered.targets[0]));
+	zassert_true(ef800_firmware_journal_recover(&recovered), NULL);
+	zassert_equal(recovered.targets[0].phase,
+		      EF800_FIRMWARE_JOURNAL_RETRY_REQUIRED);
+	zassert_equal(recovered.targets[0].result,
+		      EF800_FIRMWARE_JOURNAL_RESULT_RETRY);
+	zassert_equal(recovered.targets[1].phase,
+		      EF800_FIRMWARE_JOURNAL_VALIDATED);
+
+	recovered.targets[0].phase = EF800_FIRMWARE_JOURNAL_COMPLETE;
+	recovered.targets[0].result = EF800_FIRMWARE_JOURNAL_RESULT_SUCCESS;
+	zassert_true(ef800_firmware_journal_cleanup_allowed(
+		&recovered.targets[0]));
+	zassert_ok(ef800_firmware_journal_write(boot_state, &recovered), NULL);
+	zassert_equal(recovered.sequence, 2U);
+
+	ef800_metadata_test_forget_state();
+	zassert_ok(ef800_firmware_journal_read(boot_state, &recovered), NULL);
+	zassert_equal(recovered.sequence, 2U);
+	zassert_equal(ef800_metadata_read(boot_state, &metadata, &valid), 0, NULL);
+	zassert_true(valid, NULL);
+	zassert_equal(metadata.main_failures, 7U);
+}
+
+ZTEST(ef800_shared_metadata, test_update_journal_rejects_duplicate_and_corrupt_records)
+{
+	uint8_t wire[EF800_FIRMWARE_JOURNAL_MAX_SIZE];
+	struct ef800_firmware_journal journal = {
+		.target_count = 2U,
+		.targets = {
+			{
+				.target_id = EF800_FIRMWARE_TARGET_APPLICATION,
+				.phase = EF800_FIRMWARE_JOURNAL_PENDING,
+			},
+			{
+				.target_id = EF800_FIRMWARE_TARGET_APPLICATION,
+				.phase = EF800_FIRMWARE_JOURNAL_PENDING,
+			},
+		},
+	};
+	struct ef800_firmware_journal decoded;
+
+	zassert_equal(ef800_firmware_journal_encode(
+		&journal, wire, sizeof(wire)), -EEXIST);
+	journal.target_count = 1U;
+	zassert_true(ef800_firmware_journal_encode(
+		&journal, wire, sizeof(wire)) > 0);
+	wire[EF800_FIRMWARE_JOURNAL_HEADER_SIZE + 4U] ^= 0x01U;
+	zassert_equal(ef800_firmware_journal_decode(
+		wire, EF800_FIRMWARE_JOURNAL_HEADER_SIZE +
+		      EF800_FIRMWARE_JOURNAL_TARGET_SIZE, &decoded), -EBADMSG);
+}
+
+ZTEST(ef800_shared_metadata, test_update_journal_restart_recovery_for_every_phase)
+{
+	static const enum ef800_firmware_journal_phase phases[] = {
+		EF800_FIRMWARE_JOURNAL_PENDING,
+		EF800_FIRMWARE_JOURNAL_VALIDATED,
+		EF800_FIRMWARE_JOURNAL_ERASING,
+		EF800_FIRMWARE_JOURNAL_PROGRAMMING,
+		EF800_FIRMWARE_JOURNAL_VERIFYING,
+		EF800_FIRMWARE_JOURNAL_COMPLETE,
+		EF800_FIRMWARE_JOURNAL_REJECTED,
+		EF800_FIRMWARE_JOURNAL_RETRY_REQUIRED,
+		EF800_FIRMWARE_JOURNAL_SKIPPED,
+		EF800_FIRMWARE_JOURNAL_UNSUPPORTED,
+	};
+	const struct flash_area *boot_state;
+
+	zassert_ok(flash_area_open(PARTITION_ID(metadata_partition), &boot_state), NULL);
+	zassert_ok(flash_area_erase(boot_state, 0U, boot_state->fa_size), NULL);
+	ef800_metadata_test_forget_state();
+
+	for (size_t i = 0U; i < ARRAY_SIZE(phases); ++i) {
+		struct ef800_firmware_journal journal = {
+			.target_count = 1U,
+			.targets = {{
+				.target_id = EF800_FIRMWARE_TARGET_BACKUP,
+				.phase = phases[i],
+				.result = phases[i] == EF800_FIRMWARE_JOURNAL_COMPLETE ?
+					EF800_FIRMWARE_JOURNAL_RESULT_SUCCESS :
+					EF800_FIRMWARE_JOURNAL_RESULT_NONE,
+				.package_crc32 = 0xA5000000U + (uint32_t)i,
+				.image_crc32 = 0x5A000000U + (uint32_t)i,
+				.image_version = { 1U, 0U, (uint16_t)i },
+			}},
+		};
+		bool expected_recovery =
+			phases[i] == EF800_FIRMWARE_JOURNAL_ERASING ||
+			phases[i] == EF800_FIRMWARE_JOURNAL_PROGRAMMING ||
+			phases[i] == EF800_FIRMWARE_JOURNAL_VERIFYING;
+
+		zassert_ok(ef800_firmware_journal_write(boot_state, &journal),
+			   "persist phase %u", phases[i]);
+		/* Drop cached NVS state and reconstruct the journal as after reset. */
+		ef800_metadata_test_forget_state();
+		zassert_ok(ef800_firmware_journal_read(boot_state, &journal),
+			   "read phase %u after restart", phases[i]);
+		zassert_equal(journal.targets[0].phase, phases[i], NULL);
+		zassert_equal(ef800_firmware_journal_recover(&journal),
+			      expected_recovery, "recovery for phase %u", phases[i]);
+
+		if (expected_recovery) {
+			zassert_equal(journal.targets[0].phase,
+				      EF800_FIRMWARE_JOURNAL_RETRY_REQUIRED, NULL);
+			zassert_equal(journal.targets[0].result,
+				      EF800_FIRMWARE_JOURNAL_RESULT_RETRY, NULL);
+			zassert_false(ef800_firmware_journal_cleanup_allowed(
+				&journal.targets[0]), NULL);
+			zassert_ok(ef800_firmware_journal_write(boot_state, &journal),
+				   "persist interrupted phase recovery");
+			ef800_metadata_test_forget_state();
+			zassert_ok(ef800_firmware_journal_read(boot_state, &journal),
+				   "re-read recovered phase after reset");
+			zassert_equal(journal.targets[0].phase,
+				      EF800_FIRMWARE_JOURNAL_RETRY_REQUIRED, NULL);
+		}
+
+		zassert_equal(ef800_firmware_journal_cleanup_allowed(
+			&journal.targets[0]),
+			phases[i] == EF800_FIRMWARE_JOURNAL_COMPLETE,
+			"cleanup policy for phase %u", phases[i]);
+	}
+	flash_area_close(boot_state);
 }
 
 ZTEST_SUITE(ef800_shared_metadata, NULL, NULL, NULL, NULL, NULL);

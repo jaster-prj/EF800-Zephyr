@@ -13,7 +13,7 @@
 - `adr/0003-use-native-sim-for-behavioral-ef800.md` - retains physical USB as a hardware qualification gate.
 - `adr/0004-use-web-gateway-for-virtual-ef800-front-panel.md` - leaves the virtual gateway boundary unchanged.
 - `adr/0005-use-zephyr-device-emulation-for-production-native-sim.md` - keeps native storage and USB evidence behavioral only.
-- `adr/0006-use-single-ef800-main-target-for-physical-and-native-sim.md` - requires target-specific USB adapters within the shared MainApplication target.
+- `adr/0006-use-single-ef800-application-target-for-physical-and-native-sim.md` - requires target-specific USB adapters within the shared EF800 Application target.
 - `adr/0007-use-configurable-packed-t6963-renderer.md` - no direct USB-storage constraint.
 - `adr/0008-use-native-sim-package-control-and-restart-boundary.md` - preserves startup-only plugin activation and atomic package installation principles.
 - `adr/0009-use-bounded-native-sim-log-stream.md` - leaves physical console routing distinct from native-sim diagnostics.

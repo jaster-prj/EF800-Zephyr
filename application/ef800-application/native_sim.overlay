@@ -1,0 +1,234 @@
+#include <zephyr/dt-bindings/adc/adc.h>
+
+/ {
+	chosen {
+		zephyr,keyboard-uart = &lpuart1;
+		zephyr,code-partition = &slot0_partition;
+	};
+
+	aliases {
+		status-led = &status_led;
+	};
+
+	leds {
+		compatible = "gpio-leds";
+
+		status_led: status_led {
+			gpios = <&gpioc 7 GPIO_ACTIVE_HIGH>;
+			label = "Virtual EF800 status";
+		};
+	};
+
+	zephyr,user {
+		usb-vbus-gpios = <&gpioa 9 GPIO_ACTIVE_HIGH>;
+		data-gpios = <&gpioa 0 0>, <&gpioa 1 0>, <&gpioa 2 0>,
+				     <&gpioa 3 0>, <&gpioa 4 0>, <&gpioa 5 0>,
+				     <&gpioa 6 0>, <&gpioa 7 0>;
+		cd-gpios = <&gpiod 6 0>;
+		wr-gpios = <&gpioa 15 0>;
+		rd-gpios = <&gpiob 0 0>;
+		ce-gpios = <&gpioa 10 0>;
+		fs-gpios = <&mcp23017 4 0>;
+		reset-gpios = <&mcp23017 5 0>;
+		pixels-horizontal = <240>;
+		pixels-vertical = <64>;
+		font-width = <6>;
+		memory-kb = <8>;
+		usb-select-gpios = <&mcp23017 8 0>;
+		keyboard-reset-gpios = <&mcp23017 12 0>;
+		power-down-gpios = <&gpiob 5 0>;
+		io-channels = <&battery_adc_emul 2>;
+		io-channel-names = "battery";
+	};
+
+	gpioa: gpioa {
+		compatible = "jaster,ef800-gpio-emul";
+		gpio-controller;
+		#gpio-cells = <2>;
+		ngpios = <32>;
+		rising-edge;
+		falling-edge;
+		high-level;
+		low-level;
+		status = "okay";
+	};
+
+	gpiob: gpiob {
+		compatible = "jaster,ef800-gpio-emul";
+		gpio-controller;
+		#gpio-cells = <2>;
+		ngpios = <32>;
+		rising-edge;
+		falling-edge;
+		high-level;
+		low-level;
+		status = "okay";
+	};
+
+	gpioc: gpioc {
+		compatible = "jaster,ef800-gpio-emul";
+		gpio-controller;
+		#gpio-cells = <2>;
+		ngpios = <32>;
+		rising-edge;
+		falling-edge;
+		high-level;
+		low-level;
+		status = "okay";
+	};
+
+	gpiod: gpiod {
+		compatible = "jaster,ef800-gpio-emul";
+		gpio-controller;
+		#gpio-cells = <2>;
+		ngpios = <32>;
+		rising-edge;
+		falling-edge;
+		high-level;
+		low-level;
+		status = "okay";
+	};
+
+	qspi_disk: qspi_disk {
+		compatible = "zephyr,flash-disk";
+		partition = <&qspi_storage_partition>;
+		disk-name = "DATA";
+		sector-size = <512>;
+		cache-size = <4096>;
+		status = "okay";
+	};
+
+	qspi_configuration_disk: qspi_configuration_disk {
+		compatible = "zephyr,flash-disk";
+		partition = <&qspi_configuration_partition>;
+		disk-name = "EF800";
+		sector-size = <512>;
+		cache-size = <4096>;
+		status = "okay";
+	};
+
+	uhc_vrt0: uhc_vrt0 {
+		compatible = "zephyr,uhc-virtual";
+		status = "okay";
+
+		usbotg_fs: usbotg_fs {
+			compatible = "zephyr,udc-virtual";
+			num-bidir-endpoints = <8>;
+			maximum-speed = "full-speed";
+			status = "okay";
+
+			cdc_acm_uart0: cdc_acm_uart0 {
+				compatible = "zephyr,cdc-acm-uart";
+				label = "EF800 Virtual USB CDC ACM";
+				rx-fifo-size = <256>;
+				tx-fifo-size = <1024>;
+				status = "okay";
+			};
+		};
+	};
+
+	lpuart1: lpuart1 {
+		compatible = "zephyr,uart-emul";
+		current-speed = <115200>;
+		rx-fifo-size = <256>;
+		tx-fifo-size = <256>;
+		status = "okay";
+	};
+
+	usart1: usart1 {
+		compatible = "zephyr,uart-emul";
+		current-speed = <115200>;
+		rx-fifo-size = <256>;
+		tx-fifo-size = <256>;
+		status = "okay";
+	};
+
+	usart3: usart3 {
+		compatible = "zephyr,uart-emul";
+		current-speed = <115200>;
+		rx-fifo-size = <256>;
+		tx-fifo-size = <256>;
+		status = "okay";
+	};
+
+	uart4: uart4 {
+		compatible = "zephyr,native-pty-uart";
+		current-speed = <115200>;
+		status = "okay";
+	};
+
+	battery_adc_emul: adc {
+		compatible = "zephyr,adc-emul";
+		nchannels = <3>;
+		ref-internal-mv = <3300>;
+		#io-channel-cells = <1>;
+		status = "okay";
+
+		#address-cells = <1>;
+		#size-cells = <0>;
+
+		channel@2 {
+			reg = <2>;
+			zephyr,gain = "ADC_GAIN_1";
+			zephyr,reference = "ADC_REF_INTERNAL";
+			zephyr,vref-mv = <3300>;
+			zephyr,acquisition-time = <ADC_ACQ_TIME_MAX>;
+			zephyr,resolution = <12>;
+		};
+	};
+
+};
+
+&i2c0 {
+	mcp23017: gpio@24 {
+		compatible = "microchip,mcp23017";
+		reg = <0x24>;
+		gpio-controller;
+		#gpio-cells = <2>;
+		ngpios = <16>;
+		status = "okay";
+	};
+
+	external_rtc: rtc@68 {
+		compatible = "maxim,ds3231-mfd";
+		reg = <0x68>;
+		status = "okay";
+
+		ef800_rtc: rtc {
+			compatible = "maxim,ds3231-rtc";
+			isw-gpios = <&gpioa 6 GPIO_ACTIVE_LOW>;
+			status = "okay";
+		};
+	};
+
+	fuel_gauge: fuel-gauge@36 {
+		compatible = "maxim,max17048";
+		reg = <0x36>;
+		status = "okay";
+	};
+};
+
+/* Model the 4 MiB QSPI as scaled volumes in the native-sim flash image. */
+/delete-node/ &storage_partition;
+
+&flash0 {
+	partitions {
+		metadata_partition: qspi_bootstate_partition: partition@fc000 {
+			compatible = "zephyr,mapped-partition";
+			label = "qspi-boot-state";
+			reg = <0x000fc000 0x00008000>;
+		};
+
+		qspi_configuration_partition: partition@104000 {
+			compatible = "zephyr,mapped-partition";
+			label = "qspi-configuration";
+			reg = <0x00104000 0x00018000>;
+		};
+
+		qspi_storage_partition: partition@11c000 {
+			compatible = "zephyr,mapped-partition";
+			label = "qspi-shared-data";
+			reg = <0x0011c000 0x00060000>;
+		};
+	};
+};

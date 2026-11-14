@@ -1,4 +1,5 @@
 /* SPDX-License-Identifier: Apache-2.0 */
+/** @file @brief Select, validate, and hand off to EF800 firmware images. */
 
 #include <stdbool.h>
 #include <stddef.h>
@@ -7,7 +8,6 @@
 #include <inttypes.h>
 #include <errno.h>
 
-#include <cmsis_core.h>
 #include <zephyr/device.h>
 #include <zephyr/devicetree.h>
 #include <zephyr/kernel.h>
@@ -27,15 +27,15 @@
 #include "ef800_boot_decision.h"
 #include "ef800_watchdog.h"
 #include "boot_trace.h"
+#include "boot_handoff.h"
 
-LOG_MODULE_REGISTER(ef800_bootloader, LOG_LEVEL_INF);
+LOG_MODULE_REGISTER(ef800_bootloader, LOG_LEVEL_WRN);
 
 #define MAIN_PARTITION_ID PARTITION_ID(main_partition)
 #define BACKUP_PARTITION_ID PARTITION_ID(backup_partition)
 #define QSPI_BOOTSTATE_PARTITION_ID PARTITION_ID(qspi_bootstate_partition)
 #define QSPI_CONFIGURATION_PARTITION_ID PARTITION_ID(qspi_configuration_partition)
 #define QSPI_DATA_PARTITION_ID PARTITION_ID(qspi_storage_partition)
-#define EF800_VECTOR_BYTES (2U * sizeof(uint32_t))
 #define QSPI_ERASE_BLOCK_SIZE 0x00001000U
 
 BUILD_ASSERT(PARTITION_EXISTS(main_partition), "main partition is required");
@@ -54,7 +54,7 @@ BUILD_ASSERT(PARTITION_SIZE(backup_partition) == 0x00020000U,
 	     "backup partition size must remain 128 KiB");
 BUILD_ASSERT(PARTITION_OFFSET(main_partition) ==
 	     PARTITION_OFFSET(backup_partition) + PARTITION_SIZE(backup_partition),
-	     "MainApplication must follow the expanded BackupApplication region");
+	     "EF800 Application must follow the expanded EF800 Backup region");
 BUILD_ASSERT(PARTITION_OFFSET(qspi_bootstate_partition) == 0x00000000U &&
 	     PARTITION_SIZE(qspi_bootstate_partition) == 0x00008000U,
 	     "QSPI boot-state partition must be the first 32 KiB");
@@ -84,11 +84,11 @@ static const size_t sram_size = DT_REG_SIZE(DT_NODELABEL(sram0));
 
 static int read_vector(const struct flash_area *area, uint32_t vector[2])
 {
-	if (!flash_area_device_is_ready(area) || area->fa_size < EF800_VECTOR_BYTES) {
+	if (!flash_area_device_is_ready(area) || area->fa_size < 2U * sizeof(uint32_t)) {
 		return -ENODEV;
 	}
 
-	return flash_area_read(area, 0, vector, EF800_VECTOR_BYTES);
+	return flash_area_read(area, 0U, vector, 2U * sizeof(uint32_t));
 }
 
 static bool partition_is_valid(const struct flash_area *area, uintptr_t address)
@@ -118,52 +118,6 @@ static bool reset_was_watchdog(void)
 #else
 	return false;
 #endif
-}
-
-__attribute__((naked, noreturn)) static void branch_to_application(
-	uint32_t stack_pointer, uint32_t reset_handler)
-{
-	__asm__ volatile (
-		"msr msp, r0\n"
-		"movs r0, #0\n"
-		"msr control, r0\n"
-		"msr basepri, r0\n"
-		"msr faultmask, r0\n"
-		"isb\n"
-		"cpsie i\n"
-		"bx r1\n"
-	);
-}
-
-static FUNC_NORETURN void jumpApplication(const struct flash_area *area, uintptr_t address)
-{
-	uint32_t vector[2];
-
-	if (read_vector(area, vector) != 0 ||
-		!ef800_vector_table_valid(vector, address, area->fa_size,
-					  sram_address, sram_size)) {
-		LOG_ERR("refusing jumpApplication to invalid image at 0x%lx",
-			(unsigned long)address);
-		while (true) {
-			k_sleep(K_FOREVER);
-		}
-	}
-	__disable_irq();
-	SysTick->CTRL = 0U;
-	SysTick->LOAD = 0U;
-	SysTick->VAL = 0U;
-	SCB->ICSR = SCB_ICSR_PENDSTCLR_Msk | SCB_ICSR_PENDSVCLR_Msk;
-	for (size_t index = 0U; index < ARRAY_SIZE(NVIC->ICER); ++index) {
-		NVIC->ICER[index] = UINT32_MAX;
-		NVIC->ICPR[index] = UINT32_MAX;
-	}
-	MPU->CTRL = 0U;
-	SCB->CFSR = SCB->CFSR;
-	SCB->HFSR = SCB->HFSR;
-	SCB->VTOR = (uint32_t)address;
-	__DSB();
-	__ISB();
-	branch_to_application(vector[0], vector[1]);
 }
 
 int main(void)
@@ -220,7 +174,7 @@ int main(void)
 			metadata.main_failures = 0U;
 			metadata.last_target = EF800_BOOT_TARGET_MAIN;
 			metadata_dirty = true;
-			LOG_INF("backup recovery boot complete; retrying main application");
+			LOG_INF("backup recovery boot complete; retrying EF800 application");
 		} else if (watchdog_reset &&
 			metadata.last_target == EF800_BOOT_TARGET_MAIN &&
 			metadata.main_failures < UINT32_MAX) {
@@ -231,12 +185,12 @@ int main(void)
 		}
 	}
 
-	LOG_INF("checking MTP MainApplication update");
+	LOG_INF("checking MTP EF800 Application update");
 	rc = ef800_boot_install_update(main_area, PARTITION_ADDRESS(main_partition),
 					 sram_address, sram_size);
 	update_installed = rc == 0;
-	LOG_INF("MTP MainApplication update result: %d", rc);
-	ef800_boot_trace_result("MainApplication update", rc);
+	LOG_INF("MTP EF800 Application update result: %d", rc);
+	ef800_boot_trace_result("EF800 Application update", rc);
 	if (rc < 0 && rc != -ENOENT && rc != -ENODEV) {
 		LOG_WRN("update inspection failed: %d", rc);
 	}
@@ -268,7 +222,8 @@ int main(void)
 				LOG_ERR("boot metadata write failed: %d", rc);
 			}
 		}
-		jumpApplication(backup_area, PARTITION_ADDRESS(backup_partition));
+		ef800_boot_handoff(backup_area, PARTITION_ADDRESS(backup_partition),
+				   sram_address, sram_size);
 	}
 
 	if (main_valid) {
@@ -287,8 +242,9 @@ int main(void)
 				LOG_ERR("boot metadata write failed: %d", rc);
 			}
 		}
-		LOG_INF("starting main application");
-		jumpApplication(main_area, PARTITION_ADDRESS(main_partition));
+		LOG_INF("starting EF800 application");
+		ef800_boot_handoff(main_area, PARTITION_ADDRESS(main_partition),
+				   sram_address, sram_size);
 	}
 
 	if (backup_valid) {
@@ -302,8 +258,9 @@ int main(void)
 				LOG_ERR("boot metadata write failed: %d", rc);
 			}
 		}
-		LOG_WRN("main application invalid; starting backup");
-		jumpApplication(backup_area, PARTITION_ADDRESS(backup_partition));
+		LOG_WRN("EF800 application invalid; starting backup");
+		ef800_boot_handoff(backup_area, PARTITION_ADDRESS(backup_partition),
+				   sram_address, sram_size);
 	}
 
 	LOG_ERR("no valid main or backup application");

@@ -191,7 +191,7 @@ static int parse_composition(char *value, struct ef800_composition_profile *prof
 	char *cursor = value;
 
 	while (*cursor != '\0') {
-		char *start;
+		const char *start;
 		size_t token_length;
 
 		while (*cursor == ' ') {
@@ -586,7 +586,6 @@ static int stage_profile(struct ef800_composition_service *service,
 	const struct ef800_composition_profile *profile)
 {
 	struct ef800_composition_snapshot resolved;
-	char encoded[EF800_COMPOSITION_RECORD_MAX];
 	size_t length;
 	int ret;
 
@@ -595,6 +594,8 @@ static int stage_profile(struct ef800_composition_service *service,
 	}
 	ret = ef800_composition_resolve(profile, service->catalog, &resolved);
 	if (ret == 0) {
+		char encoded[EF800_COMPOSITION_RECORD_MAX];
+
 		ret = ef800_composition_profile_encode(profile, encoded, sizeof(encoded), &length);
 	}
 	if (ret != 0) {

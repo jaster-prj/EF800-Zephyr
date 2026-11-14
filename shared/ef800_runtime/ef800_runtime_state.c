@@ -4,12 +4,12 @@
 
 #include <errno.h>
 
-#include "ef800_main.h"
+#include "ef800_app.h"
 
 static void sample_rtc(struct ef800_runtime_state *state, uint32_t now)
 {
 	struct rtc_time time;
-	int ret = ef800_main_rtc_get_local_time(&time);
+	int ret = ef800_app_rtc_get_local_time(&time);
 
 	k_mutex_lock(&state->lock, K_FOREVER);
 	state->snapshot.rtc_error = ret;
@@ -69,11 +69,11 @@ static void sample_work_handler(struct k_work *work)
 	if ((int32_t)(now - state->next_battery_sample_ms) >= 0) {
 		ef800_runtime_state_refresh_battery(state);
 		state->next_battery_sample_ms =
-			now + CONFIG_EF800_MAIN_RUNTIME_BATTERY_PERIOD_MS;
+			now + CONFIG_EF800_APPLICATION_RUNTIME_BATTERY_PERIOD_MS;
 	}
 	if (state->started) {
 		(void)k_work_reschedule(&state->sample_work,
-			K_MSEC(CONFIG_EF800_MAIN_RUNTIME_RTC_PERIOD_MS));
+			K_MSEC(CONFIG_EF800_APPLICATION_RUNTIME_RTC_PERIOD_MS));
 	}
 }
 

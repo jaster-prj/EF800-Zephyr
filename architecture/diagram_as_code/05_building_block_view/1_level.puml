@@ -11,7 +11,7 @@ rectangle "Virtual EF800 gateway\nHTTP + WebSocket" as gateway
 
 package "EF800 measurement instrument" {
   rectangle "Second-level\nBootloader" as boot
-  rectangle "MainApplication\nmeasurement + UI" as main
+  rectangle "EF800Application\nmeasurement + UI" as main
   rectangle "BackupApplication\nrecovery MTP" as backup
   rectangle "STM32L431 keyboard\ncontroller" as keyboard
   database "L496 internal flash\nBoot / Backup / Main" as iflash

@@ -26,7 +26,7 @@ static struct contrast_fixture fixture;
 
 static int fake_load_duty(void *context, uint8_t *duty_percent)
 {
-	struct contrast_fixture *fake = context;
+	const struct contrast_fixture *fake = context;
 
 	if (fake->load_result == 0) {
 		*duty_percent = fake->stored_duty;

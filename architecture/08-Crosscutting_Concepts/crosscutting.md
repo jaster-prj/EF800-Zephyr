@@ -45,7 +45,7 @@ deadline behavior, and cleanup must be verified on STM32L496.
 
 Production domain services use Zephyr device, GPIO, UART, I2C, RTC, flash, file
 system, and USB APIs. Native-sim supplies emulators and virtual peers at those
-seams while compiling the shared MainApplication sources. Simulated behavior is
+seams while compiling the shared EF800 Application sources. Simulated behavior is
 useful for control-flow and protocol tests, but does not model all STM32 register
 effects, signal timing, or board electrical characteristics.
 

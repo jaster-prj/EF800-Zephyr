@@ -14,7 +14,7 @@
 
 ## Repository-Level ADRs Created
 
-- `adr/0005-use-zephyr-device-emulation-for-production-native-sim.md` - commits the Virtual EF800 to production MainApplication execution through Zephyr-compatible emulated and simulated peripherals
+- `adr/0005-use-zephyr-device-emulation-for-production-native-sim.md` - commits the Virtual EF800 to production EF800 Application execution through Zephyr-compatible emulated and simulated peripherals
 
 ## Notes
 

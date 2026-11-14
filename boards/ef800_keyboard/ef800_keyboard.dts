@@ -97,7 +97,7 @@
 	status = "okay";
 };
 
-/* MainApplication I2C1 is connected to the keyboard controller on PB6/PB7. */
+/* EF800 Application I2C1 is connected to the keyboard controller on PB6/PB7. */
 &pinctrl {
 	i2c1_scl_pb6: i2c1_scl_pb6 {
 		pinmux = <STM32_PINMUX('B', 6, AF4)>;

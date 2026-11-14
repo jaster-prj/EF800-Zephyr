@@ -1,4 +1,5 @@
 /* SPDX-License-Identifier: Apache-2.0 */
+/** @file @brief Publish FTS3xx plugin metadata and ABI entry points. */
 #include <stdint.h>
 #include <stddef.h>
 

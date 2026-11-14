@@ -1,6 +1,6 @@
 ## Context
 
-EF800 currently has strong native coverage for extracted shared components and physical acceptance paths for MainApplication, but no product-level simulator that combines the real menu flow, plugin lifecycle, Zephyr threads, display state, keyboard interaction, persistence, and serial peers. Production MainApplication is also tightly connected to concrete devicetree GPIO, UART, I2C, flash, USB, watchdog, and RTC devices. Running its unchanged STM32 image would therefore require a large SoC-emulation project that is unnecessary for the desired behavioral coverage.
+EF800 currently has strong native coverage for extracted shared components and physical acceptance paths for EF800 Application, but no product-level simulator that combines the real menu flow, plugin lifecycle, Zephyr threads, display state, keyboard interaction, persistence, and serial peers. Production EF800 Application is also tightly connected to concrete devicetree GPIO, UART, I2C, flash, USB, watchdog, and RTC devices. Running its unchanged STM32 image would therefore require a large SoC-emulation project that is unnecessary for the desired behavioral coverage.
 
 Useful building blocks already exist. `native_sim` provides Zephyr scheduling, simulated flash, GPIO and bus emulators, PTY UARTs, RTC facilities, and host integration. The repository has a T6963 behavioral model and a Tkinter 240 x 64 framebuffer viewer under `application/tlx-711a` and `GSE/TLX-711A`, a semantic keyboard key-name vocabulary with press/release behavior, host-side serial instrument dummies, and backend-neutral domain components. The virtual platform must preserve the package-owned logical UI from ADR-0001 and exercise the supervised plugin threading from ADR-0002 without claiming to verify that ADR's STM32 MPU and ARM fault mechanisms.
 
@@ -10,7 +10,7 @@ The normal development environment runs Zephyr inside a Linux devcontainer mount
 
 **Goals:**
 
-- Run product-level MainApplication, plugin, menu, persistence, and concurrency behavior as a Zephyr `native_sim` executable.
+- Run product-level EF800 Application, plugin, menu, persistence, and concurrency behavior as a Zephyr `native_sim` executable.
 - Provide a live 240 x 64 LCD and a clickable EF800 keypad for manual development.
 - Use the same bidirectional control surface for deterministic automated acceptance scenarios.
 - Preserve normal keyboard handling and plugin/session paths instead of directly manipulating menus or package state.
@@ -21,7 +21,7 @@ The normal development environment runs Zephyr inside a Linux devcontainer mount
 **Non-Goals:**
 
 - Emulating STM32L496 or STM32L431 registers, clocks, interrupts, or exact instruction execution.
-- Running the production ARM ELF, bootloader chain, BackupApplication, or L431 binary unchanged.
+- Running the production ARM ELF, bootloader chain, EF800 Backup, or L431 binary unchanged.
 - Proving MPU W^X mappings, ARM fatal-reason classification, physical fault containment, or arbitrary native-code safety.
 - Simulating electrical levels, oscillator accuracy, bus signal integrity, QSPI geometry, USB electrical behavior, or PCB wiring.
 - Reproducing every peripheral in the first increment when it is not required by an enabled behavioral scenario.
@@ -38,17 +38,17 @@ This keeps production hardware configuration intact and permits native-only depe
 Alternatives considered:
 
 - Add an STM32L496 QEMU machine: rejected for this capability because peripheral-register implementation dominates the work without improving source-level plugin behavior tests.
-- Compile the full current `ef800-main/src/main.c` unchanged against fake devicetree devices: rejected as the sole approach because direct hardware setup and the 3,800-line application entry point would force broad low-level emulation and make behavioral failure injection awkward.
+- Compile the full current `ef800-application/src/main.c` unchanged against fake devicetree devices: rejected as the sole approach because direct hardware setup and the 3,800-line application entry point would force broad low-level emulation and make behavioral failure injection awkward.
 - Implement the EF800 UI entirely in Python: rejected because it would not exercise production Zephyr threads or application control flow.
 
 ### Extract orchestration seams, not a second application model
 
-Move only hardware-facing and process-lifetime decisions behind narrow EF800-owned interfaces as needed. MainApplication and the virtual target must share menu transitions, keyboard event handling, plugin sessions, worker supervision, recovery policy, persistence semantics, and display composition. Physical adapters continue to own GPIO/UART/I2C/flash operations; virtual adapters own deterministic state and test controls.
+Move only hardware-facing and process-lifetime decisions behind narrow EF800-owned interfaces as needed. EF800 Application and the virtual target must share menu transitions, keyboard event handling, plugin sessions, worker supervision, recovery policy, persistence semantics, and display composition. Physical adapters continue to own GPIO/UART/I2C/flash operations; virtual adapters own deterministic state and test controls.
 
 The preferred dependency direction is:
 
 ```text
-MainApplication behavior
+EF800 Application behavior
         |
         +--> display surface --> physical T6963 adapter / virtual display
         +--> keyboard source --> L431 UART adapter / virtual keyboard
@@ -62,7 +62,7 @@ Interfaces should remain focused on observable operations already needed by the 
 Alternatives considered:
 
 - Emulate all GPIO and I2C transactions beneath unchanged drivers: useful for driver testing, but too detailed for the primary behavior goal and costly for the parallel T6963 bus.
-- Fork MainApplication logic for the virtual target: rejected because simulator-only behavior would drift and lose acceptance value.
+- Fork EF800 Application logic for the virtual target: rejected because simulator-only behavior would drift and lose acceptance value.
 
 ### Use a host-side front panel over a versioned TCP protocol
 
@@ -91,7 +91,7 @@ Alternatives considered:
 
 ### Preserve the keyboard processing path with an in-process virtual controller
 
-Front-panel controls use the existing case-insensitive semantic key names and send distinct press and release operations. An in-process virtual keyboard controller resolves names using the existing matrix/scancode translation and emits the normal wire bytes into `ef800_keyboard_host`; MainApplication then consumes its normal keys and events. It sends the normal initialized indication at startup and implements only the controller commands needed by MainApplication scenarios, expanding behavior when tests require it.
+Front-panel controls use the existing case-insensitive semantic key names and send distinct press and release operations. An in-process virtual keyboard controller resolves names using the existing matrix/scancode translation and emits the normal wire bytes into `ef800_keyboard_host`; EF800 Application then consumes its normal keys and events. It sends the normal initialized indication at startup and implements only the controller commands needed by EF800 Application scenarios, expanding behavior when tests require it.
 
 Disconnect, simulator reset, debug stop, or explicit release-all clears every held key. Interactive mode may implement typematic consistently with the L431 policy; automated tests can disable or deterministically schedule repeat events.
 
@@ -120,7 +120,7 @@ The virtual suite validates that the UI stays schedulable, deadlines fire, outpu
 
 ## Risks / Trade-offs
 
-- [Hardware adapters remain entangled with MainApplication orchestration] -> Extract the smallest interfaces around currently direct device use and add characterization tests before moving behavior.
+- [Hardware adapters remain entangled with EF800 Application orchestration] -> Extract the smallest interfaces around currently direct device use and add characterization tests before moving behavior.
 - [Virtual and physical behavior drift] -> Share domain/orchestration source, keep adapter contracts narrow, and run the same behavioral scenarios against hardware where feasible.
 - [The front-panel protocol becomes an unbounded remote-control API] -> Bind to a developer-configured local endpoint, version the protocol, enforce message and payload bounds, and expose only declared simulation controls.
 - [Tkinter networking blocks the GUI or simulator] -> Use non-blocking/background transport handling with bounded queues and perform widget updates on the Tk event loop.
@@ -133,7 +133,7 @@ The virtual suite validates that the UI stays schedulable, deadlines fire, outpu
 ## Migration Plan
 
 1. Add characterization tests around current display composition, keyboard host input, menu navigation, and plugin session behavior before extracting boundaries.
-2. Establish a minimal virtual target that boots shared MainApplication behavior headlessly with deterministic storage/time/status adapters.
+2. Establish a minimal virtual target that boots shared EF800 Application behavior headlessly with deterministic storage/time/status adapters.
 3. Add the virtual display surface and versioned TCP endpoint, then extend the existing Tkinter renderer into a reconnecting LCD front panel.
 4. Add semantic press/release/release-all input through the virtual keyboard-controller protocol and add clickable keypad controls.
 5. Add headless scenario controls, virtual serial peers, failure injection, and plugin worker responsiveness/timeout/recovery acceptance tests.
@@ -142,7 +142,7 @@ The virtual suite validates that the UI stays schedulable, deadlines fire, outpu
 
 ## Open Questions
 
-- Which exact MainApplication sections should become reusable orchestration modules first so the virtual target does not duplicate the current large `main.c` state machine?
+- Which exact EF800 Application sections should become reusable orchestration modules first so the virtual target does not duplicate the current large `main.c` state machine?
 - Should the first storage model mount a FAT image through Zephyr's simulated flash or use the existing backend-neutral persistence fake for an earlier UI/plugin milestone? The former gives stronger filesystem coverage; the latter reduces initial integration scope.
 - Which complete physical keypad layout and labels should the first front panel present beyond the already documented semantic key-name set?
 - Does the plugin-isolation implementation expose a target-neutral supervisor failure injection API, or should virtual-only adversarial plugins return declared failure records for non-timeout scenarios?

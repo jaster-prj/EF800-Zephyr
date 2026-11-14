@@ -1,16 +1,16 @@
 ## Why
 
 The Virtual EF800 browser front panel currently exposes LCD state, keypad control,
-and selected plugin/device status, but not the MainApplication diagnostic logs that
+and selected plugin/device status, but not the EF800 Application diagnostic logs that
 explain startup, plugin discovery, port assignment, and runtime failures. Developers
 must therefore inspect a separate console path, which is especially inconvenient
 for the containerized native-sim deployment. A bounded browser log stream will make
 behavioral debugging observable through the same localhost front panel without
-coupling MainApplication execution to browser connectivity.
+coupling EF800 Application execution to browser connectivity.
 
 ## What Changes
 
-- Add a native-sim-only, bounded MainApplication log stream to the existing
+- Add a native-sim-only, bounded EF800 Application log stream to the existing
   simulator front-panel protocol.
 - Retain a small recent log history and replay it to a newly connected gateway
   client before continuing with live records.
@@ -30,7 +30,7 @@ coupling MainApplication execution to browser connectivity.
 
 ### New Capabilities
 
-- `virtual-ef800-diagnostics`: Bounded native-sim MainApplication log history and
+- `virtual-ef800-diagnostics`: Bounded native-sim EF800 Application log history and
   live browser diagnostics stream.
 
 ### Modified Capabilities

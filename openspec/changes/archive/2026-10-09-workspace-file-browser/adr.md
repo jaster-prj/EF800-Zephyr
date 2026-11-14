@@ -13,7 +13,7 @@
 - `adr/0003-use-native-sim-for-behavioral-ef800.md` - requires behavioral coverage through native simulation.
 - `adr/0004-use-web-gateway-for-virtual-ef800-front-panel.md` - defines the virtual front-panel boundary.
 - `adr/0005-use-zephyr-device-emulation-for-production-native-sim.md` - keeps native-sim on production application paths.
-- `adr/0006-use-single-ef800-main-target-for-physical-and-native-sim.md` - keeps shared MainApplication composition.
+- `adr/0006-use-single-ef800-application-target-for-physical-and-native-sim.md` - keeps shared EF800 Application composition.
 - `adr/0007-use-configurable-packed-t6963-renderer.md` - preserves production display rendering in simulation.
 - `adr/0008-use-native-sim-package-control-and-restart-boundary.md` - preserves startup/package lifecycle boundaries.
 - `adr/0009-use-bounded-native-sim-log-stream.md` - supports bounded virtual-sim observability.

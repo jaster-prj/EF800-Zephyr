@@ -25,5 +25,5 @@ None.
 
 - Adds a shared composition-profile/service module and native test coverage.
 - Uses the existing `EF800_PERSISTENCE_CONFIGURATION` abstraction and its fake and Zephyr backends; no new storage partition is introduced.
-- MainApplication will initialize the generic service after persistence setup, but the resolved composition will have no runtime consumers in this change.
+- EF800 Application will initialize the generic service after persistence setup, but the resolved composition will have no runtime consumers in this change.
 - Documentation will describe the profile format and extension contract for future COMP-Nr. catalogs and factories.

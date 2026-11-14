@@ -8,7 +8,7 @@ TBD: Define the external measurement-plugin assignment and migration behavior.
 
 ### Requirement: Persist full external measurement-plugin assignments
 
-The EF800 boot metadata format SHALL use an explicit versioned record containing a full 32-bit plugin ID and connection ID for each port assignment. The encoder, decoder, CRC validation, MainApplication, and bootloader SHALL agree on the new version and record size.
+The EF800 boot metadata format SHALL use an explicit versioned record containing a full 32-bit plugin ID and connection ID for each port assignment. The encoder, decoder, CRC validation, EF800 Application, and bootloader SHALL agree on the new version and record size.
 
 #### Scenario: Version 2 metadata round trip
 - **WHEN** valid metadata containing a full external plugin ID is encoded and decoded
@@ -16,7 +16,7 @@ The EF800 boot metadata format SHALL use an explicit versioned record containing
 
 #### Scenario: Bootloader reads version 2 metadata
 - **WHEN** the bootloader reads valid version 2 metadata
-- **THEN** it preserves boot target/failure behavior and writes any required state changes using the same versioned format before selecting MainApplication or BackupApplication
+- **THEN** it preserves boot target/failure behavior and writes any required state changes using the same versioned format before selecting EF800 Application or EF800 Backup
 
 #### Scenario: Invalid metadata version or size
 - **WHEN** metadata has an unsupported version, size, reserved data, or CRC
@@ -40,19 +40,19 @@ The system SHALL decode supported version 1 metadata only for migration. Legacy 
 
 ### Requirement: Reconcile persisted assignments against loaded measurement plugins
 
-After external plugin discovery, MainApplication SHALL resolve each persisted measurement assignment against the current registry. An assignment SHALL remain active only when its ID identifies a ready loaded measurement plugin with a compatible hardware route and valid connection. Unknown, missing, non-measurement, invalid, or unavailable assignments SHALL be cleared to `NONE`; cleanup SHALL be persisted when storage is writable.
+After external plugin discovery, EF800 Application SHALL resolve each persisted measurement assignment against the current registry. An assignment SHALL remain active only when its ID identifies a ready loaded measurement plugin with a compatible hardware route and valid connection. Unknown, missing, non-measurement, invalid, or unavailable assignments SHALL be cleared to `NONE`; cleanup SHALL be persisted when storage is writable.
 
 #### Scenario: Assignment matches a ready loaded plugin
 - **WHEN** a persisted measurement assignment identifies a ready loaded measurement plugin and a compatible selected port connection
-- **THEN** the assignment remains active and MainApplication configures the plugin route
+- **THEN** the assignment remains active and EF800 Application configures the plugin route
 
 #### Scenario: Assignment plugin is missing
 - **WHEN** a persisted assignment ID does not match any currently loaded measurement plugin
-- **THEN** MainApplication removes the assignment to `NONE`, does not expose it in the measurement menu, and persists the cleanup when possible
+- **THEN** EF800 Application removes the assignment to `NONE`, does not expose it in the measurement menu, and persists the cleanup when possible
 
 #### Scenario: Assignment identifies a non-measurement plugin
 - **WHEN** a persisted assignment ID matches a calculation plugin or another non-measurement registry entry
-- **THEN** MainApplication clears the assignment to `NONE` and does not configure a measurement UART for it
+- **THEN** EF800 Application clears the assignment to `NONE` and does not configure a measurement UART for it
 
 #### Scenario: Storage is unavailable during reconciliation
 - **WHEN** external plugin discovery or assignment persistence cannot access storage
@@ -72,12 +72,12 @@ The port-assignment UI SHALL not expose legacy Elta3 or FTS3XX/FTS3XX device ent
 
 ### Requirement: Remove the legacy measurement-device dispatch path
 
-MainApplication SHALL configure and execute measurement devices through the external plugin registry and plugin host contract only. The legacy `ef800_device_plugin` assignment, serial-configuration, and measurement-dispatch path SHALL not be used for port assignment or runtime measurement execution.
+EF800 Application SHALL configure and execute measurement devices through the external plugin registry and plugin host contract only. The legacy `ef800_device_plugin` assignment, serial-configuration, and measurement-dispatch path SHALL not be used for port assignment or runtime measurement execution.
 
 #### Scenario: External plugin measurement is triggered
 - **WHEN** the user measures with an assigned ready external measurement plugin
-- **THEN** MainApplication invokes the plugin-host path using the persisted full plugin ID and existing measurement record flow
+- **THEN** EF800 Application invokes the plugin-host path using the persisted full plugin ID and existing measurement record flow
 
 #### Scenario: Legacy implementation remains in source
 - **WHEN** protocol implementation code is retained for packaging or compatibility tests
-- **THEN** it is not reachable as a legacy MainApplication assignment or dispatch branch
+- **THEN** it is not reachable as a legacy EF800 Application assignment or dispatch branch

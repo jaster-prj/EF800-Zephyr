@@ -18,22 +18,22 @@ The system SHALL represent no native-USB function, USB DebugConsole, USB MTP, an
 - **THEN** the next boot selects USB MTP for Port 4
 
 ### Requirement: Non-MSC personalities switch without restarting
-The system SHALL switch among None, USB DebugConsole, and USB MTP at runtime without restarting MainApplication. A switch SHALL disable and shut down the current USB context before initializing the selected context, and SHALL expose only the selected USB class.
+The system SHALL switch among None, USB DebugConsole, and USB MTP at runtime without restarting EF800 Application. A switch SHALL disable and shut down the current USB context before initializing the selected context, and SHALL expose only the selected USB class.
 
 #### Scenario: DebugConsole changes to MTP
 - **WHEN** USB DebugConsole is active and the user selects USB MTP
-- **THEN** the host observes a USB disconnect followed by enumeration as an MTP device and MainApplication continues running
+- **THEN** the host observes a USB disconnect followed by enumeration as an MTP device and EF800 Application continues running
 
 #### Scenario: MTP changes to no USB personality
 - **WHEN** USB MTP is active and the user removes the Port 4 assignment
-- **THEN** the MTP session is terminated, native USB is disabled, FAT remains mounted, and MainApplication does not restart
+- **THEN** the MTP session is terminated, native USB is disabled, FAT remains mounted, and EF800 Application does not restart
 
 #### Scenario: MTP changes to DebugConsole
 - **WHEN** USB MTP is active and the user selects USB DebugConsole
-- **THEN** the host observes re-enumeration as CDC DebugConsole without an MTP or MSC interface and MainApplication does not restart
+- **THEN** the host observes re-enumeration as CDC DebugConsole without an MTP or MSC interface and EF800 Application does not restart
 
 ### Requirement: MSC transitions use a restart boundary
-The system SHALL require a controlled restart for every personality transition that enters or leaves USB MSC. The persisted assignment SHALL be updated successfully before restart, and MainApplication SHALL never remount FAT after an active MSC worker in the same boot.
+The system SHALL require a controlled restart for every personality transition that enters or leaves USB MSC. The persisted assignment SHALL be updated successfully before restart, and EF800 Application SHALL never remount FAT after an active MSC worker in the same boot.
 
 #### Scenario: MTP changes to MSC
 - **WHEN** USB MTP is selected and the user selects USB MSC

@@ -1,6 +1,6 @@
 ## Context
 
-MainApplication currently maintains port-oriented measurement state
+EF800 Application currently maintains port-oriented measurement state
 (`measurement_port_ids` and `selected_measurement_port`) and has accumulated
 plugin-specific branches for names, IDs, and serial defaults. The plugin
 registry already carries generic identity, kind, hardware requirement, state,
@@ -17,7 +17,7 @@ without instantiating plugin code merely to query defaults.
 **Goals:**
 
 - Remove plugin-specific IDs, names, protocol defaults, and submenu assumptions
-  from MainApplication.
+  from EF800 Application.
 - Add plugin-declared serial defaults to validated plugin metadata or an
   equivalent generic host-facing descriptor contract.
 - Display compatible discovered plugins during port assignment.
@@ -34,7 +34,7 @@ without instantiating plugin code merely to query defaults.
   compatibility/version checks.
 - Moving UART ownership or raw keyboard framing into plugins.
 - Exposing port numbers as the primary Measurement-menu identity.
-- Adding instrument-specific behavior to MainApplication as a workaround.
+- Adding instrument-specific behavior to EF800 Application as a workaround.
 - Replacing the existing workspace file format.
 
 ## Decisions
@@ -43,7 +43,7 @@ without instantiating plugin code merely to query defaults.
 
 Extend the versioned plugin metadata contract with bounded serial defaults and
 make the host validate the metadata before registering a plugin as ready.
-Registry entries will expose the validated values to MainApplication. This is
+Registry entries will expose the validated values to EF800 Application. This is
 preferred over calling a plugin instance during assignment because assignment
 must be safe before activation and must not depend on native package execution
 being available merely to configure a UART.
@@ -66,7 +66,7 @@ for the user and for future non-serial plugin types.
 ### Reuse the generic plugin display and action contract
 
 The plugin session display model remains authoritative for submenu title,
-labels, row count, footer, and action bitmap. MainApplication provides generic
+labels, row count, footer, and action bitmap. EF800 Application provides generic
 navigation and workspace integration only; it does not know whether an action
 means an ELTA3 command, a Fennel1 request, or another plugin operation.
 

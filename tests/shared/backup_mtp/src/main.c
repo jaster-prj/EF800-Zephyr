@@ -412,6 +412,60 @@ ZTEST(backup_mtp, test_complete_uploads_commit_to_all_four_roots)
 	}
 }
 
+ZTEST(backup_mtp, test_six_firmware_packages_persist_after_storage_remount)
+{
+	static const char *const package_names[] = {
+		"EF800_BOOT.pkg",
+		"EF800_BACKUP.pkg",
+		"EF800_APP.pkg",
+		"EF800_KEYBOARD_UPDATER.pkg",
+		"EF800_KEYBOARD_BOOT.pkg",
+		"EF800_KEYBOARD_APP.pkg",
+	};
+	static const uint8_t package_content[] = {
+		0x45, 0x46, 0x57, 0x31, 0x01, 0x00, 0xAA, 0x55,
+	};
+
+	reset_test_filesystems();
+	initialize_mtp_context();
+	open_mtp_session();
+
+	for (size_t index = 0U; index < ARRAY_SIZE(package_names); ++index) {
+		send_complete_upload(4U, (uint32_t)(2U + (index * 2U)),
+			package_names[index], package_content,
+			sizeof(package_content));
+	}
+
+	/* A reboot tears down the MTP context and filesystem mounts, but completed
+	 * package files remain available for the next coordinator start. */
+	mtp_reset(&mtp_context);
+	zassert_ok(fs_unmount(&data_mount), NULL);
+	zassert_ok(fs_unmount(&configuration_mount), NULL);
+	filesystems_mounted = false;
+	zassert_ok(fs_mount(&configuration_mount), NULL);
+	zassert_ok(fs_mount(&data_mount), NULL);
+	filesystems_mounted = true;
+	for (size_t index = 0U; index < ARRAY_SIZE(package_names); ++index) {
+		verify_uploaded_file(3U, package_names[index], package_content,
+			sizeof(package_content));
+	}
+}
+
+ZTEST(backup_mtp, test_interrupted_firmware_package_never_becomes_final)
+{
+	char temporary_path[128];
+	char final_path[128];
+
+	reset_test_filesystems();
+	initialize_mtp_context();
+	open_mtp_session();
+	start_partial_upload(4U, 2U, "EF800_KEYBOARD_APP.pkg",
+		temporary_path, sizeof(temporary_path), final_path,
+		sizeof(final_path));
+	mtp_reset(&mtp_context);
+	assert_no_partial_or_final(temporary_path, final_path);
+}
+
 ZTEST(backup_mtp, test_cancel_and_disconnect_discard_staged_files)
 {
 	struct net_buf *status;

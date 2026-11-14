@@ -25,7 +25,7 @@ Native tests run on `native_sim` and do not require EF800 hardware:
   corruption rejection, and invalid arguments.
 - `tests/shared/keyboard_update`: keyboard image target/range checks, update
   framing, ordered chunk handling, truncation, and CRC-failure behavior.
-- `tests/shared/virtual_usb`: MainApplication CDC byte exchange, real MTP list/
+- `tests/shared/virtual_usb`: EF800 Application CDC byte exchange, real MTP list/
   upload/download over Zephyr's virtual USB host/device pair, and `USBMSD0`
   shared-data FAT ownership.
 
@@ -37,14 +37,14 @@ Twister and currently contains 23 passing unit/asset checks; its optional
 
 ## Virtual EF800
 
-The `application/ef800-main` target runs the production behavioral EF800 orchestration on
+The `application/ef800-application` target runs the production behavioral EF800 orchestration on
 Zephyr `native_sim` without an STM32 controller or physical PCB. It provides a
 headless virtual status/display/keyboard foundation and a front-panel transport
 on TCP port `8800`. The browser gateway and host tools are under
 `GSE/Virtual-EF800`.
 
 Native-sim provides a device-next virtual UDC/UHC bus. The software host uses
-the production MainApplication CDC and MTP contexts. Browser file operations
+the production EF800 Application CDC and MTP contexts. Browser file operations
 are gateway-mediated MTP transactions over this bus; the gateway does not
 access simulator files directly. Main MSC is excluded by native-sim's
 `USBMSD0` profile.
@@ -52,13 +52,13 @@ access simulator files directly. Main MSC is excluded by native-sim's
 Build the target inside the reusable container:
 
 ```powershell
-docker exec -w /workspace EF800_Devcontainer /opt/venv/bin/west build -p always -b native_sim application/application/ef800-main -d application/build/ef800-main-native-sim
+docker exec -w /workspace EF800_Devcontainer /opt/venv/bin/west build -p always -b native_sim application/application/ef800-application -d application/build/ef800-application-native-sim
 ```
 
 For interactive use, build and start the independent Compose deployment:
 
 ```powershell
-docker exec -w /workspace EF800_Devcontainer /opt/venv/bin/west build -p always -b native_sim application/application/ef800-main -d application/build/ef800-main-native-sim
+docker exec -w /workspace EF800_Devcontainer /opt/venv/bin/west build -p always -b native_sim application/application/ef800-application -d application/build/ef800-application-native-sim
 docker compose -f docker-compose.virtual-ef800.yml build
 docker compose -f docker-compose.virtual-ef800.yml up -d
 Start-Process http://127.0.0.1:8080/
@@ -70,7 +70,7 @@ restart paths issue `release-all`. The headless `scenario_client.py` remains
 available for deterministic acceptance and can connect directly when the web
 service is not running.
 
-The production MainApplication workspace browser has an end-to-end native-sim
+The production EF800 Application workspace browser has an end-to-end native-sim
 test. It launches an isolated simulator with a temporary flash image, uploads
 mixed CR/LF/CRLF workspace rows through the virtual USB MTP peer, selects the
 workspace through the UI, and exercises row selection, bounded editing,
@@ -88,9 +88,9 @@ physical USB enumeration/interop, or fitted peripheral wiring. Virtual CDC/MTP
 enumeration is software behavior evidence only.
 
 Bootloader recovery behavior is also covered by the firmware control-flow
-contract: the failure limit applies only while MainApplication is the selected
-target, and a boot following BackupApplication resets the counter before
-retrying MainApplication.
+contract: the failure limit applies only while EF800 Application is the selected
+target, and a boot following EF800 Backup resets the counter before
+retrying EF800 Application.
 
 All native suites under `tests/` are executed together with one Twister
 invocation:
@@ -105,9 +105,9 @@ behavior.
 
 ## Firmware Build Gates
 
-The Bootloader, BackupApplication, MainApplication, keyboard bootloader,
-keyboard application, and keyboard updater images are build-tested. The revised
-L431 map is bootloader 32 KiB, application 192 KiB, and updater 32 KiB; the
+The EF800 Bootloader, EF800 Backup, EF800 Application, Keyboard Bootloader,
+Keyboard Application, and Keyboard Updater images are build-tested. The revised
+L431 map is Keyboard Bootloader 32 KiB, Keyboard Application 192 KiB, and Keyboard Updater 32 KiB; the
 three keyboard images link into their assigned partitions and their vector
 tables pass bounds checks. These builds do not execute firmware control flow.
 
@@ -116,7 +116,7 @@ tables pass bounds checks. These builds do not execute firmware control flow.
 The 2026-11-07 physical MTP update validation and historical failed
 system-ROM keyboard-package attempt are recorded in
 [`firmware-update-hardware-validation.md`](firmware-update-hardware-validation.md).
-The custom updater is implemented in software: MainApplication streams packages
+The custom updater is implemented in software: EF800 Application streams packages
 over I²C, the keyboard application at `0x2a` can update only the updater slot,
 and the resident updater at `0x48` can update only the keyboard application or
 bootloader. Protocol/range helpers are covered by native tests and all three

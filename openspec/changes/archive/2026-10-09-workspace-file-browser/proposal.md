@@ -25,7 +25,7 @@ The current Workspace menu is exposed directly from the main menu and focuses on
 
 ## Impact
 
-- `application/ef800-main/src/main.c` for menu hierarchy, navigation, and display behavior.
+- `application/ef800-application/src/main.c` for menu hierarchy, navigation, and display behavior.
 - `shared/ef800_persistence/ef800_workspace.*` and/or the generic persistence backend API for bounded file access.
 - Existing UI and persistence tests, plus native-sim or virtual EF800 acceptance coverage for paging, line truncation, large files, and latest-position extraction.
 - Existing workspace data remains compatible; no separate position file is introduced.

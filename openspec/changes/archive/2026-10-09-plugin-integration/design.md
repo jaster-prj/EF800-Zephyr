@@ -1,19 +1,19 @@
 ## Context
 
-Production `ef800-main` owns the PluginManager integration, package discovery,
+Production `ef800-application` owns the PluginManager integration, package discovery,
 port policy, Workspace policy, UI, and keyboard session. Generic PluginManager
 tests remain in the PluginManager repository; the former NUCLEO prototype is
 not part of the EF800 product test surface.
 
-The device already separates USB MSD ownership into the BackupApplication. Changing USB selection restarts the application, so a restart is an acceptable and intentional synchronization boundary. MainApplication only needs to discover plugins during a boot where internal storage is reachable. Hot replacement and filesystem monitoring are not part of this design.
+The device already separates USB MSD ownership into the EF800 Backup. Changing USB selection restarts the application, so a restart is an acceptable and intentional synchronization boundary. EF800 Application only needs to discover plugins during a boot where internal storage is reachable. Hot replacement and filesystem monitoring are not part of this design.
 
 ## Goals / Non-Goals
 
 **Goals:**
 
-- Integrate built-in and external Measurement and Calculation plugins into MainApplication.
+- Integrate built-in and external Measurement and Calculation plugins into EF800 Application.
 - Discover packages once during startup when storage is available.
-- Keep port assignment, UART claiming, persistence, workspace policy, LCD header, keyboard protocol, and navigation owned by MainApplication.
+- Keep port assignment, UART claiming, persistence, workspace policy, LCD header, keyboard protocol, and navigation owned by EF800 Application.
 - Let plugins contribute menu metadata, bounded display content, and logical keyboard behavior.
 - Preserve diagnosable missing/unavailable assignments and existing USB MSD behavior.
 - Provide a public EF800 contract suitable for SDK generation without exposing Zephyr or driver internals.
@@ -29,7 +29,7 @@ The device already separates USB MSD ownership into the BackupApplication. Chang
 
 ### Startup-only discovery
 
-MainApplication will mount/use the already available internal storage during startup, scan the configured plugin location, validate packages, and construct an in-memory registry. If storage is unavailable, the registry contains built-ins only for that boot. A later USB mode transition naturally causes a restart and a fresh scan.
+EF800 Application will mount/use the already available internal storage during startup, scan the configured plugin location, validate packages, and construct an in-memory registry. If storage is unavailable, the registry contains built-ins only for that boot. A later USB mode transition naturally causes a restart and a fresh scan.
 
 This is preferred over hot replacement because the existing product lifecycle already restarts across MSD ownership changes. It avoids concurrent file mutation, plugin unload races, and a second storage state machine.
 
@@ -51,7 +51,7 @@ The host remains responsible for resolving assignments, claiming UARTs, applying
 
 Hardware requirements are part of the EF800 application contract, not the generic PluginManager. An EF800 Measurement descriptor exposes an EF800 metadata extension containing a required hardware-capability bitmask. PluginManager validates and loads the generic package but does not interpret UART, SPI, I2C, USB, or flow-control semantics.
 
-MainApplication reads the EF800 metadata before showing a plugin in port assignment and applies:
+EF800 Application reads the EF800 metadata before showing a plugin in port assignment and applies:
 
 ```text
 (port.capabilities & plugin.required_hardware) == plugin.required_hardware
@@ -83,7 +83,7 @@ The model can contain a title, bounded text rows, selected row/input state, and 
 
 ### Logical keyboard dispatch
 
-The existing keyboard parser remains the only raw UART protocol consumer. It converts controller output to logical key events. MainApplication dispatches events to the active plugin session and retains global system keys, session lifetime, and fallback navigation. A plugin can explicitly enter bounded text-input or modal mode, but cannot create an independent keyboard thread.
+The existing keyboard parser remains the only raw UART protocol consumer. It converts controller output to logical key events. EF800 Application dispatches events to the active plugin session and retains global system keys, session lifetime, and fallback navigation. A plugin can explicitly enter bounded text-input or modal mode, but cannot create an independent keyboard thread.
 
 ### Explicit workspace mutation
 
@@ -92,7 +92,7 @@ Calculation plugins receive bounded workspace snapshots and bounded output buffe
 ## Risks / Trade-offs
 
 - [External package code is not yet production-secure] -> Keep package trust, executable-memory protection, stack/timeout/fault policy, and anti-rollback as explicit verification gates rather than implying this change closes them.
-- [A plugin can consume too much UI time] -> Serialize calls through MainApplication, define bounded buffers and call contracts, and defer timeout/fault enforcement to the production execution-safety work.
+- [A plugin can consume too much UI time] -> Serialize calls through EF800 Application, define bounded buffers and call contracts, and defer timeout/fault enforcement to the production execution-safety work.
 - [Static eight-row LCD limits plugin screens] -> Use a bounded text model first; reject oversized metadata/content explicitly and avoid arbitrary graphics.
 - [Persisted external IDs outlive package files] -> Preserve assignments and distinguish missing, invalid, incompatible, and unavailable states; never silently map unknown IDs to built-ins.
 - [Built-in and external behavior diverge] -> Register built-in Measurement adapters through the same registry and dispatch path used by loaded plugins.
@@ -101,13 +101,13 @@ Calculation plugins receive bounded workspace snapshots and bounded output buffe
 ## Migration Plan
 
 1. Export and stabilize EF800 contract IDs, ABI limits, service tables, and SDK examples.
-2. Integrate the registry and startup scan into MainApplication while retaining built-in behavior as adapters.
+2. Integrate the registry and startup scan into EF800 Application while retaining built-in behavior as adapters.
 3. Migrate Measurement dispatch and persistence to registry/plugin-ID policy.
 4. Integrate Calculation bounded workspace invocation and explicit result handling.
 5. Add host UI and keyboard services, then migrate plugin menu/session behavior without changing the host header.
 6. Validate startup with reachable and unreachable storage, USB MSD isolation, malformed packages, missing assignments, native tests, all firmware builds, and image/layout checks.
 
-Rollback is boot-safe: if scanning or plugin registration fails, MainApplication continues with built-in functionality and no external plugin entries. Individual invalid packages are rejected without blocking valid packages. Existing USB MSD behavior remains unchanged throughout migration.
+Rollback is boot-safe: if scanning or plugin registration fails, EF800 Application continues with built-in functionality and no external plugin entries. Individual invalid packages are rejected without blocking valid packages. Existing USB MSD behavior remains unchanged throughout migration.
 
 ## Open Questions
 

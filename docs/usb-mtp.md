@@ -8,7 +8,7 @@ available in the selected Zephyr release.
 
 ## Visible storage
 
-MainApplication exposes three named, independent MTP storages:
+EF800 Application exposes three named, independent MTP storages:
 
 ```text
 Data     /DATA:/data
@@ -16,7 +16,7 @@ Plugins  /DATA:/plugins
 FWU      /DATA:/fwu
 ```
 
-BackupApplication recovery exposes four:
+EF800 Backup recovery exposes four:
 
 ```text
 Configuration  /EF800:/.configuration
@@ -42,17 +42,17 @@ through the application assignment UI. Entering or leaving USB MSC persists the
 selection and requires a controlled restart so raw MSC and filesystem ownership
 cannot coexist in one boot. `USBMSD0` disables Main MSC; `USBMSD1` enables it.
 Physical EF800 defaults to `USBMSD1`; select `usbmsd mode USBMSD0` on the
-MainApplication shell and restart to disable Main MSC. Native-sim defaults to
+EF800 Application shell and restart to disable Main MSC. Native-sim defaults to
 `USBMSD0` and does not compile Main MSC.
 
 MTP accesses approved roots through Zephyr FS/FatFS APIs. Configuration FAT and
-Shared Data FAT remain separately mounted. MainApplication and BackupApplication
+Shared Data FAT remain separately mounted. EF800 Application and EF800 Backup
 must not mount the same shared disk simultaneously. No MTP personality exposes
 raw sectors.
 
 ## Native-sim and browser gateway
 
-Native-sim runs the same MainApplication MTP context and production class over
+Native-sim runs the same EF800 Application MTP context and production class over
 Zephyr's virtual UDC/UHC bus. The in-process software USB host peer performs the
 MTP transactions from a Zephyr worker thread; the simulator's POSIX front-panel
 socket thread only queues bounded protocol messages. This context boundary is

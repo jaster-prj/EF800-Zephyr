@@ -225,7 +225,7 @@ static int parse_text_integer(const uint8_t *buffer, size_t length,
 				      int32_t *value, int32_t minimum, int32_t maximum)
 {
 	char text[64];
-	char *cursor;
+	char * const cursor = text;
 	char *end;
 	long parsed;
 
@@ -234,7 +234,6 @@ static int parse_text_integer(const uint8_t *buffer, size_t length,
 	}
 	memcpy(text, buffer, length);
 	text[length] = '\0';
-	cursor = text;
 	parsed = strtol(cursor, &end, 10);
 	if (end == cursor || parsed < minimum || parsed > maximum) {
 		return -EINVAL;
@@ -911,7 +910,7 @@ int ef800_legacy_migrate_all(struct ef800_persistence *storage)
 		}
 	}
 	result = ef800_legacy_migrate_time(storage);
-	if (result != 0 && result != -ENOENT && first_error == 0) {
+	if (result != 0 && result != -ENOENT) {
 		first_error = result;
 	}
 	for (uint8_t port_id = 1U; port_id <= 4U; ++port_id) {

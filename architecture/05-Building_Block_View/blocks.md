@@ -4,18 +4,18 @@
 
 Level-1 context diagram source: [`1_level.puml`](../diagram_as_code/05_building_block_view/1_level.puml).
 
-The firmware system comprises the second-level Bootloader, MainApplication,
-BackupApplication, keyboard resident bootloader, and keyboard application.
+The firmware system comprises the second-level EF800 Bootloader, EF800 Application,
+EF800 Backup, kKeyboard Bootloader, Keyboard Updater, and Keyboard application.
 Shared EF800 domain modules are reused by the applicable images. Zephyr and its
 drivers provide the runtime; pinned PluginManager and ZephyrMTP modules provide
 external package and MTP integration. Native-sim adapters supply virtual
 peripherals and the virtual USB peer.
 
-## Level 2: MainApplication components
+## Level 2: EF800 Application components
 
-MainApplication component diagram source: [`2_main_components.puml`](../diagram_as_code/05_building_block_view/2_main_components.puml).
+EF800 Application component diagram source: [`2_main_components.puml`](../diagram_as_code/05_building_block_view/2_main_components.puml).
 
-`application/ef800-main/src/main.c` is the composition root. Domain behavior is
+`application/ef800-application/src/main.c` is the composition root. Domain behavior is
 implemented in shared modules; it wires services to Zephyr APIs and platform
 adapters.
 
@@ -37,6 +37,6 @@ adapters.
 | Firmware image | Main building blocks | Key role |
 |---|---|---|
 | Second-level Bootloader | Reset/watchdog handling, QSPI update scanner, image/vector validation, boot decision, metadata, handoff. | Installs a validated Main update and selects Main or Backup. |
-| BackupApplication | Console/watchdog, layout guard, Configuration/Data mounts, composition-backed LCD contrast, recovery MTP. | Recovery file access while Main is unavailable; does not format legacy media. |
+| EF800 Backup | Console/watchdog, layout guard, Configuration/Data mounts, composition-backed LCD contrast, recovery MTP. | Recovery file access while Main is unavailable; does not format legacy media. |
 | Keyboard resident bootloader | Relocated image validation/update, retained handoff state, IWDG recovery. | Starts the keyboard app or enters factory ROM recovery under defined failures. |
 | Keyboard application | Matrix scan, key naming/scancodes, UART protocol, startup health signal, watchdog inheritance. | Supplies physical keypad events to Main; does not share L496 storage. |

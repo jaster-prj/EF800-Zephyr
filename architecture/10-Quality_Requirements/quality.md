@@ -9,7 +9,7 @@
 | 3 | Compatibility | Fixed image addresses, keyboard frame contract, port assignment semantics, workspace data, and supported legacy settings are preserved or explicitly gated. |
 | 4 | Availability | Optional peripheral and configuration failures should not block unrelated startup services; Backup remains available when Main cannot run. |
 | 5 | Storage confidentiality / bounded exposure | MTP exposes only approved roots, not NVS/raw partitions. Browser gateway requests and transfers are bounded. |
-| 6 | Testability | Shared domain code is tested with native Twister; a production-source MainApplication composition runs under `native_sim`. |
+| 6 | Testability | Shared domain code is tested with native Twister; a production-source EF800 Application composition runs under `native_sim`. |
 | 7 | Maintainability | Shared modules own domain logic; CMake source manifests and ADRs make platform seams and architectural changes visible. |
 
 ## Quality scenarios and verification

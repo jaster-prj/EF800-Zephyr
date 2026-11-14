@@ -22,7 +22,7 @@ mailbox size, minimum plugin RAM/worker stack, and MPU alignment. ELTA3 and
 FTS3XX now build as `USER_WORKER` packages and use the bounded worker SDK. It
 also declares maximum text, rodata, data, BSS, and plugin-owned shared-buffer
 sizes. The package verifier checks each ELF section against its declaration;
-MainApplication rechecks the loaded section sizes, active arena capacities,
+EF800 Application rechecks the loaded section sizes, active arena capacities,
 aligned MPU mapping, aggregate writable RAM, and shared-buffer ceiling before
 admitting the descriptor. The shipped worker packages declare 16 KiB text and
 rodata bounds, 1 KiB each for data and BSS, and 4 KiB for shared buffers, within
@@ -56,7 +56,7 @@ and `struct_size`, then call:
 
 ## Measurement Submenus
 
-MainApplication exposes external measurement packages through package-declared
+EF800 Application exposes external measurement packages through package-declared
 submenus. Elta3 declares `Measure`, `Up`, `Down`, and `Enter`. FTS3XX is the
 product name for the FTS3XX protocol adapter and declares `Measure` only. Its
 protocol remains a binary `0x11` request followed by `CR LF` and a line-based
@@ -74,7 +74,7 @@ shared mailbox ABI and host-validated capabilities are defined in
 The isolated SDK surface is `include/ef800_port_service.h` and
 `shared/ef800_plugin/ef800_plugin_worker_sdk.h`. It issues bounded mailbox
 requests through the single imported `ef800_plugin_worker_syscall` symbol;
-MainApplication resolves that import to a user-callable SVC-only bridge. The
+EF800 Application resolves that import to a user-callable SVC-only bridge. The
 privileged syscall verifier checks the active worker/session and copies data
 through the mailbox before accessing host-owned transport or workspace state.
 It does not place a host callback or context pointer in the plugin service
@@ -102,12 +102,20 @@ cmake --build build/native-sim
 ctest --test-dir build/native-sim --output-on-failure
 ```
 
-The native_sim artifacts use the constrained i386 relocatable profile. The
-package runtime test loads each `.pmp` through PluginManager, creates and
-destroys its instance through the executor API, then validates serial defaults
-and a measurement response. These tests exercise package parsing, relocation,
-descriptor binding, and lifecycle behavior, but are not evidence of ARM MPU
-isolation.
+Both native_sim and ARM artifacts use the same `user-worker` package metadata,
+worker ABI, pointer-free service binding, and mediated Port service. The native
+executor runs that worker ABI in a serialized Zephyr thread and validates the
+same generation, capability, sequence, service, and deadline fields. Zephyr
+native_sim has no STM32 userspace/MPU boundary, so this is behavioral execution,
+not an isolation claim. On physical EF800 the same packages run on the
+unprivileged MPU-constrained worker, and the executable/rodata arenas remain
+external-SRAM-backed when validated external SRAM is available.
+
+The package runtime test loads each `.pmp` through PluginManager, creates and
+destroys its instance through the native executor API, then validates serial
+defaults and a measurement response. These tests exercise package parsing,
+relocation, descriptor binding, lifecycle, and mediated Port-service behavior;
+they are not evidence of ARM MPU isolation.
 
 Cortex-M4 packages, using either the application packaging script or an
 optional PluginManager linker script:

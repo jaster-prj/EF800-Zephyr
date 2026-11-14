@@ -1,0 +1,94 @@
+# SPDX-License-Identifier: Apache-2.0
+
+# Common production EF800 Application sources. Both the physical ef800 target and
+# native_sim must consume this list; only platform adapters are target-specific.
+set(EF800_APPLICATION_COMMON_SOURCES
+	${CMAKE_CURRENT_LIST_DIR}/src/main.c
+	${CMAKE_CURRENT_LIST_DIR}/src/ef800_application_display.c
+	${CMAKE_CURRENT_LIST_DIR}/src/ef800_application_battery_adc.c
+	${CMAKE_CURRENT_LIST_DIR}/src/ef800_application_time_editor.c
+	${CMAKE_CURRENT_LIST_DIR}/src/ef800_memory_pool.c
+	${CMAKE_CURRENT_LIST_DIR}/src/keyboard_host.c
+	${CMAKE_CURRENT_LIST_DIR}/src/ef800_keyboard_command.c
+	${CMAKE_CURRENT_LIST_DIR}/src/ef800_keyboard_update_service.c
+	${CMAKE_CURRENT_LIST_DIR}/src/ef800_backup_update.c
+	${CMAKE_CURRENT_LIST_DIR}/src/ef800_bootloader_update.c
+	${CMAKE_CURRENT_LIST_DIR}/src/ef800_application_shell.c
+	${CMAKE_CURRENT_LIST_DIR}/src/ef800_workspace_browser.c
+	${CMAKE_CURRENT_LIST_DIR}/src/ef800_workspace_row_editor.c
+	${CMAKE_CURRENT_LIST_DIR}/src/ef800_position_editor.c
+	${CMAKE_CURRENT_LIST_DIR}/src/ef800_application_port_workflow.c
+	${CMAKE_CURRENT_LIST_DIR}/src/ef800_plugin_host.c
+	${CMAKE_CURRENT_LIST_DIR}/src/ef800_plugin_syscall.c
+	${CMAKE_CURRENT_LIST_DIR}/src/ef800_plugin_worker.c
+	${CMAKE_CURRENT_LIST_DIR}/src/ef800_plugin_worker.c
+	${CMAKE_CURRENT_LIST_DIR}/../../shared/keyboard_protocol/keyboard_translation.c
+	${CMAKE_CURRENT_LIST_DIR}/../../shared/ef800_app/ef800_time.c
+	${CMAKE_CURRENT_LIST_DIR}/../../shared/ef800_app/ef800_app.c
+	${CMAKE_CURRENT_LIST_DIR}/../../shared/ef800_lcd_contrast/ef800_lcd_contrast.c
+	${CMAKE_CURRENT_LIST_DIR}/../../shared/ef800_lcd_contrast/ef800_lcd_contrast_storage.c
+	${CMAKE_CURRENT_LIST_DIR}/../../shared/ef800_runtime/ef800_runtime_state.c
+	${CMAKE_CURRENT_LIST_DIR}/../../shared/ef800_battery/ef800_battery_soc.c
+	${CMAKE_CURRENT_LIST_DIR}/../../shared/ef800_battery/ef800_battery_adc_ring.c
+	${CMAKE_CURRENT_LIST_DIR}/../../shared/ef800_battery/ef800_battery_soc_gauge.c
+	${CMAKE_CURRENT_LIST_DIR}/../../shared/ef800_battery/ef800_battery_soc_store.c
+	${CMAKE_CURRENT_LIST_DIR}/../../shared/ef800_drivers/ef800_mcp23017.c
+	${CMAKE_CURRENT_LIST_DIR}/../../shared/ef800_drivers/ef800_max17043.c
+	${CMAKE_CURRENT_LIST_DIR}/../../shared/ef800_drivers/ef800_t6963.c
+	${CMAKE_CURRENT_LIST_DIR}/../../shared/ef800_persistence/ef800_persistence.c
+	${CMAKE_CURRENT_LIST_DIR}/../../shared/ef800_persistence/ef800_persistence_legacy.c
+	${CMAKE_CURRENT_LIST_DIR}/../../shared/ef800_persistence/ef800_persistence_zephyr.c
+	${CMAKE_CURRENT_LIST_DIR}/../../shared/ef800_persistence/ef800_workspace.c
+	${CMAKE_CURRENT_LIST_DIR}/../../shared/ef800_composition/ef800_composition.c
+	${CMAKE_CURRENT_LIST_DIR}/../../shared/ef800_position/ef800_position.c
+	${CMAKE_CURRENT_LIST_DIR}/../../shared/ef800_measurement/ef800_measurement.c
+	${CMAKE_CURRENT_LIST_DIR}/../../shared/ef800_measurement/ef800_measurement_zephyr.c
+	${CMAKE_CURRENT_LIST_DIR}/../../shared/ef800_measurement/ef800_measurement_submenu.c
+	${CMAKE_CURRENT_LIST_DIR}/../../shared/ef800_ports/ef800_ports.c
+	${CMAKE_CURRENT_LIST_DIR}/../../shared/ef800_ports/ef800_port_uart.c
+	${CMAKE_CURRENT_LIST_DIR}/../../shared/ef800_ports/ef800_debug.c
+	${CMAKE_CURRENT_LIST_DIR}/../../shared/ef800_ports/ef800_console.c
+	${CMAKE_CURRENT_LIST_DIR}/../../shared/ef800_ports/ef800_log_backend.c
+	${CMAKE_CURRENT_LIST_DIR}/../../shared/ef800_ports/ef800_shell_transport.c
+	${CMAKE_CURRENT_LIST_DIR}/../../shared/ef800_ports/ef800_mcumgr_transport.c
+	${CMAKE_CURRENT_LIST_DIR}/../../shared/ef800_ports/ef800_usb_personality.c
+	${CMAKE_CURRENT_LIST_DIR}/../../shared/ef800_ports/ef800_usb_manager.c
+	${CMAKE_CURRENT_LIST_DIR}/../../shared/ef800_update/ef800_update.c
+	${CMAKE_CURRENT_LIST_DIR}/../../shared/ef800_update/ef800_firmware_package.c
+	${CMAKE_CURRENT_LIST_DIR}/../../shared/ef800_update/ef800_firmware_coordinator.c
+	${CMAKE_CURRENT_LIST_DIR}/../../shared/ef800_update/ef800_metadata.c
+	${CMAKE_CURRENT_LIST_DIR}/../../shared/ef800_keyboard_update/ef800_keyboard_update_protocol.c
+	${CMAKE_CURRENT_LIST_DIR}/../../shared/ef800_storage/ef800_storage_owner.c
+	${CMAKE_CURRENT_LIST_DIR}/../../shared/ef800_storage/ef800_qspi_layout.c
+	${CMAKE_CURRENT_LIST_DIR}/../../shared/ef800_plugin/ef800_plugin_registry.c
+	${CMAKE_CURRENT_LIST_DIR}/../../shared/ef800_plugin/ef800_plugin_worker_abi.c
+	${CMAKE_CURRENT_LIST_DIR}/../../shared/ef800_plugin/ef800_calculation_service.c
+	${CMAKE_CURRENT_LIST_DIR}/../../shared/ef800_plugin/ef800_plugin_screen.c
+	${CMAKE_CURRENT_LIST_DIR}/../../shared/ef800_plugin/ef800_plugin_display.c
+	${CMAKE_CURRENT_LIST_DIR}/../../shared/ef800_plugin/ef800_plugin_session.c
+	${CMAKE_CURRENT_LIST_DIR}/../../shared/ef800_ui/ef800_ui.c
+)
+
+set(EF800_APPLICATION_COMMON_INCLUDE_DIRS
+	${CMAKE_CURRENT_LIST_DIR}/src
+	${CMAKE_CURRENT_LIST_DIR}/../../shared/keyboard_protocol
+	${CMAKE_CURRENT_LIST_DIR}/../../shared/ef800_app
+	${CMAKE_CURRENT_LIST_DIR}/../../shared/ef800_lcd_contrast
+	${CMAKE_CURRENT_LIST_DIR}/../../shared/ef800_runtime
+	${CMAKE_CURRENT_LIST_DIR}/../../shared/ef800_battery
+	${CMAKE_CURRENT_LIST_DIR}/../../shared/ef800_drivers
+	${CMAKE_CURRENT_LIST_DIR}/../../shared/ef800_persistence
+	${CMAKE_CURRENT_LIST_DIR}/../../shared/ef800_composition
+	${CMAKE_CURRENT_LIST_DIR}/../../shared/ef800_position
+	${CMAKE_CURRENT_LIST_DIR}/../../shared/ef800_measurement
+	${CMAKE_CURRENT_LIST_DIR}/../../shared/ef800_ports
+	${CMAKE_CURRENT_LIST_DIR}/../../shared/ef800_update
+	${CMAKE_CURRENT_LIST_DIR}/../../shared/ef800_keyboard_update
+	${CMAKE_CURRENT_LIST_DIR}/../../shared/ef800_keyboard_boot
+	${CMAKE_CURRENT_LIST_DIR}/../../shared/ef800_watchdog
+	${CMAKE_CURRENT_LIST_DIR}/../../shared/ef800_storage
+	${CMAKE_CURRENT_LIST_DIR}/../../shared/ef800_plugin
+	${CMAKE_CURRENT_LIST_DIR}/../../shared/ef800_ui
+	${CMAKE_CURRENT_LIST_DIR}/../plugins/measurement-plugin/include
+	${CMAKE_CURRENT_LIST_DIR}/../plugins/measurement-plugin/common
+)

@@ -1,6 +1,6 @@
 ## 1. Shared Contrast State and Persistence
 
-- [x] 1.1 Add a shared contrast-control service used by MainApplication and BackupApplication, initialized from the active LCDCONTR composition selection and reporting active mode/duty to runtime consumers.
+- [x] 1.1 Add a shared contrast-control service used by EF800 Application and EF800 Backup, initialized from the active LCDCONTR composition selection and reporting active mode/duty to runtime consumers.
 - [x] 1.2 Implement `/EF800:/.configuration/contrast` load/save handling for integer duty values 0–100; create 78% on first enabled use, use 78% with a diagnostic for malformed/out-of-range data, and retain the file when disabled.
 - [x] 1.3 Add native tests for missing, valid, malformed, and out-of-range values; verify save/load behavior and that disabling does not erase the stored setting.
 
@@ -12,9 +12,9 @@
 
 ## 3. Application Startup and Runtime Controls
 
-- [x] 3.1 Integrate the shared service into MainApplication and BackupApplication startup so both resolve the same active composition and load the shared duty, defaulting the LCDCONTR group to `LCDCONTR0`.
+- [x] 3.1 Integrate the shared service into EF800 Application and EF800 Backup startup so both resolve the same active composition and load the shared duty, defaulting the LCDCONTR group to `LCDCONTR0`.
 - [x] 3.2 Add a console command to stage/commit the mutually exclusive LCDCONTR composition selection, preserve unrelated tokens, and report restart-required state without changing the current boot's output.
-- [x] 3.3 Add a conditional LCD contrast entry and editor to MainApplication Settings based on the active composition; keep item count, shortcuts, activation, and navigation correct.
+- [x] 3.3 Add a conditional LCD contrast entry and editor to EF800 Application Settings based on the active composition; keep item count, shortcuts, activation, and navigation correct.
 - [x] 3.4 Add console contrast get/set controls with 0–100 validation, immediate application and persistence while enabled, and an explicit disabled response without touching PB8 while LCDCONTR0 is active.
 - [x] 3.5 Add focused tests for COMPOSITION default and restart activation, enabled/disabled startup, menu visibility/navigation, duty-command validation, and persistence failures that must not prevent application startup.
 
@@ -26,6 +26,6 @@
 
 ## 5. Verification and Hardware Qualification
 
-- [x] 5.1 Run the prescribed pristine builds for MainApplication, BackupApplication, Bootloader, keyboard controller, and keyboard bootloader; verify image sizes and image contracts.
+- [x] 5.1 Run the prescribed pristine builds for EF800 Application, EF800 Backup, EF800 Bootloader, keyboard controller, and keyboard bootloader; verify image sizes and image contracts.
 - [x] 5.2 Run the prescribed native_sim Twister suite and the `GSE/Virtual-EF800` Python tests; update `docs/migration-status.md` if the test baseline changes.
 - [ ] 5.3 On modified hardware, verify PB8 remains unconfigured under LCDCONTR0, produces 40 kHz PWM under LCDCONTR1, and yields expected filtered contrast voltage at 78% and at representative user settings; confirm static contrast remains unchanged on unmodified hardware.

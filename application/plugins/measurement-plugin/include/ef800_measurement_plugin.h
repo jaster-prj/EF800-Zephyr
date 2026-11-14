@@ -1,4 +1,5 @@
 /* SPDX-License-Identifier: Apache-2.0 */
+/** @file @brief Define the measurement plugin lifecycle, UI, and result ABI. */
 #ifndef EF800_MEASUREMENT_PLUGIN_H
 #define EF800_MEASUREMENT_PLUGIN_H
 
@@ -77,6 +78,10 @@ struct ef800_measurement_display {
     uint8_t reserved[2];
 };
 
+/** @brief Validate a plugin display model's sizes and selected row bounds.
+ * @param display Display model supplied by a plugin.
+ * @return 0 when valid; negative errno when the model exceeds ABI limits.
+ */
 int ef800_measurement_display_validate(
     const struct ef800_measurement_display *display);
 
@@ -116,19 +121,24 @@ struct ef800_measurement_context {
 struct ef800_measurement_api {
     uint32_t abi_version;
     uint32_t struct_size;
+    /* Fill device serial defaults; return 0 or a negative error code. */
     int32_t (*get_serial_defaults)(void *instance,
         struct ef800_serial_defaults *defaults);
+    /* Perform one observation and fill result fields. */
     int32_t (*measure)(void *instance, struct ef800_measurement_result *result);
+    /* Handle a legacy directional action. */
     int32_t (*handle_input)(void *instance, uint32_t input);
     uint32_t ui_abi_version;
     uint32_t ui_struct_size;
     uint32_t actions;
+    /* Fill a bounded UI model and handle normalized key events. */
     int32_t (*render)(void *instance, struct ef800_measurement_display *display);
     int32_t (*handle_key)(void *instance,
         const struct ef800_measurement_key_event *event,
         uint32_t *result);
     int32_t (*set_context)(void *instance,
         const struct ef800_measurement_context *context);
+    /* Return a bounded workspace record and receive its commit result. */
     int32_t (*get_workspace_record)(void *instance, char *buffer,
         uint32_t capacity, uint32_t *length);
     int32_t (*workspace_record_result)(void *instance, int32_t status);

@@ -11,10 +11,10 @@ maintained in [`../../AGENTS.md`](../../AGENTS.md),
 
 | Path | Role |
 |---|---|
-| `application/ef800-main/` | Main physical and native-sim application compositions. |
+| `application/ef800-application/` | Main physical and native-sim application compositions. |
 | `application/ef800-backup/` | Recovery MTP application. |
 | `application/ef800-bootloader/` | L496 second-level bootloader. |
-| `application/ef800-keyboard/` and `application/ef800-keyboard-bootloader/` | L431 keyboard application and resident bootloader. |
+| `application/keyboard-application/` and `application/keyboard-bootloader/` | L431 keyboard application and resident bootloader. |
 | `shared/` | Shared domain services, protocols, storage, update, and platform adapters. |
 | `boards/` | EF800 board definitions and devicetree descriptions. |
 | `tests/` | Native behavior and shared-component tests. |

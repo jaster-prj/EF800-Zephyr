@@ -6,15 +6,15 @@ TBD: Define the EF800 plugin discovery, registry, lifecycle, bounded services, a
 
 ## Requirements
 
-### Requirement: Discover plugins at MainApplication startup
-MainApplication SHALL scan and validate configured plugin packages only during startup when internal file storage is reachable. If storage is unavailable, MainApplication SHALL continue without external plugins and SHALL not format, overwrite, or monitor the unavailable storage.
+### Requirement: Discover plugins at EF800 Application startup
+EF800 Application SHALL scan and validate configured plugin packages only during startup when internal file storage is reachable. If storage is unavailable, EF800 Application SHALL continue without external plugins and SHALL not format, overwrite, or monitor the unavailable storage.
 
 #### Scenario: Storage is reachable during startup
-- **WHEN** MainApplication initializes and internal file storage is mounted and available
+- **WHEN** EF800 Application initializes and internal file storage is mounted and available
 - **THEN** it scans the configured plugin location, validates candidate packages, and registers valid plugins before exposing plugin-dependent menus and assignments
 
 #### Scenario: Storage is unavailable during startup
-- **WHEN** MainApplication initializes without reachable internal file storage
+- **WHEN** EF800 Application initializes without reachable internal file storage
 - **THEN** built-in functionality remains available, external plugins are unavailable for that boot, and no plugin filesystem access is attempted
 
 #### Scenario: Plugin package is invalid
@@ -22,18 +22,18 @@ MainApplication SHALL scan and validate configured plugin packages only during s
 - **THEN** the package is rejected before execution and the failure is diagnosable without preventing unrelated valid plugins from being registered
 
 ### Requirement: Use one EF800 plugin registry and lifecycle
-MainApplication SHALL expose built-in and externally loaded Measurement and Calculation plugins through one EF800-owned registry and dispatch path. Plugin instances SHALL be created only after interface and service validation and SHALL be destroyed before their claimed resources are released.
+EF800 Application SHALL expose built-in and externally loaded Measurement and Calculation plugins through one EF800-owned registry and dispatch path. Plugin instances SHALL be created only after interface and service validation and SHALL be destroyed before their claimed resources are released.
 
 #### Scenario: Valid plugin is activated and closed
 - **WHEN** the host selects a registered plugin and its required services are available
-- **THEN** MainApplication creates the instance, invokes it through the declared interface, and destroys it before returning to the host menu
+- **THEN** EF800 Application creates the instance, invokes it through the declared interface, and destroys it before returning to the host menu
 
 #### Scenario: Plugin creation fails
 - **WHEN** a registered plugin cannot be created or its required service contract is unavailable
-- **THEN** MainApplication reports the plugin as unavailable and releases any resources already acquired for that activation
+- **THEN** EF800 Application reports the plugin as unavailable and releases any resources already acquired for that activation
 
 ### Requirement: Extend the Calculation menu with installed calculation plugins
-MainApplication SHALL expose each valid installed Calculation plugin in the Calculation menu without requiring a physical port assignment. Calculation plugins SHALL receive bounded workspace snapshots and bounded output buffers, and SHALL not receive filesystem handles or implicit permission to mutate workspace state.
+EF800 Application SHALL expose each valid installed Calculation plugin in the Calculation menu without requiring a physical port assignment. Calculation plugins SHALL receive bounded workspace snapshots and bounded output buffers, and SHALL not receive filesystem handles or implicit permission to mutate workspace state.
 
 #### Scenario: Calculation plugin is available
 - **WHEN** a valid Calculation plugin is registered and the user opens the Calculation menu
@@ -48,7 +48,7 @@ MainApplication SHALL expose each valid installed Calculation plugin in the Calc
 - **THEN** the operation fails explicitly and no truncated data is displayed or persisted
 
 ### Requirement: Expose Measurement plugins only through valid port bindings
-MainApplication SHALL expose a Measurement plugin as operationally ready only when its package is valid, its persisted assignment exists, the assigned physical port and connection satisfy the plugin requirements, and the host-owned UART route is ready. MainApplication SHALL preserve and diagnose assignments whose package or route is missing rather than silently remapping them.
+EF800 Application SHALL expose a Measurement plugin as operationally ready only when its package is valid, its persisted assignment exists, the assigned physical port and connection satisfy the plugin requirements, and the host-owned UART route is ready. EF800 Application SHALL preserve and diagnose assignments whose package or route is missing rather than silently remapping them.
 
 #### Scenario: Assigned measurement plugin is ready
 - **WHEN** a valid Measurement plugin is assigned to a compatible port with a ready UART route
@@ -67,37 +67,37 @@ MainApplication SHALL expose a Measurement plugin as operationally ready only wh
 - **THEN** those actions use the same host-owned port binding as measurement and do not claim a second independent UART
 
 ### Requirement: Keep storage ownership and USB MSD behavior unchanged
-MainApplication SHALL not scan, execute, or modify plugin files while BackupApplication owns internal storage through USB MSD. Plugin discovery SHALL occur again after the existing application restart into a storage-reachable MainApplication mode; hot replacement and filesystem monitoring are not required.
+EF800 Application SHALL not scan, execute, or modify plugin files while EF800 Backup owns internal storage through USB MSD. Plugin discovery SHALL occur again after the existing application restart into a storage-reachable EF800 Application mode; hot replacement and filesystem monitoring are not required.
 
-#### Scenario: BackupApplication owns storage
+#### Scenario: EF800 Backup owns storage
 - **WHEN** the device is operating in USB MSD mode
-- **THEN** MainApplication does not access plugin files or execute plugin code
+- **THEN** EF800 Application does not access plugin files or execute plugin code
 
 #### Scenario: Application restarts after USB mode change
 - **WHEN** the existing USB transition restarts the application into CDC or none mode with reachable storage
-- **THEN** MainApplication performs normal startup discovery and uses the resulting registry for that boot
+- **THEN** EF800 Application performs normal startup discovery and uses the resulting registry for that boot
 
 ### Requirement: Provide host-controlled plugin UI and logical keyboard services
-Plugins SHALL be able to provide bounded menu metadata and plugin display content and SHALL receive logical keyboard events while their screen is active. MainApplication SHALL own the LCD header, rendering boundary, navigation/session lifetime, raw keyboard protocol, and global system keys. Plugins SHALL not access the T6963 driver, GPIO descriptors, DeviceTree objects, keyboard UART framing, or create UI threads.
+Plugins SHALL be able to provide bounded menu metadata and plugin display content and SHALL receive logical keyboard events while their screen is active. EF800 Application SHALL own the LCD header, rendering boundary, navigation/session lifetime, raw keyboard protocol, and global system keys. Plugins SHALL not access the T6963 driver, GPIO descriptors, DeviceTree objects, keyboard UART framing, or create UI threads.
 
 #### Scenario: Plugin contributes a menu entry
 - **WHEN** a valid plugin declares menu metadata
-- **THEN** MainApplication places the contribution in the appropriate host-owned category without allowing the plugin to replace the header or arbitrary host menu state
+- **THEN** EF800 Application places the contribution in the appropriate host-owned category without allowing the plugin to replace the header or arbitrary host menu state
 
 #### Scenario: Plugin screen is displayed
 - **WHEN** the host activates a plugin UI session
-- **THEN** MainApplication renders the plugin's bounded screen model below the host-owned header and applies host-owned footer and navigation policy
+- **THEN** EF800 Application renders the plugin's bounded screen model below the host-owned header and applies host-owned footer and navigation policy
 
 #### Scenario: Plugin handles keyboard input
 - **WHEN** a logical key event arrives while a plugin session is active
-- **THEN** MainApplication forwards the event to the plugin, honors its consumed/navigation result within the session, and retains ownership of global system keys and session termination
+- **THEN** EF800 Application forwards the event to the plugin, honors its consumed/navigation result within the session, and retains ownership of global system keys and session termination
 
 #### Scenario: Plugin requests text input
 - **WHEN** a plugin enters an explicit bounded text-input mode
 - **THEN** it receives logical character, editing, confirm, and cancel events through the keyboard service without receiving raw UART bytes
 
 ### Requirement: Protect host resources and workspace mutation
-MainApplication SHALL serialize plugin operations with host UI and resource ownership. Plugins SHALL use host services for ports, workspace access, display, keyboard input, logging, and clock access, and workspace mutation SHALL require an explicit host operation with appropriate user confirmation.
+EF800 Application SHALL serialize plugin operations with host UI and resource ownership. Plugins SHALL use host services for ports, workspace access, display, keyboard input, logging, and clock access, and workspace mutation SHALL require an explicit host operation with appropriate user confirmation.
 
 #### Scenario: Plugin attempts direct resource access
 - **WHEN** a plugin contract does not provide a permitted host service for a resource
@@ -105,4 +105,4 @@ MainApplication SHALL serialize plugin operations with host UI and resource owne
 
 #### Scenario: Plugin requests workspace mutation
 - **WHEN** a plugin produces content intended to change workspace data
-- **THEN** MainApplication validates the bounded result and requires the host's explicit mutation flow before persistence
+- **THEN** EF800 Application validates the bounded result and requires the host's explicit mutation flow before persistence

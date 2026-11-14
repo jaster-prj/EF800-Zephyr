@@ -16,7 +16,7 @@ recovery boot, not a permanent boot target.
 Source: [`main_startup_qspi.puml`](../diagram_as_code/06_runtime_view/main_startup_qspi.puml).
 The validated legacy-volume check precedes boot-state reads and normal storage
 mounts. Only a recognized legacy FAT signature plus the development-only
-`CONFIG_EF800_MAIN_REFORMAT_LEGACY_QSPI` option triggers formatting. A normal FAT
+`CONFIG_EF800_APPLICATION_REFORMAT_LEGACY_QSPI` option triggers formatting. A normal FAT
 mount error is not a trigger. The operation destroys old data; production images
 must disable the option. See [`../../docs/qspi-migration.md`](../../docs/qspi-migration.md).
 

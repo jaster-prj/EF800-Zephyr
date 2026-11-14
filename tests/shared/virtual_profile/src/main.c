@@ -5,9 +5,9 @@
 #include <stdbool.h>
 #include <zephyr/ztest.h>
 
-#include "ef800_virtual_profile.h"
+#include "virtual_ef800_profile.h"
 
-int ef800_virtual_serial_peer_set_profile(uint8_t port, uint8_t profile)
+int virtual_ef800_serial_peer_set_profile(uint8_t port, uint8_t profile)
 {
 	ARG_UNUSED(port);
 	ARG_UNUSED(profile);
@@ -20,7 +20,7 @@ static int32_t last_delay;
 static int32_t last_error;
 static bool last_available;
 
-int ef800_virtual_serial_peer_set(uint8_t port, const uint8_t *response,
+int virtual_ef800_serial_peer_set(uint8_t port, const uint8_t *response,
 	size_t length, int32_t delay_ms, int32_t error, bool available)
 {
 	ARG_UNUSED(port);
@@ -36,46 +36,46 @@ ZTEST(shared_virtual_profile, test_device_availability_controls)
 {
 	uint8_t control[] = {3U, 1U, 0U};
 
-	zassert_true(ef800_virtual_profile_available(3U), NULL);
-	zassert_ok(ef800_virtual_profile_apply(control, sizeof(control)), NULL);
-	zassert_false(ef800_virtual_profile_available(3U), NULL);
+	zassert_true(virtual_ef800_profile_available(3U), NULL);
+	zassert_ok(virtual_ef800_profile_apply(control, sizeof(control)), NULL);
+	zassert_false(virtual_ef800_profile_available(3U), NULL);
 	control[2] = 1U;
-	zassert_ok(ef800_virtual_profile_apply(control, sizeof(control)), NULL);
-	zassert_true(ef800_virtual_profile_available(3U), NULL);
+	zassert_ok(virtual_ef800_profile_apply(control, sizeof(control)), NULL);
+	zassert_true(virtual_ef800_profile_available(3U), NULL);
 }
 
 ZTEST(shared_virtual_profile, test_serial_profile_is_bounded)
 {
 	uint8_t control[] = {1U, 4U, 0xaa, 0x55};
 
-	zassert_ok(ef800_virtual_profile_apply(control, sizeof(control)), NULL);
+	zassert_ok(virtual_ef800_profile_apply(control, sizeof(control)), NULL);
 	zassert_equal(last_peer_length, 2U, NULL);
 	zassert_equal(last_peer[0], 0xaa, NULL);
 	zassert_equal(last_peer[1], 0x55, NULL);
 	zassert_true(last_available, NULL);
 	control[0] = 9U;
-	zassert_equal(ef800_virtual_profile_apply(control, sizeof(control)), -ENODEV, NULL);
+	zassert_equal(virtual_ef800_profile_apply(control, sizeof(control)), -ENODEV, NULL);
 }
 
 ZTEST(shared_virtual_profile, test_battery_values_are_bounded)
 {
 	uint8_t control[] = {4U, 5U, 95U, 0x80, 0x96, 0x3a, 0x00};
 
-	zassert_ok(ef800_virtual_profile_apply(control, sizeof(control)), NULL);
-	zassert_equal(ef800_virtual_profile_battery_soc(), 95U, NULL);
-	zassert_true(ef800_virtual_profile_battery_voltage_uv() != 3800000U, NULL);
+	zassert_ok(virtual_ef800_profile_apply(control, sizeof(control)), NULL);
+	zassert_equal(virtual_ef800_profile_battery_soc(), 95U, NULL);
+	zassert_true(virtual_ef800_profile_battery_voltage_uv() != 3800000U, NULL);
 	control[2] = 101U;
-	zassert_equal(ef800_virtual_profile_apply(control, sizeof(control)), -ERANGE, NULL);
-	zassert_equal(ef800_virtual_profile_battery_soc(), 95U, NULL);
+	zassert_equal(virtual_ef800_profile_apply(control, sizeof(control)), -ERANGE, NULL);
+	zassert_equal(virtual_ef800_profile_battery_soc(), 95U, NULL);
 	control[1] = 6U;
 	control[2] = 0U;
-	zassert_ok(ef800_virtual_profile_apply(control, 3U), NULL);
-	zassert_true(ef800_virtual_profile_battery_override_enabled(), NULL);
-	zassert_equal(ef800_virtual_profile_battery_soc(), 0U, NULL);
+	zassert_ok(virtual_ef800_profile_apply(control, 3U), NULL);
+	zassert_true(virtual_ef800_profile_battery_override_enabled(), NULL);
+	zassert_equal(virtual_ef800_profile_battery_soc(), 0U, NULL);
 	control[1] = 1U;
 	control[2] = 0U;
-	zassert_ok(ef800_virtual_profile_apply(control, 3U), NULL);
-	zassert_false(ef800_virtual_profile_available(4U), NULL);
+	zassert_ok(virtual_ef800_profile_apply(control, 3U), NULL);
+	zassert_false(virtual_ef800_profile_available(4U), NULL);
 	ARG_UNUSED(last_delay);
 	ARG_UNUSED(last_error);
 }

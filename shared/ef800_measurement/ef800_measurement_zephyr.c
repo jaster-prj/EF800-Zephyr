@@ -3,8 +3,10 @@
 #include "ef800_measurement_zephyr.h"
 
 #include <errno.h>
+#if !defined(CONFIG_BOARD_NATIVE_SIM) && defined(CONFIG_SOC_SERIES_STM32L4X)
 #include <stm32_ll_rcc.h>
 #include <stm32_ll_usart.h>
+#endif
 #include <zephyr/devicetree.h>
 #include <zephyr/drivers/uart.h>
 #include <zephyr/kernel.h>
@@ -13,9 +15,9 @@
 LOG_MODULE_REGISTER(ef800_measurement_uart, LOG_LEVEL_INF);
 
 #if !defined(CONFIG_BOARD_NATIVE_SIM) && defined(CONFIG_SOC_SERIES_STM32L4X)
-/* Port 1/2 USARTs can select an independent kernel clock. PCLK is 80 MHz on
- * EF800 and its 16x divider cannot represent 1200 baud (BRR > 0xffff), while
- * HSI is 16 MHz and is a good low-baud source. Keep the APB clocks untouched. */
+/* EF800 measurement USARTs can select an independent kernel clock. PCLK is
+ * 80 MHz on EF800 and its 16x divider cannot represent 1200 baud (BRR >
+ * 0xffff), while HSI is 16 MHz and is a good low-baud source. */
 static int measurement_uart_clock_configure(const struct device *uart,
 	uint32_t baudrate)
 {
@@ -50,13 +52,21 @@ static int measurement_uart_clock_configure(const struct device *uart,
 			LL_RCC_USART1_CLKSOURCE_PCLK2);
 		return 2;
 	}
+	if (uart == DEVICE_DT_GET(DT_NODELABEL(uart4))) {
+		LL_USART_Disable(UART4);
+		LL_RCC_SetUARTClockSource(low_baud ?
+			LL_RCC_UART4_CLKSOURCE_HSI :
+			LL_RCC_UART4_CLKSOURCE_PCLK1);
+		return 3;
+	}
 	return 0;
 }
 
 static void measurement_uart_baudrate_apply(int instance, uint32_t baudrate)
 {
 	uint32_t clock_hz = baudrate < 9600U ? 16000000U : 80000000U;
-	USART_TypeDef *usart = instance == 1 ? USART3 : USART1;
+	USART_TypeDef *usart = instance == 1 ? USART3 :
+		instance == 2 ? USART1 : UART4;
 
 	/* uart_configure() uses the DTS PCLK rate when calculating BRR. Rewrite
 	 * BRR using the selected kernel clock so both sides of the clock switch
@@ -86,9 +96,10 @@ static void zephyr_uart_callback(const struct device *dev,
 	uint8_t byte;
 	int sent;
 
-	if (transport == NULL || uart_irq_update(dev) <= 0) {
+	if (transport == NULL) {
 		return;
 	}
+	uart_irq_update(dev);
 	if (uart_irq_rx_ready(dev)) {
 		while (uart_fifo_read(dev, &byte, 1U) == 1) {
 			k_spinlock_key_t key = k_spin_lock(&transport->rx_lock);
@@ -315,6 +326,15 @@ int ef800_measurement_zephyr_init_with_config(
 			measurement_config->baudrate < 9600U ? "HSI16" : "PCLK");
 	}
 #endif
+	/*
+	 * uart_stm32 obtains its baud clock from the Devicetree PCLK clock
+	 * controller, which remains 80 MHz even after the USART kernel mux selects
+	 * HSI. Give the driver a representable temporary rate so it can apply and
+	 * cache framing; after it succeeds, program BRR from the actual HSI rate.
+	 */
+	if (clock_instance != 0 && measurement_config->baudrate < 9600U) {
+		uart_config.baudrate = 9600U;
+	}
 	result = uart_configure(uart, &uart_config);
 	#ifdef CONFIG_BOARD_NATIVE_SIM
 	/* native_sim UART emulation provides the byte stream but does not
@@ -340,6 +360,7 @@ int ef800_measurement_zephyr_init_with_config(
 	transport->rx_tail = 0U;
 	transport->tx_faulted = false;
 	transport->uart_config = uart_config;
+	transport->uart_config.baudrate = measurement_config->baudrate;
 	result = uart_irq_callback_user_data_set(uart, zephyr_uart_callback,
 		transport);
 	if (result != 0) {

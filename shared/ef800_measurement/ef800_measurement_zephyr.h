@@ -1,4 +1,5 @@
 /* SPDX-License-Identifier: Apache-2.0 */
+/** @file @brief Implement asynchronous UART-backed instrument transport. */
 #ifndef EF800_MEASUREMENT_ZEPHYR_H
 #define EF800_MEASUREMENT_ZEPHYR_H
 
@@ -28,6 +29,12 @@ struct ef800_measurement_zephyr_transport {
 	struct uart_config uart_config;
 };
 
+/** @brief Initialize UART callbacks using explicit instrument serial settings.
+ * @param transport Zephyr transport state to initialize.
+ * @param uart Ready UART device.
+ * @param config Baud, framing, and flow-control configuration.
+ * @return 0 on setup; negative errno if device/configuration is unsupported.
+ */
 int ef800_measurement_zephyr_init_with_config(
 	struct ef800_measurement_zephyr_transport *transport,
 	const struct device *uart,

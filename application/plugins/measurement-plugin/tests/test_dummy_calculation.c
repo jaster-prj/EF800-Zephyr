@@ -20,6 +20,7 @@ int main(void)
 	unsigned whole;
 	unsigned fraction;
 	unsigned code;
+	int parsed;
 
 	assert(pm_plugin_create(&services, (void **)&instance) == PM_OK);
 	assert(instance != NULL && instance->api != NULL);
@@ -28,8 +29,9 @@ int main(void)
 		output, sizeof(output), &written) == PM_OK);
 	assert(written > 0U && written < sizeof(output));
 	output[written] = '\0';
-	assert(sscanf(output, "-D%5u %u.%3u R%5u \r\n", &point, &whole,
-		&fraction, &code) == 4);
+	parsed = sscanf(output, "-D%5u %u.%3u R%5u \r\n", &point, &whole,
+		&fraction, &code);
+	assert(parsed == 4);
 	assert(point < 100000U && whole < 500U && fraction < 1000U &&
 		code < 100000U);
 	assert(pm_plugin_destroy(instance) == PM_OK);

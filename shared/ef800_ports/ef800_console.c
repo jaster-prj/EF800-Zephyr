@@ -40,9 +40,7 @@ static void console_uart_isr(const struct device *dev, void *user_data)
 	uint8_t data[32];
 
 	ARG_UNUSED(user_data);
-	if (uart_irq_update(dev) <= 0) {
-		return;
-	}
+	uart_irq_update(dev);
 	while (uart_irq_rx_ready(dev)) {
 		int count = uart_fifo_read(dev, data, sizeof(data));
 
@@ -295,7 +293,7 @@ int ef800_console_init(bool usb_debug_available)
 	ARG_UNUSED(usb_debug_available);
 
 	/* Port assignments live in Configuration FAT. Select a stable early
-	 * fallback until MainApplication loads and applies those records. */
+	 * fallback until EF800 Application loads and applies those records. */
 	__printk_hook_install(console_putchar);
 	return ef800_console_set_target(EF800_CONSOLE_FALLBACK_PORT);
 }

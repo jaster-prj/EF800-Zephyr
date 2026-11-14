@@ -153,7 +153,7 @@ static int wait_ready_locked(struct ef800_t6963 *lcd)
 	uint8_t status = 0U;
 
 	for (uint32_t elapsed = 0U;
-	     elapsed < CONFIG_EF800_MAIN_LCD_STATUS_TIMEOUT_US;
+	     elapsed < CONFIG_EF800_APPLICATION_LCD_STATUS_TIMEOUT_US;
 	     elapsed += 10U) {
 		int ret = read_status_locked(lcd, &status);
 		if (ret != 0) {

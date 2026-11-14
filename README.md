@@ -48,20 +48,23 @@ fi
 /opt/venv/bin/python -m pip install -r zephyr/scripts/requirements.txt
 ```
 
-Build the four firmware targets with:
+Build the six firmware targets with:
 
 ```sh
-/opt/venv/bin/west build -p always -b ef800 application/application/ef800-main -d application/build/ef800-main
+/opt/venv/bin/west build -p always -b ef800 application/application/ef800-application -d application/build/ef800-application
 /opt/venv/bin/west build -p always -b ef800 application/application/ef800-backup -d application/build/ef800-backup
 /opt/venv/bin/west build -p always -b ef800 application/application/ef800-bootloader -d application/build/ef800-bootloader
-/opt/venv/bin/west build -p always -b ef800_keyboard application/application/ef800-keyboard -d application/build/ef800-keyboard
+/opt/venv/bin/west build -p always -b ef800_keyboard application/application/keyboard-application -d application/build/keyboard-application
+/opt/venv/bin/west build -p always -b ef800_keyboard application/application/keyboard-bootloader -d application/build/keyboard-bootloader
+/opt/venv/bin/west build -p always -b ef800_keyboard application/application/keyboard-updater -d application/build/keyboard-updater
+bash application/scripts/verify-images.sh
 ```
 
 For the temporary, read-only external-flash hardware-debug image:
 
 ```sh
-/opt/venv/bin/west build -p always -b ef800 application/application/ef800-hwdebug -d application/build/ef800-hwdebug
-bash application/scripts/verify-hwdebug-image.sh
+/opt/venv/bin/west build -p always -b ef800 application/application/test-hwdebug -d application/build/test-hwdebug
+bash application/scripts/verify-test-hwdebug-image.sh
 ```
 
 This image replaces the second-level bootloader at `0x08000000` and must only
@@ -84,7 +87,7 @@ increment:
 ```text
 0x08000000 - 0x0800FFFF  second-level bootloader
 0x08010000 - 0x0802FFFF  backup application
-0x08030000 - 0x080FFFFF  main application
+0x08030000 - 0x080FFFFF  EF800 application
 ```
 
 The current Zephyr contract reserves `0x08028000..0x0802FFFF` for boot
@@ -97,7 +100,7 @@ before production flashing.
 
 The connected STM32L496 engineering target was erased and verified blank during
 initial recovery preparation, then later used for controlled bootloader and
-MainApplication bring-up. See `docs/stm32l496-target-snapshot.md` for the
+EF800 Application bring-up. See `docs/stm32l496-target-snapshot.md` for the
 historical option-byte values, recovery-image hashes, and erase record. See
 `docs/migration-status.md` for current migration state.
 

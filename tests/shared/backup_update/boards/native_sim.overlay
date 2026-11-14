@@ -1,0 +1,62 @@
+/* SPDX-License-Identifier: Apache-2.0 */
+
+/delete-node/ &boot_partition;
+/delete-node/ &slot0_partition;
+/delete-node/ &slot1_partition;
+/delete-node/ &scratch_partition;
+/delete-node/ &storage_partition;
+
+/ {
+	chosen {
+		zephyr,code-partition = &main_partition;
+	};
+
+	qspi_test_data_disk: qspi_test_data_disk {
+		compatible = "zephyr,flash-disk";
+		partition = <&qspi_storage_partition>;
+		disk-name = "DATA";
+		sector-size = <512>;
+		cache-size = <4096>;
+		status = "okay";
+	};
+};
+
+&flash0 {
+	partitions {
+		boot_partition: partition@0 {
+			compatible = "zephyr,mapped-partition";
+			label = "bootloader-test";
+			reg = <0x00000000 0x00010000>;
+		};
+
+		backup_partition: partition@10000 {
+			compatible = "zephyr,mapped-partition";
+			label = "backup-test";
+			reg = <0x00010000 0x00020000>;
+		};
+
+		main_partition: partition@30000 {
+			compatible = "zephyr,mapped-partition";
+			label = "application-test";
+			reg = <0x00030000 0x000D0000>;
+		};
+
+		qspi_bootstate_partition: partition@100000 {
+			compatible = "zephyr,mapped-partition";
+			label = "qspi-boot-state-test";
+			reg = <0x00100000 0x00008000>;
+		};
+
+		qspi_configuration_partition: partition@108000 {
+			compatible = "zephyr,mapped-partition";
+			label = "qspi-configuration-test";
+			reg = <0x00108000 0x00078000>;
+		};
+
+		qspi_storage_partition: partition@180000 {
+			compatible = "zephyr,mapped-partition";
+			label = "qspi-shared-data-test";
+			reg = <0x00180000 0x00080000>;
+		};
+	};
+};

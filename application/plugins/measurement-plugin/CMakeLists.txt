@@ -113,8 +113,8 @@ if(PM_ARM_TOOLCHAIN_PREFIX)
                  -T${CMAKE_CURRENT_BINARY_DIR}/plugin_memory.ld
                 -o ${image}
                 DEPENDS ${source} ${COMMON_SOURCES}
-                ${CMAKE_CURRENT_LIST_DIR}/../../../shared/ef800_plugin/ef800_plugin_worker_sdk.c
-                ${CMAKE_CURRENT_LIST_DIR}/common/freestanding.c
+                 ${CMAKE_CURRENT_LIST_DIR}/../../../shared/ef800_plugin/ef800_plugin_worker_sdk.c
+                 ${CMAKE_CURRENT_LIST_DIR}/common/freestanding.c
                 ${CMAKE_CURRENT_LIST_DIR}/include/ef800_plugin_ids.h
                 ${CMAKE_CURRENT_LIST_DIR}/../../../shared/ef800_plugin/ef800_plugin_metadata.h
                  ${CMAKE_CURRENT_LIST_DIR}/../../../shared/ef800_plugin/ef800_plugin_worker_abi.h
@@ -125,7 +125,7 @@ if(PM_ARM_TOOLCHAIN_PREFIX)
              COMMAND ${Python3_EXECUTABLE} ${CMAKE_CURRENT_LIST_DIR}/tools/package_plugin.py
                  --image ${image} --output ${package} --plugin-id ${plugin_id}
                  --name "${plugin_name}" --version ${EF800_PLUGIN_VERSION}
-                 --execution-model user-worker
+                  --execution-model user-worker
                  --ram-size 2048 --stack-size 2048
             COMMAND ${Python3_EXECUTABLE} ${CMAKE_CURRENT_LIST_DIR}/tools/verify_package.py
                 ${package} --plugin-id ${plugin_id}
@@ -277,7 +277,7 @@ if(PM_BUILD_NATIVE_SIM)
                  -Wl,-T,${NATIVE_LINKER_SCRIPT} -o ${image}
              DEPENDS ${source} ${COMMON_SOURCES}
                    ${CMAKE_CURRENT_LIST_DIR}/../../../shared/ef800_plugin/ef800_plugin_worker_sdk.c
-                  ${CMAKE_CURRENT_LIST_DIR}/common/freestanding.c
+                   ${CMAKE_CURRENT_LIST_DIR}/common/freestanding.c
                   ${CMAKE_CURRENT_LIST_DIR}/include/ef800_plugin_ids.h
                   ${CMAKE_CURRENT_LIST_DIR}/../../../shared/ef800_plugin/ef800_plugin_metadata.h
                    ${CMAKE_CURRENT_LIST_DIR}/../../../shared/ef800_plugin/ef800_plugin_worker_abi.h
@@ -287,7 +287,7 @@ if(PM_BUILD_NATIVE_SIM)
              COMMAND ${Python3_EXECUTABLE} ${CMAKE_CURRENT_LIST_DIR}/tools/package_plugin.py
                  --image ${image} --output ${package} --plugin-id ${plugin_id}
                  --name "${plugin_name}" --version ${EF800_PLUGIN_VERSION} --target 2
-                 --execution-model user-worker
+                  --execution-model user-worker
                  --ram-size 2048 --stack-size 2048
             COMMAND ${Python3_EXECUTABLE} ${CMAKE_CURRENT_LIST_DIR}/tools/verify_package.py
                 ${package} --plugin-id ${plugin_id}
@@ -300,7 +300,7 @@ if(PM_BUILD_NATIVE_SIM)
     # Keep package-level native_sim checks in CTest, in addition to the
     # protocol tests above. The build targets generate and verify the PMP
     # images; these tests make architecture/identity verification explicit in
-    # the test report used by MainApplication's simulator workflow.
+    # the test report used by EF800 Application's simulator workflow.
     add_test(NAME elta3_native_sim_package
         COMMAND ${Python3_EXECUTABLE} ${CMAKE_CURRENT_LIST_DIR}/tools/verify_package.py
             ${CMAKE_CURRENT_BINARY_DIR}/elta3_native_plugin.pmp --plugin-id 2)

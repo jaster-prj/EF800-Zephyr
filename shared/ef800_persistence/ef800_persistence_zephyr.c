@@ -10,7 +10,7 @@
 #if defined(CONFIG_FILE_SYSTEM) && CONFIG_FILE_SYSTEM
 #include <zephyr/fs/fs.h>
 
-#include "ef800_main.h"
+#include "ef800_app.h"
 #endif
 
 #if defined(CONFIG_FILE_SYSTEM) && CONFIG_FILE_SYSTEM

@@ -1,8 +1,8 @@
 ## Context
 
-The current MainApplication exposes the complete Workspace management menu from the main menu. The workspace abstraction selects one `<name>.dat` file and appends both measurement and position records to that file. `ef800_workspace_snapshot()` reads the entire selected file into a caller-provided buffer capped by `EF800_WORKSPACE_SNAPSHOT_MAX` (4096 bytes), which is unsuitable for a navigable viewer as files grow. The target devices have limited RAM, so this 4096-byte working-buffer limit must remain.
+The current EF800 Application exposes the complete Workspace management menu from the main menu. The workspace abstraction selects one `<name>.dat` file and appends both measurement and position records to that file. `ef800_workspace_snapshot()` reads the entire selected file into a caller-provided buffer capped by `EF800_WORKSPACE_SNAPSHOT_MAX` (4096 bytes), which is unsuitable for a navigable viewer as files grow. The target devices have limited RAM, so this 4096-byte working-buffer limit must remain.
 
-The LCD presents a narrow text body, so the viewer has only a bounded number of rows and a fixed display width. Existing UI navigation already distinguishes main, child, dialog, and editor menus, and the native-sim target exercises the production MainApplication path. The design must preserve existing workspace data and avoid introducing a separate position file.
+The LCD presents a narrow text body, so the viewer has only a bounded number of rows and a fixed display width. Existing UI navigation already distinguishes main, child, dialog, and editor menus, and the native-sim target exercises the production EF800 Application path. The design must preserve existing workspace data and avoid introducing a separate position file.
 
 ## Goals / Non-Goals
 

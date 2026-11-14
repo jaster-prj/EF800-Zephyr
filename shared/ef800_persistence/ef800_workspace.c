@@ -93,7 +93,7 @@ static void workspace_update_context_from_line(struct ef800_workspace *workspace
 {
 	char copy[EF800_MEASUREMENT_TEXT_MAX + 96U];
 	char *token;
-	char *last = NULL;
+	const char *last = NULL;
 	long point = 0;
 	unsigned int field = 0U;
 	char *end;
@@ -347,6 +347,7 @@ int ef800_workspace_append(struct ef800_workspace *workspace,
 	if (ret == 0 && data != NULL && length > 0U) {
 		LOG_INF("Workspace %s: appended new line (%u bytes)",
 			workspace->filename, (unsigned int)length);
+		/* cppcheck-suppress knownConditionTrueFalse -- Kconfig controls LOG_* expansion */
 		LOG_DBG("Workspace %s new line: %.*s", workspace->filename,
 			(int)MIN(length, (size_t)INT_MAX), (const char *)data);
 	}
@@ -854,7 +855,7 @@ static int workspace_edit_file_exists(struct ef800_workspace *workspace,
 static int workspace_transaction_recover(struct ef800_workspace *workspace)
 {
 	struct workspace_transaction slots[2];
-	struct workspace_transaction *txn = NULL;
+	const struct workspace_transaction *txn = NULL;
 	char backup_name[EF800_PERSISTENCE_MAX_NAME + 1U];
 	bool slot_exists[2] = {false, false};
 	bool slot_valid[2] = {false, false};
@@ -1079,7 +1080,6 @@ int ef800_workspace_replace_row(struct ef800_workspace *workspace,
 	struct ef800_persistence_entry staged_entry;
 	char temporary_name[EF800_PERSISTENCE_MAX_NAME + 1U];
 	char backup_name[EF800_PERSISTENCE_MAX_NAME + 1U];
-	uint8_t ending[EF800_WORKSPACE_ROW_ENDING_MAX];
 	size_t file_size;
 	size_t old_size;
 	size_t staged_size = 0U;
@@ -1169,6 +1169,8 @@ int ef800_workspace_replace_row(struct ef800_workspace *workspace,
 			replacement_length, &staged_size, &staged_fingerprint);
 	}
 	if (ret == 0 && !delete_row && row->ending_length != 0U) {
+		uint8_t ending[EF800_WORKSPACE_ROW_ENDING_MAX];
+
 		ret = ef800_workspace_read_range(workspace, row->text_end, row->end,
 						 ending, sizeof(ending), &ending_length);
 		if (ret == 0 && ending_length != row->ending_length) {

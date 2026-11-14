@@ -24,7 +24,7 @@ The current T6963C emulator is tied to the EF800's 8 KiB, 40-column, 6x8 display
 
 ## Impact
 
-- Affected implementation areas include `application/tlx-711a`, `shared/ef800_virtual`, and the T6963C driver integration.
+- Affected implementation areas include `application/tlx-711a`, `shared/virtual_ef800`, and the T6963C driver integration.
 - Native-sim and standalone TLX display builds will share the configurable emulator model while retaining the EF800 default profile.
 - The existing packed framebuffer transport remains compatible; internal emulator APIs and tests will change.
 - No hardware qualification claims or physical T6963 timing behavior are added.

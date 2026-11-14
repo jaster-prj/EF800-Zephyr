@@ -125,6 +125,6 @@
 		compatible = "zephyr,cdc-acm-uart";
 		label = "EF800 USB CDC ACM";
 		rx-fifo-size = <256>;
-		tx-fifo-size = <256>;
+		tx-fifo-size = <1024>;
 	};
 };

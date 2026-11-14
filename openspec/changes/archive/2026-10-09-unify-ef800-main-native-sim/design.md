@@ -1,6 +1,6 @@
 ## Context
 
-The Virtual EF800 currently has its own `application/ef800-virtual` CMake target, but that target already compiles `application/ef800-main/src/main.c` and most of the same shared sources. The two CMake files manually maintain parallel source lists. The physical target also has an STM32-specific `app.overlay` and physical-only adapters, while native_sim needs emulated GPIO/UART/I2C/storage devices and native watchdog/USB substitutions.
+The Virtual EF800 currently has its own `application/ef800-virtual` CMake target, but that target already compiles `application/ef800-application/src/main.c` and most of the same shared sources. The two CMake files manually maintain parallel source lists. The physical target also has an STM32-specific `app.overlay` and physical-only adapters, while native_sim needs emulated GPIO/UART/I2C/storage devices and native watchdog/USB substitutions.
 
 The desired architecture is one production application target with two board configurations. Existing accepted decisions require native_sim behavioral execution, preserve the hardware qualification boundary, and keep the browser gateway outside the Zephyr application. The external PluginManager remains a shared build dependency.
 
@@ -8,8 +8,8 @@ The desired architecture is one production application target with two board con
 
 **Goals:**
 
-- Build `application/ef800-main` for both `ef800` and `native_sim`.
-- Maintain one shared production source manifest for MainApplication and shared services.
+- Build `application/ef800-application` for both `ef800` and `native_sim`.
+- Maintain one shared production source manifest for EF800 Application and shared services.
 - Select physical or native-sim adapters explicitly by board/configuration.
 - Retain native peripheral emulators, profile controls, T6963 wiring, keyboard bridge, and browser/front-panel infrastructure.
 - Remove the duplicate virtual application wrapper and obsolete simplified virtual `main.c`.
@@ -24,14 +24,14 @@ The desired architecture is one production application target with two board con
 
 ## Decisions
 
-### Use `application/ef800-main` as the only MainApplication target
+### Use `application/ef800-application` as the only EF800 Application target
 
 The physical and native builds will use the same application directory and entry point. The old `application/ef800-virtual` wrapper will be removed after its retained infrastructure sources are moved or referenced from the shared target.
 
 Alternatives considered:
 
 - Keep two application wrappers: rejected because source lists and startup behavior can drift.
-- Move MainApplication into a new common application: rejected because it creates another migration path and disrupts the existing physical target.
+- Move EF800 Application into a new common application: rejected because it creates another migration path and disrupts the existing physical target.
 
 ### Define one shared source manifest and per-target adapter lists
 
@@ -49,7 +49,7 @@ This makes source parity visible and reviewable while preserving target-specific
 
 ### Select overlays and Kconfig by board
 
-The unified CMake target will select the physical STM32 overlay/configuration for `ef800` and the native-sim overlay/configuration for `native_sim`. The native overlay will provide the same logical node labels expected by MainApplication, while the physical overlay retains STM32 pinctrl, clocks, partitions, USB, and QSPI definitions.
+The unified CMake target will select the physical STM32 overlay/configuration for `ef800` and the native-sim overlay/configuration for `native_sim`. The native overlay will provide the same logical node labels expected by EF800 Application, while the physical overlay retains STM32 pinctrl, clocks, partitions, USB, and QSPI definitions.
 
 Common Kconfig remains in `prj.conf`; board-specific options move to board-specific configuration files where necessary. Native-only FAT formatting/profile options will not enter physical firmware.
 
@@ -69,7 +69,7 @@ Only the old simulator-specific menu/application entry point and its wrapper tar
 
 ### Preserve deployment compatibility through path updates
 
-Dockerfiles, Compose, CI, and documentation will build `application/application/ef800-main` with `-b native_sim` and copy the resulting production native-sim executable. The browser gateway protocol and runtime port remain unchanged.
+Dockerfiles, Compose, CI, and documentation will build `application/application/ef800-application` with `-b native_sim` and copy the resulting production native-sim executable. The browser gateway protocol and runtime port remain unchanged.
 
 ## Risks / Trade-offs
 
@@ -82,7 +82,7 @@ Dockerfiles, Compose, CI, and documentation will build `application/application/
 ## Migration Plan
 
 1. Extract the common production source list from the two CMake targets.
-2. Add board-dependent adapter selection to `application/ef800-main/CMakeLists.txt`.
+2. Add board-dependent adapter selection to `application/ef800-application/CMakeLists.txt`.
 3. Move or select native-sim overlay and Kconfig files without changing physical target behavior.
 4. Build physical `ef800` and native_sim from the unified target and compare generated source/device configuration.
 5. Update Docker Compose, Dockerfiles, CI, docs, and test commands to use the unified target.

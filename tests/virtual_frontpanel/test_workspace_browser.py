@@ -32,7 +32,7 @@ from protocol import (  # noqa: E402
 )
 
 
-SIMULATOR = ROOT / "build" / "ef800-main-native-sim" / "zephyr" / "zephyr.exe"
+SIMULATOR = ROOT / "build" / "ef800-application-native-sim" / "zephyr" / "zephyr.exe"
 
 
 class WorkspaceBrowserNativeSimTest(unittest.TestCase):
@@ -149,7 +149,7 @@ class WorkspaceBrowserNativeSimTest(unittest.TestCase):
             if frame["sequence"] != last_sequence:
                 last_sequence = frame["sequence"]
                 last_change = time.monotonic()
-        raise TimeoutError("LCD framebuffer did not settle during MainApplication startup")
+        raise TimeoutError("LCD framebuffer did not settle during EF800 Application startup")
 
     @classmethod
     def send_key(cls, key):
@@ -208,7 +208,7 @@ class WorkspaceBrowserNativeSimTest(unittest.TestCase):
     def test_select_edit_cancel_and_delete_workspace_rows(self):
         workspace_name = f"ui{time.time_ns() % 100000:05d}"
 
-        # Enable the production MainApplication MTP personality on USB Port 4.
+        # Enable the production EF800 Application MTP personality on USB Port 4.
         self.press("e")
         self.assert_lcd_framebuffer()
         self.press("p")
