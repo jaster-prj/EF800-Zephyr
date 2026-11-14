@@ -1,6 +1,6 @@
 # SPDX-License-Identifier: Apache-2.0
 
-# Common production EF800Application sources. Both the physical ef800 target and
+# Common production EF800 Application sources. Both the physical ef800 target and
 # native_sim must consume this list; only platform adapters are target-specific.
 set(EF800_APPLICATION_COMMON_SOURCES
 	${CMAKE_CURRENT_LIST_DIR}/src/main.c
@@ -11,6 +11,8 @@ set(EF800_APPLICATION_COMMON_SOURCES
 	${CMAKE_CURRENT_LIST_DIR}/src/keyboard_host.c
 	${CMAKE_CURRENT_LIST_DIR}/src/ef800_keyboard_command.c
 	${CMAKE_CURRENT_LIST_DIR}/src/ef800_keyboard_update_service.c
+	${CMAKE_CURRENT_LIST_DIR}/src/ef800_backup_update.c
+	${CMAKE_CURRENT_LIST_DIR}/src/ef800_bootloader_update.c
 	${CMAKE_CURRENT_LIST_DIR}/src/ef800_application_shell.c
 	${CMAKE_CURRENT_LIST_DIR}/src/ef800_workspace_browser.c
 	${CMAKE_CURRENT_LIST_DIR}/src/ef800_workspace_row_editor.c
@@ -52,6 +54,8 @@ set(EF800_APPLICATION_COMMON_SOURCES
 	${CMAKE_CURRENT_LIST_DIR}/../../shared/ef800_ports/ef800_usb_personality.c
 	${CMAKE_CURRENT_LIST_DIR}/../../shared/ef800_ports/ef800_usb_manager.c
 	${CMAKE_CURRENT_LIST_DIR}/../../shared/ef800_update/ef800_update.c
+	${CMAKE_CURRENT_LIST_DIR}/../../shared/ef800_update/ef800_firmware_package.c
+	${CMAKE_CURRENT_LIST_DIR}/../../shared/ef800_update/ef800_firmware_coordinator.c
 	${CMAKE_CURRENT_LIST_DIR}/../../shared/ef800_update/ef800_metadata.c
 	${CMAKE_CURRENT_LIST_DIR}/../../shared/ef800_keyboard_update/ef800_keyboard_update_protocol.c
 	${CMAKE_CURRENT_LIST_DIR}/../../shared/ef800_storage/ef800_storage_owner.c

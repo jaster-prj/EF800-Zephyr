@@ -6,13 +6,13 @@
 
 ## Context
 
-The accepted native-sim architecture uses a dedicated behavioral simulator with virtual adapters, while the current Virtual EF800 application models a simplified UI rather than executing the production EF800Application composition root. The production path already expresses important behavior through Zephyr GPIO, UART, I2C, flash, filesystem, RTC, battery, and device-driver APIs. Replacing those paths with a second application model would reduce the simulator's evidence value and allow behavior to drift from the physical target.
+The accepted native-sim architecture uses a dedicated behavioral simulator with virtual adapters, while the current Virtual EF800 application models a simplified UI rather than executing the production EF800 Application composition root. The production path already expresses important behavior through Zephyr GPIO, UART, I2C, flash, filesystem, RTC, battery, and device-driver APIs. Replacing those paths with a second application model would reduce the simulator's evidence value and allow behavior to drift from the physical target.
 
 The project does not need STM32 register emulation or exact ARM execution. It needs a coherent native device environment that preserves production source and driver boundaries while providing deterministic, inspectable peripheral behavior.
 
 ## Decision
 
-The Virtual EF800 will execute the production EF800Application composition root on Zephyr `native_sim` and will satisfy its physical device dependencies through Zephyr-compatible emulated or simulated devices. GPIO banks, UART links, I2C-connected peripherals, simulated storage, RTC, battery, keyboard, and LCD wiring will be represented at the device/API boundary used by production code.
+The Virtual EF800 will execute the production EF800 Application composition root on Zephyr `native_sim` and will satisfy its physical device dependencies through Zephyr-compatible emulated or simulated devices. GPIO banks, UART links, I2C-connected peripherals, simulated storage, RTC, battery, keyboard, and LCD wiring will be represented at the device/API boundary used by production code.
 
 The default profile will model a healthy device. Availability, delays, register values, scripted serial responses, storage state, and bounded failures will be explicit simulator profile controls. Virtual wiring may connect emulated output state to other virtual models, but it will not claim to reproduce STM32 registers, electrical timing, PCB wiring, or hardware qualification evidence.
 

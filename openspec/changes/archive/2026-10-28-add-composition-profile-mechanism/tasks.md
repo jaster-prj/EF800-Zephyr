@@ -10,7 +10,7 @@
 - [x] 2.2 Implement two-slot profile loading with checksum validation, newest-generation selection, wraparound/conflict handling, and conservative fallback when neither slot is valid.
 - [x] 2.3 Implement commit to the inactive/older configuration slot with generation increment, read-back decode and equality verification, predecessor retention on failure, and no mutation of the active effective snapshot in the current boot.
 
-## 3. EF800Application and Build Integration
+## 3. EF800 Application and Build Integration
 
 - [x] 3.1 Add the shared module to the common `ef800-application` physical/native-sim source manifest and initialize it after the existing persistence service with the empty catalog.
 - [x] 3.2 Add bounded startup diagnostics for active generation, default/empty fallback, unknown tokens, invalid slot conflicts, and storage unavailability without adding a provisioning UI or transport command.
@@ -27,4 +27,4 @@
 
 - [x] 5.1 Document the target-profile grammar, COMP-Nr. bounds, two-slot recovery, default and unknown-token semantics, modification API, restart activation, and the rule that concrete catalog entries require later specified changes.
 - [x] 5.2 Update `docs/migration-status.md` and test-count documentation for the new suite while retaining the physical QSPI/FAT qualification caveat.
-- [x] 5.3 In the reusable devcontainer, run the native test suite, pristine-build EF800Application, BackupApplication, Bootloader, and keyboard firmware, and run `application/scripts/verify-images.sh`; record any hardware-only validation as not exercised rather than weakening it.
+- [x] 5.3 In the reusable devcontainer, run the native test suite, pristine-build EF800 Application, EF800 Backup, EF800 Bootloader, and keyboard firmware, and run `application/scripts/verify-images.sh`; record any hardware-only validation as not exercised rather than weakening it.

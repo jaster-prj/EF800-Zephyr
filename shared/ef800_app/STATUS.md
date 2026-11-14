@@ -1,4 +1,4 @@
-# EF800Application Foundation Status
+# EF800 Application Foundation Status
 
 Initialized by this increment:
 
@@ -24,7 +24,7 @@ Initialized by this increment:
   final Enter writes the RTC.
 - Backend-neutral persistence and Workspace services with safe path handling,
   native fake storage, Workspace create/select/restore/list, and append.
-- EF800Application Workspace menu and Position entry dialog. Position records use
+- EF800 Application Workspace menu and Position entry dialog. Position records use
   fixed-point millimetres and append through the selected Workspace.
 - Five logical port descriptors with active connection validation and
   versioned/checksummed port-assignment persistence.
@@ -32,12 +32,12 @@ Initialized by this increment:
   metadata reconciliation, console fallback, and bounded assignment UI.
 - Elta3 and FTS3XX wire parsers, command framing, fixed-point measurement
   records, Workspace append, assigned-UART serial configuration, and the
-  EF800Application measurement workflow.
-- EF800Application Settings port-assignment UI with connection-mode selection,
+  EF800 Application measurement workflow.
+- EF800 Application Settings port-assignment UI with connection-mode selection,
   fixed-port protection, removal, and storage errors shown without blocking the
   main loop.
 - The routing increment, runtime status snapshot, legacy-style display header,
-  and controlled EF800Application hardware path are verified in the current
+  and controlled EF800 Application hardware path are verified in the current
   working tree. See `docs/migration-status.md` for the remaining hardware and
   QSPI/USB ownership gates.
 - Shell commands on the console UART:

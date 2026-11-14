@@ -1,15 +1,15 @@
-# EF800Application memory baseline
+# EF800 Application memory baseline
 
-Captured 2026-11-08 from the EF800Application diagnostic build on the
+Captured 2026-11-08 from the EF800 Application diagnostic build on the
 STM32L496 (probe `066FFF504982494867074032`, device ID `0x461`). The image is
 linked and programmed at `0x08030000`; image-layout verification passed with a
-393,756-byte binary in the 832 KiB EF800Application slot. This diagnostic build
+393,756-byte binary in the 832 KiB EF800 Application slot. This diagnostic build
 enables `CONFIG_INIT_STACKS` and adds the `memory stacks` shell command.
 
 ## Internal SRAM map
 
 The linker reports a 256 KiB `RAM` region and a separate 64 KiB `SRAM1` region
-(320 KiB total internal SRAM described for the MCU). EF800Application places
+(320 KiB total internal SRAM described for the MCU). EF800 Application places
 247,744 bytes in `RAM` (94.51%; end address `0x2003c7c0`) and no sections in
 `SRAM1`. The remaining 14,400 bytes in the 256 KiB RAM region and the separate
 64 KiB SRAM1 region are not represented as additional free heap; they remain
@@ -60,7 +60,7 @@ retain suitable placement and lifetime guarantees.
 | Plugin supervisor stack | 4,096 B allocated | Supervisor thread lifetime | Runtime reports 4,032 usable bytes due to Zephyr stack metadata/guard. Keep internal pending explicit stack-region proof. |
 
 The plugin text and rodata arenas have now been relocated when external SRAM is
-validated. EF800Application obtains 32 KiB each from the external heap, sets
+validated. EF800 Application obtains 32 KiB each from the external heap, sets
 the worker MPU partitions to those exact aligned ranges, and retains 16 KiB
 internal fallback arenas for a reduced profile. The ELF map drops from 247,744
 to 214,976 bytes in the 256 KiB RAM region (32,768 bytes released).
@@ -82,13 +82,13 @@ runtime pool pressure but not static internal RAM occupancy.
 
 Build with the EF800 `ef800-application` target and `CONFIG_INIT_STACKS=y`, verify
 `scripts/verify-images.sh`, flash only at `0x08030000`, then run `memory stacks`
-on the EF800Application console after startup and representative operations.
+on the EF800 Application console after startup and representative operations.
 The diagnostic is temporary and should be removed or made explicitly
 diagnostic-only after baseline collection is no longer needed.
 
-## EF800Application pool bring-up
+## EF800 Application pool bring-up
 
-The physical EF800Application now enables the same FMC Bank 1 configuration as
+The physical EF800 Application now enables the same FMC Bank 1 configuration as
 the hardware-debug image, including its 80 MHz timing and FMC pinctrl. At
 startup it checks FMC and SRAM device readiness, waits the IS61 power-up
 interval, performs a 32-word write/read/restore check in the final 128 bytes of
@@ -110,6 +110,6 @@ scratch allocation and metadata-v4 admission checks remains pending. A separate 
 reported `internal-only profile active`, `memory pool` reported external
 unavailable, and the same core storage, plugin discovery, USB, LCD, and
 keyboard startup checkpoints completed. The test-only Kconfig option defaults
-off; the normal, non-injected EF800Application was rebuilt and restored to
+off; the normal, non-injected EF800 Application was rebuilt and restored to
 `0x08030000` after the fallback test. Current changes still require a fresh
 target run before task 3.3 can be closed.

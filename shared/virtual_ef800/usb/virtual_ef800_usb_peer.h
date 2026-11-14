@@ -32,7 +32,7 @@ struct virtual_ef800_mtp_entry {
  */
 int virtual_ef800_usb_peer_init(void);
 
-/** @brief Wait for an enabled EF800Application USB class/device.
+/** @brief Wait for an enabled EF800 Application USB class/device.
  * @param timeout_ms Maximum wait in milliseconds.
  * @return 0 when found; negative errno on timeout or host error.
  */
@@ -62,7 +62,7 @@ int virtual_ef800_usb_peer_cdc_write(const uint8_t *data, size_t length);
 int virtual_ef800_usb_peer_cdc_read(uint8_t *data, size_t capacity,
 				    size_t *length, uint32_t timeout_ms);
 
-/* EF800Application MTP operations use only Data, Plugins, and FWU. Paths are
+/* EF800 Application MTP operations use only Data, Plugins, and FWU. Paths are
  * relative to the selected storage root and use forward slashes. */
 
 /** @brief List objects under a relative MTP storage path.

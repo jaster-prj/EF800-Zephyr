@@ -132,8 +132,8 @@ int ef800_application_port_workflow_load_measurement_ports(
 	return workflow->measurement_port_count == 0U ? -ENODEV : 0;
 }
 
-int ef800_application_port_workflow_claim_loaded_assignments(
-	struct ef800_application_port_workflow *workflow)
+int ef800_application_port_workflow_claim_loaded_assignments_for_port(
+	struct ef800_application_port_workflow *workflow, uint8_t required_port)
 {
 	int first_error = 0;
 
@@ -169,7 +169,10 @@ int ef800_application_port_workflow_claim_loaded_assignments(
 			port->id, connection);
 		if (result != 0) {
 			LOG_WRN("Port %u UART is not ready: %d", port->id, result);
-			if (first_error == 0) {
+			if (required_port == port->id) {
+				return result;
+			}
+			if (required_port == 0U && first_error == 0) {
 				first_error = result;
 			}
 			continue;
@@ -179,7 +182,10 @@ int ef800_application_port_workflow_claim_loaded_assignments(
 		if (result != 0) {
 			LOG_WRN("Port %u assignment cannot claim UART: %d", port->id,
 				result);
-			if (first_error == 0) {
+			if (required_port == port->id) {
+				return result;
+			}
+			if (required_port == 0U && first_error == 0) {
 				first_error = result;
 			}
 			continue;
@@ -191,11 +197,23 @@ int ef800_application_port_workflow_claim_loaded_assignments(
 			LOG_INF("Port %u measurement transport init result=%d", port->id,
 				result);
 			if (result != 0 && first_error == 0) {
-				first_error = result;
+				if (required_port == port->id) {
+					return result;
+				}
+				if (required_port == 0U) {
+					first_error = result;
+				}
 			}
 		}
 	}
 	return first_error;
+}
+
+int ef800_application_port_workflow_claim_loaded_assignments(
+	struct ef800_application_port_workflow *workflow)
+{
+	return ef800_application_port_workflow_claim_loaded_assignments_for_port(
+		workflow, 0U);
 }
 
 int ef800_application_port_workflow_set_assignment(

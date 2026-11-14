@@ -39,9 +39,9 @@ package, request a simulator restart separately if it should be discovered.
 Port 1 and Port 2 still support bounded virtual serial response profiles for
 plugin demonstrations.
 
-## EF800Application MTP file view
+## EF800 Application MTP file view
 
-The browser's **EF800Application MTP files** panel exposes only the `Data`,
+The browser's **EF800 Application MTP files** panel exposes only the `Data`,
 `Plugins`, and `FWU` storages. It omits Configuration, boot-state NVS, and raw
 flash. On a clean simulator profile, acquire keypad control and select
 **Settings / Port assignment / USB Port / USB MTP** on Port 4 before browsing.
@@ -49,7 +49,7 @@ flash. On a clean simulator profile, acquire keypad control and select
 Listing, upload, and download requests go from the browser to the localhost
 gateway, through bounded simulator-control messages, and then through the
 in-process Zephyr USB host, native-sim virtual UHC/bus/UDC, and production
-EF800Application device-next MTP class. No gateway route reads or writes the
+EF800 Application device-next MTP class. No gateway route reads or writes the
 simulator filesystem directly for these file operations. Browser transfers are
 limited to 32 KiB per file; paths are relative to the selected storage, and
 transfer progress, cancellation, completion, and failure are reported. Download
@@ -66,7 +66,7 @@ gateway route remains available; it is intentionally not part of the notebook's
 MTP file panel.
 
 The native-sim software USB path is behavioral evidence only. Physical QSPI
-qualification, the complete BackupApplication MTP workload/stack measurement,
+qualification, the complete EF800 Backup MTP workload/stack measurement,
 and target flashing are not included in this verification increment.
 
 ```powershell
@@ -79,7 +79,7 @@ docker compose -f docker-compose.virtual-ef800.yml down
 The health endpoint reports web availability independently from simulator
 connectivity. It never opens a second simulator client connection.
 
-The browser also shows a bounded **EF800Application logs** panel. Native-sim log
+The browser also shows a bounded **EF800 Application logs** panel. Native-sim log
 records are replayed from recent history on connection and then streamed live over
 the existing simulator/gateway connection. The panel supports severity filtering,
 pause, clear, and auto-scroll; it marks sequence gaps and simulator diagnostic

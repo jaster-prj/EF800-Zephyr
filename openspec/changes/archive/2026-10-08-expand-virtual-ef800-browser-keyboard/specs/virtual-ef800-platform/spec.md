@@ -6,7 +6,7 @@ set through distinct press and release operations. The set SHALL contain the
 59 unique keys represented by the existing keyboard map: 54 occupied matrix
 positions and 5 special keys. Duplicate aliases and unused raw matrix
 positions SHALL NOT be exposed as separate user-facing controls. Accepted
-input SHALL continue through the normal EF800Application keyboard translation,
+input SHALL continue through the normal EF800 Application keyboard translation,
 parser, and application-handling path rather than directly mutating menu or
 plugin state.
 
@@ -21,7 +21,7 @@ disconnects, or the simulator connection is lost.
 - **WHEN** the controlling user presses and releases any one of the 59
   canonical browser keys
 - **THEN** the gateway sends the corresponding key-down and key-up operations
-  through the normal simulator keyboard path and EF800Application receives the
+  through the normal simulator keyboard path and EF800 Application receives the
   resulting make and break behavior
 
 #### Scenario: User holds a virtual key

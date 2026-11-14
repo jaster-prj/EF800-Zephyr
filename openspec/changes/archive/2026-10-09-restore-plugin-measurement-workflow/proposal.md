@@ -7,7 +7,7 @@ The plugin-owned Measurement menu currently triggers an instrument result before
 - Restore the complete measurement workflow inside both Fennel1 and Elta3 plugins: enter point code, enter point number, execute measurement, edit staff height, save, discard, and run fixed measurements.
 - Extend the workspace object to retain the current measurement point number and code extracted while loading workspace data, and update that context after each appended measurement line.
 - Extend the plugin ABI only with generic measurement context initialization and bounded serialized-record output.
-- Keep EF800Application responsible for workspace loading, context transfer, opaque line append, port ownership, and global navigation; it SHALL not own measurement action labels or sequencing.
+- Keep EF800 Application responsible for workspace loading, context transfer, opaque line append, port ownership, and global navigation; it SHALL not own measurement action labels or sequencing.
 - Make plugin-owned `Fixmessung` serialize and append the current result, auto-increment the workspace point number, and trigger the next measurement.
 
 ## Capabilities
@@ -19,7 +19,7 @@ None.
 ### Modified Capabilities
 
 - `measurement-plugin-submenus`: Separate plugin instrument actions from the common host-owned pending-measurement workflow and define the complete measurement lifecycle for Fennel1 and Elta3.
-- `measurement-plugin-owned-ui`: Clarify that plugins provide measurement/instrument behavior while EF800Application owns point metadata, pending-result editing, save/discard, fixed measurement, and workspace persistence.
+- `measurement-plugin-owned-ui`: Clarify that plugins provide measurement/instrument behavior while EF800 Application owns point metadata, pending-result editing, save/discard, fixed measurement, and workspace persistence.
 
 ## Impact
 

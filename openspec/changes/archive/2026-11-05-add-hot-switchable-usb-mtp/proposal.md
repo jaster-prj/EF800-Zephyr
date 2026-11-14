@@ -1,6 +1,6 @@
 ## Why
 
-USB MSC gives the host raw ownership of the QSPI disk, forcing EF800Application to unmount FAT and preventing safe simultaneous device-side filesystem access. EF800 needs a Windows- and Linux-compatible file-transfer mode that keeps FAT mounted, while preserving MSC as an explicitly restart-gated compatibility mode.
+USB MSC gives the host raw ownership of the QSPI disk, forcing EF800 Application to unmount FAT and preventing safe simultaneous device-side filesystem access. EF800 needs a Windows- and Linux-compatible file-transfer mode that keeps FAT mounted, while preserving MSC as an explicitly restart-gated compatibility mode.
 
 ## What Changes
 
@@ -10,7 +10,7 @@ USB MSC gives the host raw ownership of the QSPI disk, forcing EF800Application 
 - Allow runtime switching among no native-USB personality, USB DebugConsole, and USB MTP without restarting EF800; the host observes a USB disconnect and re-enumeration.
 - Require a controlled restart for every transition entering or leaving USB MSC so FAT and raw-block ownership are never shared.
 - Make FAT access reentrant and define file-completion and validation boundaries for concurrent host and EF800 access.
-- Preserve the existing `/EF800:/fwu/EF800_FW.bin` and `/EF800:/fwu/EF800_KEYBOARD.pkg` update paths and reject incomplete or invalid packages before applying them.
+- Preserve `/EF800:/fwu/EF800_FW.bin` for bootstrap and use the target-specific keyboard package names `EF800_KEYBOARD_UPDATER.pkg`, `EF800_KEYBOARD_BOOT.pkg`, and `EF800_KEYBOARD_APP.pkg`; reject incomplete or invalid packages before applying them.
 - Add Windows and Linux interoperability, transition, concurrency, interrupted-transfer, update-safety, and filesystem-integrity verification.
 - Defer support for more than 12 MTP objects per exposed storage.
 
@@ -27,6 +27,6 @@ None.
 ## Impact
 
 - Adds a pinned west module containing the temporary MTP class and compatibility glue for Zephyr v4.4.2.
-- Changes EF800Application USB lifecycle management, Port 4 descriptors and persisted assignment handling, FAT configuration, and MSC ownership transitions.
+- Changes EF800 Application USB lifecycle management, Port 4 descriptors and persisted assignment handling, FAT configuration, and MSC ownership transitions.
 - Affects the USB console and storage adapters, port-assignment UI, boot metadata compatibility, QSPI filesystem access, firmware/keyboard update validation, build configuration, native tests, hardware tests, and migration documentation.
 - Requires physical STM32L496 testing with Windows and Linux hosts; native simulation cannot establish USB electrical or host-stack interoperability.

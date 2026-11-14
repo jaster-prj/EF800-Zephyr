@@ -8,7 +8,7 @@
 | Physical MTP, MSC ownership switching, and host interoperability coverage is incomplete. | Service/host workflows can fail on target despite unit/native success. | Run controlled host matrix and transfer/disconnect/recovery tests with qualified board power and USB routing. |
 | Main and Backup share QSPI media and cannot own it concurrently. | Incorrect application startup or uncoordinated USB ownership can cause filesystem corruption. | Retain boot handoff/restart boundary and enforce exclusive mount/MSC ownership. |
 | Plugin MPU containment is a target-specific safety boundary. | A faulty package may impact Main if execution/cleanup is not contained. | Verify userspace domains, memory permissions, deadline behavior, fault classification, and safe thread/resource cleanup on L496. |
-| EF800Application has a large composition root. | Startup ordering and subsystem coupling are harder to reason about. | Keep domain services in shared modules, preserve source manifest, add focused tests, and incrementally extract cohesive orchestration services. |
+| EF800 Application has a large composition root. | Startup ordering and subsystem coupling are harder to reason about. | Keep domain services in shared modules, preserve source manifest, add focused tests, and incrementally extract cohesive orchestration services. |
 | Zephyr and external module revisions move over time. | API or behavior drift can break build, MTP, or package integration. | Pin revisions in west manifest and update deliberately with complete builds/tests. |
 | Simulator is behavioral, not a hardware emulator. | Passing tests can be mistaken for physical qualification. | Label evidence by environment and retain explicit hardware gates. |
 

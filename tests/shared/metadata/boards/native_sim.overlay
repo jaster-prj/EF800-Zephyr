@@ -5,16 +5,19 @@
 &flash0 {
 	partitions {
 		metadata_partition: qspi_bootstate_partition: partition@fc000 {
+			compatible = "zephyr,mapped-partition";
 			label = "qspi-boot-state";
 			reg = <0x000fc000 0x00008000>;
 		};
 
 		qspi_configuration_partition: partition@104000 {
+			compatible = "zephyr,mapped-partition";
 			label = "qspi-configuration";
 			reg = <0x00104000 0x00018000>;
 		};
 
 		qspi_storage_partition: partition@11c000 {
+			compatible = "zephyr,mapped-partition";
 			label = "qspi-shared-data";
 			reg = <0x0011c000 0x00060000>;
 		};

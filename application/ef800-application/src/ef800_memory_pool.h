@@ -6,7 +6,7 @@
 #include <stdbool.h>
 #include <stddef.h>
 
-/* Called before EF800Application foundation/plugin initialization. */
+/* Called before EF800 Application foundation/plugin initialization. */
 
 /** @brief Initialize allocation pools before foundation and plugin services.
  * @return 0 on success; negative errno if pool setup fails.

@@ -13,7 +13,7 @@
 - adr/0003-use-native-sim-for-behavioral-ef800.md - native test evidence boundary
 - adr/0004-use-web-gateway-for-virtual-ef800-front-panel.md - simulator gateway unrelated
 - adr/0005-use-zephyr-device-emulation-for-production-native-sim.md - native test evidence boundary
-- adr/0006-use-single-ef800-application-target-for-physical-and-native-sim.md - shared EF800Application composition
+- adr/0006-use-single-ef800-application-target-for-physical-and-native-sim.md - shared EF800 Application composition
 - adr/0007-use-configurable-packed-t6963-renderer.md - unrelated display contract
 - adr/0008-use-native-sim-package-control-and-restart-boundary.md - simulator package boundary unrelated
 - adr/0009-use-bounded-native-sim-log-stream.md - unrelated diagnostics
@@ -35,4 +35,4 @@
 
 ## Notes
 
-The supersession is intentional: the fixed flash map, QSPI partitioning, MTP boundaries, and sole-owner filesystem rules remain; only the prior restriction on bootloader and BackupApplication updates changes. Bootloader self-update remains gated on a separately proven safe programming mechanism.
+The supersession is intentional: the fixed flash map, QSPI partitioning, MTP boundaries, and sole-owner filesystem rules remain; only the prior restriction on bootloader and EF800 Backup updates changes. The initial EF800 Application 1.0.0 migration uses the existing `EF800_FW.bin` bootloader path once; later EF800 Application updates use `EF800_APP.pkg`. The transaction journal uses a separate NVS record ID in the existing QSPI boot-state partition. Bootloader self-update remains gated on a separately proven safe programming mechanism.

@@ -29,7 +29,7 @@
 #include "boot_trace.h"
 #include "boot_handoff.h"
 
-LOG_MODULE_REGISTER(ef800_bootloader, LOG_LEVEL_INF);
+LOG_MODULE_REGISTER(ef800_bootloader, LOG_LEVEL_WRN);
 
 #define MAIN_PARTITION_ID PARTITION_ID(main_partition)
 #define BACKUP_PARTITION_ID PARTITION_ID(backup_partition)
@@ -54,7 +54,7 @@ BUILD_ASSERT(PARTITION_SIZE(backup_partition) == 0x00020000U,
 	     "backup partition size must remain 128 KiB");
 BUILD_ASSERT(PARTITION_OFFSET(main_partition) ==
 	     PARTITION_OFFSET(backup_partition) + PARTITION_SIZE(backup_partition),
-	     "EF800Application must follow the expanded BackupApplication region");
+	     "EF800 Application must follow the expanded EF800 Backup region");
 BUILD_ASSERT(PARTITION_OFFSET(qspi_bootstate_partition) == 0x00000000U &&
 	     PARTITION_SIZE(qspi_bootstate_partition) == 0x00008000U,
 	     "QSPI boot-state partition must be the first 32 KiB");
@@ -185,12 +185,12 @@ int main(void)
 		}
 	}
 
-	LOG_INF("checking MTP EF800Application update");
+	LOG_INF("checking MTP EF800 Application update");
 	rc = ef800_boot_install_update(main_area, PARTITION_ADDRESS(main_partition),
 					 sram_address, sram_size);
 	update_installed = rc == 0;
-	LOG_INF("MTP EF800Application update result: %d", rc);
-	ef800_boot_trace_result("EF800Application update", rc);
+	LOG_INF("MTP EF800 Application update result: %d", rc);
+	ef800_boot_trace_result("EF800 Application update", rc);
 	if (rc < 0 && rc != -ENOENT && rc != -ENODEV) {
 		LOG_WRN("update inspection failed: %d", rc);
 	}

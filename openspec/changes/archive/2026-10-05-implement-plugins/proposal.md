@@ -1,6 +1,6 @@
 ## Why
 
-The Elta3 and Fennel1 measurement packages currently contain measurement protocol code but leave keyboard actions, submenu state, and measurement display behavior in EF800 host code. This keeps device-specific behavior in EF800Application and prevents each `.pmp` package from being a complete, independently usable measurement plugin.
+The Elta3 and Fennel1 measurement packages currently contain measurement protocol code but leave keyboard actions, submenu state, and measurement display behavior in EF800 host code. This keeps device-specific behavior in EF800 Application and prevents each `.pmp` package from being a complete, independently usable measurement plugin.
 
 ## What Changes
 
@@ -8,8 +8,8 @@ The Elta3 and Fennel1 measurement packages currently contain measurement protoco
 - Extend the EF800 measurement plugin contract so a package can declare submenu entries, handle logical keyboard actions, and return bounded display content.
 - Implement Elta3 submenu actions, directional commands, measurement state, and display model generation inside the Elta3 package.
 - Implement Fennel1 measurement submenu behavior and display model generation inside the Fennel1 package.
-- Keep raw keyboard framing, LCD hardware access, global system keys, port ownership, and plugin lifecycle in EF800Application.
-- Remove device-specific submenu, keyboard-action, display-formatting, and legacy measurement dispatch dependencies from EF800Application.
+- Keep raw keyboard framing, LCD hardware access, global system keys, port ownership, and plugin lifecycle in EF800 Application.
+- Remove device-specific submenu, keyboard-action, display-formatting, and legacy measurement dispatch dependencies from EF800 Application.
 - Build and validate Elta3 and Fennel1 as independently installable `.pmp` packages.
 - **BREAKING**: Plugin package ABI and host/plugin service contracts gain package-owned UI and logical-input behavior; old measurement packages without the required contract version are rejected or treated as unavailable.
 
@@ -17,7 +17,7 @@ The Elta3 and Fennel1 measurement packages currently contain measurement protoco
 
 ### New Capabilities
 
-- `measurement-plugin-owned-ui`: Measurement plugins own their logical submenu, keyboard actions, measurement presentation state, and bounded display model while EF800Application remains the host renderer and resource owner.
+- `measurement-plugin-owned-ui`: Measurement plugins own their logical submenu, keyboard actions, measurement presentation state, and bounded display model while EF800 Application remains the host renderer and resource owner.
 
 ### Modified Capabilities
 
@@ -25,7 +25,7 @@ The Elta3 and Fennel1 measurement packages currently contain measurement protoco
 
 ## Impact
 
-- Plugin ABI and EF800 public contract headers used by PluginManager packages and EF800Application.
+- Plugin ABI and EF800 public contract headers used by PluginManager packages and EF800 Application.
 - `application/plugins/measurement-plugin` build layout, package descriptors, protocol/runtime sources, host tests, and `.pmp` output naming.
 - `application/ef800-application` plugin host integration, measurement menu/session handling, display model rendering, and build source lists.
 - Shared measurement and plugin registry code that still exposes legacy device-specific adapters.

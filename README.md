@@ -100,7 +100,7 @@ before production flashing.
 
 The connected STM32L496 engineering target was erased and verified blank during
 initial recovery preparation, then later used for controlled bootloader and
-EF800Application bring-up. See `docs/stm32l496-target-snapshot.md` for the
+EF800 Application bring-up. See `docs/stm32l496-target-snapshot.md` for the
 historical option-byte values, recovery-image hashes, and erase record. See
 `docs/migration-status.md` for current migration state.
 

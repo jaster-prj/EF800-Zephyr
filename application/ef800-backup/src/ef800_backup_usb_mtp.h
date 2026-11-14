@@ -1,6 +1,6 @@
 /* SPDX-License-Identifier: Apache-2.0 */
 /** @file
- * @brief Start, stop, and query BackupApplication USB MTP service state.
+ * @brief Start, stop, and query EF800 Backup USB MTP service state.
  */
 #ifndef EF800_BACKUP_USB_MTP_H_
 #define EF800_BACKUP_USB_MTP_H_

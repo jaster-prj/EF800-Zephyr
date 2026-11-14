@@ -8,12 +8,12 @@
 
 ## In-Force ADR Context Reviewed
 
-- `adr/0001-package-owned-measurement-ui.md` - EF800Application retains hardware and shared UI responsibilities.
+- `adr/0001-package-owned-measurement-ui.md` - EF800 Application retains hardware and shared UI responsibilities.
 - `adr/0002-isolate-external-plugin-execution.md` - Plugin-isolation behavior and hardware qualification remain out of scope.
 - `adr/0003-use-native-sim-for-behavioral-ef800.md` - Native-sim is behavioral evidence, not hardware qualification.
 - `adr/0004-use-web-gateway-for-virtual-ef800-front-panel.md` - Browser control remains mediated by the gateway and bounded simulator connection.
 - `adr/0005-use-zephyr-device-emulation-for-production-native-sim.md` - Native-sim exercises production device API paths through emulators.
-- `adr/0006-use-single-ef800-application-target-for-physical-and-native-sim.md` - Physical and native-sim share the EF800Application composition root.
+- `adr/0006-use-single-ef800-application-target-for-physical-and-native-sim.md` - Physical and native-sim share the EF800 Application composition root.
 - `adr/0007-use-configurable-packed-t6963-renderer.md` - Display representation remains independent of battery state.
 - `adr/0008-use-native-sim-package-control-and-restart-boundary.md` - Existing explicit simulator restart boundary remains intact.
 - `adr/0009-use-bounded-native-sim-log-stream.md` - Browser diagnostics remain bounded and non-durable.

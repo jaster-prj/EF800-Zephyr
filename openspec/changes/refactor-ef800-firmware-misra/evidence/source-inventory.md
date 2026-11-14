@@ -8,15 +8,15 @@ The authoritative source manifests are the named CMake files. EF800-authored sou
 
 | Product / configuration | Checked-in source manifest and EF800-owned C composition |
 |---|---|
-| EF800Application, physical `ef800` | `application/ef800-application/CMakeLists.txt` + `application/ef800-application/ef800-application-sources.cmake`; common `application/ef800-application/src/{main,ef800_memory_pool,keyboard_host,ef800_plugin_host,ef800_plugin_syscall,ef800_plugin_worker}.c`; shared modules explicitly listed by the manifest (main/time, LCD contrast, runtime, battery, drivers, persistence/workspace, composition, position, measurement, ports, update/metadata, keyboard update, storage, plugin, UI, keyboard translation); physical-only LCD/USB/watchdog adapters appended by CMake. |
-| EF800Application, `native_sim` | Same common manifest; native-only USB/watchdog adapters, virtual EF800 device/peripheral modules, keyboard key names, and TLX emulator are appended in `CMakeLists.txt`. The generated `cgrom_0101.h` is an input generated into the build tree from `docs/CG_RAM0101.txt` by `application/tlx-711a/tools/generate_cgrom.py`; it is not an EF800-authored C translation unit. |
+| EF800 Application, physical `ef800` | `application/ef800-application/CMakeLists.txt` + `application/ef800-application/ef800-application-sources.cmake`; common `application/ef800-application/src/{main,ef800_memory_pool,keyboard_host,ef800_plugin_host,ef800_plugin_syscall,ef800_plugin_worker}.c`; shared modules explicitly listed by the manifest (main/time, LCD contrast, runtime, battery, drivers, persistence/workspace, composition, position, measurement, ports, update/metadata, keyboard update, storage, plugin, UI, keyboard translation); physical-only LCD/USB/watchdog adapters appended by CMake. |
+| EF800 Application, `native_sim` | Same common manifest; native-only USB/watchdog adapters, virtual EF800 device/peripheral modules, keyboard key names, and TLX emulator are appended in `CMakeLists.txt`. The generated `cgrom_0101.h` is an input generated into the build tree from `docs/CG_RAM0101.txt` by `application/tlx-711a/tools/generate_cgrom.py`; it is not an EF800-authored C translation unit. |
 | L496 second-level bootloader | `application/ef800-bootloader/CMakeLists.txt`; `src/{main,boot_handoff,boot_update,boot_watchdog_early,boot_watchdog_reset}.c`; shared boot decision, update/metadata, console/log, watchdog, and QSPI layout sources listed there. `boot_handoff.c` is the architecture-specific handoff adapter added in task 2.1. |
-| BackupApplication | `application/ef800-backup/CMakeLists.txt`; `src/{main,ef800_backup_composition,ef800_backup_usb_mtp}.c`; shared composition, persistence, watchdog, storage layout, LCD contrast, console/log, and update sources listed there. MTP implementation supplied by the separately maintained Zephyr MTP module is external. |
+| EF800 Backup | `application/ef800-backup/CMakeLists.txt`; `src/{main,ef800_backup_composition,ef800_backup_usb_mtp}.c`; shared composition, persistence, watchdog, storage layout, LCD contrast, console/log, and update sources listed there. MTP implementation supplied by the separately maintained Zephyr MTP module is external. |
 | Keyboard application (L431) | `application/keyboard-application/CMakeLists.txt`; `src/{main,keyboard_matrix,keyboard_i2c_service,keyboard_key_names}.c`; shared keyboard translation and matrix debounce, keyboard boot policy, update, keyboard-update protocol, and watchdog sources listed there. |
 | Keyboard bootloader (L431) | `application/keyboard-bootloader/CMakeLists.txt`; `src/{main,keyboard_boot_handoff,keyboard_boot_probe,keyboard_boot_flash}.c`; shared keyboard boot policy, update, and watchdog sources listed there. |
 | Keyboard updater (L431) | `application/keyboard-updater/CMakeLists.txt`; `src/{main,keyboard_updater_transport}.c`; shared keyboard-update protocol, update, and watchdog sources listed there. |
 
-The EF800Application common manifest currently names `src/ef800_plugin_worker.c` twice (lines 11–12). This is an inventory/build-manifest anomaly to verify against generated build metadata; it has not been altered as part of inventory work.
+The EF800 Application common manifest currently names `src/ef800_plugin_worker.c` twice (lines 11–12). This is an inventory/build-manifest anomaly to verify against generated build metadata; it has not been altered as part of inventory work.
 
 ## EF800-authored tests
 
@@ -43,7 +43,7 @@ Additional application C projects discovered in the repository but outside the s
 
 - `application/test-hwdebug`: 11 EF800-authored hardware diagnostic sources; development/diagnostic target, not one of the six images.
 - `application/test-isolation-spike`: 4 sources including a dummy plugin; architectural spike, not a production image.
-- `application/tlx-711a`: 4 LCD/emulator utility sources; its `t6963_emulator.c` is reused by EF800Application native-sim.
+- `application/tlx-711a`: 4 LCD/emulator utility sources; its `t6963_emulator.c` is reused by EF800 Application native-sim.
 - `application/test-usb-sample` and `application/test-usb-mtp`: one source each, sample/diagnostic targets.
 
 These auxiliary projects should be separately included or explicitly excluded in the final compliance policy according to the defined EF800-owned scope; they are not third-party code.
@@ -59,4 +59,4 @@ These auxiliary projects should be separately included or explicitly excluded in
 
 1. Re-generate compile databases when image source manifests or Zephyr configuration change; review conditional sources, compiler definitions, generated inputs, and dependency headers with the corresponding target build.
 2. The configured plugin native-sim build includes `test_native_package.c` and verifies the two native package images. Its runtime test currently aborts at an unsupported fake worker operation; track this separately from the style-tool pilot.
-3. The EF800Application configured source manifest still contains the duplicate `src/ef800_plugin_worker.c` entry noted above; retain it as an inventory finding until its source-manifest behavior is deliberately reviewed.
+3. The EF800 Application configured source manifest still contains the duplicate `src/ef800_plugin_worker.c` entry noted above; retain it as an inventory finding until its source-manifest behavior is deliberately reviewed.

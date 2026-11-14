@@ -15,25 +15,25 @@ failure permission to format media or silently become a production policy.
 
 ## Decision
 
-When `CONFIG_EF800_APPLICATION_REFORMAT_LEGACY_QSPI` is enabled, EF800Application SHALL
+When `CONFIG_EF800_APPLICATION_REFORMAT_LEGACY_QSPI` is enabled, EF800 Application SHALL
 check the raw QSPI boot sector before reading boot metadata or mounting
 Configuration/Data. If and only if the sector passes the validated legacy FAT
-signature check, EF800Application SHALL format the new Configuration and Shared
+signature check, EF800 Application SHALL format the new Configuration and Shared
 Data FAT partitions and erase the boot-state NVS partition before continuing
 startup. The old volume contents are intentionally discarded; there is no data
 migration. FAT mount failures and malformed NVS records alone SHALL NOT invoke
 this formatter.
 
-The development EF800Application build enables this option. Production builds
+The development EF800 Application build enables this option. Production builds
 SHALL disable it until the fitted QSPI part, capacity, erase geometry, frequency,
-and power-loss behavior are qualified. Bootloader and BackupApplication remain
+and power-loss behavior are qualified. EF800 Bootloader and EF800 Backup remain
 non-formatting and keep their legacy-layout safeguards. ADR-0013's partition
 map, storage ownership, and MTP boundaries remain unchanged.
 
 ## Consequences
 
 - A development unit with a recognized old monolithic volume automatically
-  reaches the new partitioned layout on its next EF800Application boot.
+  reaches the new partitioned layout on its next EF800 Application boot.
 - The old data is destructive-format territory; this option is only suitable
   for development targets where that data is disposable.
 - The formatter keeps the legacy boot-sector signature until both FAT

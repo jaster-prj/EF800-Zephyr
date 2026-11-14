@@ -300,7 +300,7 @@ if(PM_BUILD_NATIVE_SIM)
     # Keep package-level native_sim checks in CTest, in addition to the
     # protocol tests above. The build targets generate and verify the PMP
     # images; these tests make architecture/identity verification explicit in
-    # the test report used by EF800Application's simulator workflow.
+    # the test report used by EF800 Application's simulator workflow.
     add_test(NAME elta3_native_sim_package
         COMMAND ${Python3_EXECUTABLE} ${CMAKE_CURRENT_LIST_DIR}/tools/verify_package.py
             ${CMAKE_CURRENT_BINARY_DIR}/elta3_native_plugin.pmp --plugin-id 2)

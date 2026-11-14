@@ -1,13 +1,17 @@
 ## MODIFIED Requirements
 
-### Requirement: Recovery MTP stages EF800Application updates without changing the bootloader update policy
-BackupApplication SHALL allow complete, target-identified firmware packages to be staged under the FWU root. BackupApplication MTP SHALL treat all uploaded packages as files only and SHALL NOT program internal flash. On a subsequent controlled boot, the authorized update coordinator SHALL validate and process packages under the full-device update policy. BackupApplication and EF800Application SHALL NOT mount the shared filesystem simultaneously.
+### Requirement: Recovery MTP stages EF800 Application updates without changing the bootloader update policy
+EF800 Backup SHALL allow complete, target-identified firmware packages to be staged under the FWU root. EF800 Backup MTP SHALL treat all uploaded packages as files only and SHALL NOT program internal flash. On a subsequent controlled boot, the authorized update coordinator SHALL validate and process packages under the full-device update policy. EF800 Backup and EF800 Application SHALL NOT mount the shared filesystem simultaneously.
 
-#### Scenario: EF800Application image is staged
+#### Scenario: EF800 Application image is staged
 - **WHEN** a host completes an upload of a valid target-identified firmware package into FWU
-- **THEN** the completed file remains available to the authorized coordinator after restart and no image is programmed by BackupApplication
+- **THEN** the completed file remains available to the authorized coordinator after restart and no image is programmed by EF800 Backup
 
-#### Scenario: Bootloader or BackupApplication image is staged
+#### Scenario: One-time EF800 Application bootstrap image is staged
+- **WHEN** a host stages the legacy `EF800_FW.bin` bootstrap image for a device whose deployed Bootloader does not support the package envelope
+- **THEN** EF800 Backup treats it as a file only, and the currently deployed Bootloader may install it only through its existing controlled update path
+
+#### Scenario: EF800 Bootloader or EF800 Backup image is staged
 - **WHEN** a host copies any firmware package into recovery storage
 - **THEN** MTP treats it as a file only and no firmware image is programmed during the MTP transfer
 

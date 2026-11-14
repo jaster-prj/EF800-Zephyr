@@ -12,7 +12,7 @@
 - [x] 2.4 Update Elta3 to declare and execute `Measure`, `Up`, `Down`, and `Enter` through the session contract.
 - [x] 2.5 Update the confirmed Fennel1 implementation to declare only `Measure` and return a deterministic unsupported result for directional actions.
 
-## 3. Integrate EF800Application Menus And Keyboard Routing
+## 3. Integrate EF800 Application Menus And Keyboard Routing
 
 - [x] 3.1 Replace the plugin-backed branch of the fixed measurement action list with a dynamically rendered submenu based on the active plugin action metadata.
 - [x] 3.2 Create and destroy the plugin submenu session when a ready assigned device is selected, exited, invalidated, or its route becomes unavailable.
@@ -24,7 +24,7 @@
 ## 4. Test And Document
 
 - [x] 4.1 Add native contract tests for action metadata, exact Elta3/Fennel1 action sets, unsupported actions, session lifecycle, and single-transport ownership.
-- [x] 4.2 Add EF800Application/state-machine tests for dynamic menu creation/removal, selection reset, keyboard consumption, global-key precedence, teardown, and fallback navigation.
+- [x] 4.2 Add EF800 Application/state-machine tests for dynamic menu creation/removal, selection reset, keyboard consumption, global-key precedence, teardown, and fallback navigation.
 - [x] 4.3 Add regression tests for measurement result creation, pending save/discard behavior, legacy device dispatch, and route/plugin unavailability.
 - [x] 4.4 Update measurement-plugin SDK and migration documentation with the submenu/session contract and the confirmed Fennel1 identity.
 - [x] 4.5 Run the measurement plugin host tests, the native test suite, and all required firmware builds; record results and verify no image-layout or USB-ownership regressions.

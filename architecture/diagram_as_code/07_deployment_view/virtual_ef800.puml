@@ -6,7 +6,7 @@ node "Developer workstation" {
   actor Browser
   node "Docker Compose" {
     node "Virtual EF800 container" as sim {
-      artifact "Zephyr native_sim\nEF800Application" as firmware
+      artifact "Zephyr native_sim\nEF800 Application" as firmware
       component "Emulated GPIO / I2C / RTC\nUART / QSPI / LCD" as emulators
       component "Virtual USB UDC + host peer" as usb
     }

@@ -1,6 +1,6 @@
 /* SPDX-License-Identifier: Apache-2.0 */
 /** @file
- * @brief Read and filter EF800Application battery ADC samples as SOC readings.
+ * @brief Read and filter EF800 Application battery ADC samples as SOC readings.
  */
 #ifndef EF800_APPLICATION_BATTERY_ADC_H
 #define EF800_APPLICATION_BATTERY_ADC_H

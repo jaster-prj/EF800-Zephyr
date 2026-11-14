@@ -2,7 +2,7 @@
 
 | Strategy | Realization |
 |---|---|
-| Preserve one EF800Application composition across physical and virtual targets. | `application/ef800-application/ef800-application-sources.cmake` is the shared source manifest. CMake selects physical or native-sim adapters and overlays. |
+| Preserve one EF800 Application composition across physical and virtual targets. | `application/ef800-application/ef800-application-sources.cmake` is the shared source manifest. CMake selects physical or native-sim adapters and overlays. |
 | Separate boot policy from the operating application. | The second-level Bootloader validates images, installs eligible Main updates, records boot state, and selects Main or Backup. |
 | Keep recovery available without changing normal Main ownership. | Backup mounts Configuration and Shared Data and starts recovery MTP only when the legacy-layout check passes and mounts succeed. |
 | Separate persistent concerns by partition. | QSPI boot state uses NVS; settings and profiles use Configuration FAT; workspace/data/plugin/update files use Shared Data FAT. |

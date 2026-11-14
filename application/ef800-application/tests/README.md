@@ -1,4 +1,4 @@
-# EF800Application Acceptance
+# EF800 Application Acceptance
 
 These tests target the production `ef800-application` image on the STM32L496. They do
 not use the former NUCLEO PluginManager prototype.
@@ -9,7 +9,7 @@ development packages; it does not provide userspace isolation. The
 measurement-plugin native_sim CTest suite separately builds and executes the
 native `.pmp` packages through PluginManager.
 
-The acceptance harness must use the normal EF800Application console and must
+The acceptance harness must use the normal EF800 Application console and must
 keep the console port closed between scripted accesses. It validates:
 
 - Startup-only plugin discovery when `/EF800:` storage is reachable.

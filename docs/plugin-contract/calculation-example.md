@@ -21,4 +21,4 @@ provided output buffer and returns the exact output length. It must return an
 error if the output does not fit.
 
 The host previews results without mutation. A separate explicit confirmation
-path validates and appends the result through EF800Application's Workspace API.
+path validates and appends the result through EF800 Application's Workspace API.

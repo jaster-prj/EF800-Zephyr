@@ -1496,7 +1496,7 @@ void hwdebug_keyboard_test(const char *port_name)
 void hwdebug_keyboard_interactive(void)
 {
 	hwdebug_console_puts("Keyboard interactive test: connect the controller and run the\r\n"
-		"documented keyboard debug sequence from the EF800Application console.\r\n"
+		"documented keyboard debug sequence from the EF800 Application console.\r\n"
 		"Reply with 'pass' or 'fail'. Use 'cancel' or 'exit' to leave the test.\r\n");
 	interactive_waiting = INTERACTIVE_KEYBOARD;
 }
@@ -1757,7 +1757,7 @@ void hwdebug_instrument_uart_test(const char *instrument, const char *uart_name)
 		return;
 	}
 	/* uart_configure() calculated BRR from the DTS PCLK rate. Match the
-	 * explicit USART kernel clock just as EF800Application does. */
+	 * explicit USART kernel clock just as EF800 Application does. */
 	LL_USART_SetBaudRate(strcmp(uart_name, "uart3") == 0 ? USART3 : USART1,
 		config.baudrate < 9600U ? 16000000U : 80000000U,
 		LL_USART_OVERSAMPLING_16, config.baudrate);

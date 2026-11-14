@@ -21,7 +21,7 @@
 #define TEST_FWU_ROOT "/DATA:/fwu"
 
 BUILD_ASSERT(!IS_ENABLED(CONFIG_USBD_MSC_CLASS),
-	"Native-sim EF800Application USBMSD0 must omit the MSC class");
+	"Native-sim EF800 Application USBMSD0 must omit the MSC class");
 
 static FATFS data_fat_fs;
 static struct fs_mount_t data_mount = {

@@ -1,6 +1,25 @@
 # SPDX-License-Identifier: Apache-2.0
 
-menu "EF800Application foundation"
+menu "EF800 Application foundation"
+
+config EF800_APPLICATION_BACKUP_UPDATE
+	bool "Enable staged EF800 Backup package installation"
+	default n
+	depends on BOARD_EF800
+	help
+	  Expose the manual backup_update shell command. Keep disabled until the
+	  fitted QSPI part, capacity, erase geometry, frequency, and existing FAT
+	  volume have been verified and the full update path is qualified.
+
+config EF800_APPLICATION_BOOTLOADER_UPDATE
+	bool "Expose manually triggered EF800 Bootloader package installation"
+	default n
+	depends on BOARD_EF800
+	help
+	  Expose the bootloader_update shell command for the exact staged
+	  EF800_BOOT.pkg package. Bootloader programming is never automatic.
+	  Keep disabled unless the application-side flash, vector, interrupt,
+	  watchdog, and recovery behavior has been reviewed and qualified.
 
 config EF800_APPLICATION_PLUGIN_DEV_DIRECT_EXECUTION
 	bool "Allow trusted development plugins to execute inline"
@@ -66,7 +85,7 @@ config EF800_APPLICATION_PROBE_FUEL_GAUGE_AT_STARTUP
 	default y
 	help
 		Perform one deferred fuel-gauge probe from the runtime battery worker
-		after EF800Application initialization. A missing gauge is left unavailable
+		after EF800 Application initialization. A missing gauge is left unavailable
 		until restart; it is not retried during the current boot. Disable this
 		when the target has no supported fuel-gauge source.
 
@@ -79,7 +98,7 @@ config EF800_APPLICATION_KEYBOARD_STARTUP_TIMEOUT_MS
 	default 3000
 	range 1 60000
 	help
-	  Maximum time the EF800Application waits for the keyboard's initialized
+	  Maximum time the EF800 Application waits for the keyboard's initialized
 	  indication before continuing with the rest of the foundation.
 
 config EF800_APPLICATION_WATCHDOG_TIMEOUT_MS
@@ -102,11 +121,11 @@ config EF800_APPLICATION_WATCHDOG_STACK_SIZE
 	range 512 4096
 
 config EF800_USB_VID
-	hex "EF800Application USB vendor ID"
+	hex "EF800 Application USB vendor ID"
 	default 0x2fe3
 
 config EF800_USB_PID
-	hex "EF800Application USB product ID"
+	hex "EF800 Application USB product ID"
 	default 0xef81
 
 config EF800_APPLICATION_LCD_STATUS_TIMEOUT_US
@@ -116,7 +135,7 @@ config EF800_APPLICATION_LCD_STATUS_TIMEOUT_US
 	help
 	  Maximum time spent polling the T6963 ready bits for one bus operation.
 	  A bounded timeout keeps a missing or disconnected LCD from blocking the
-	  EF800Application forever.
+	  EF800 Application forever.
 
 config EF800_APPLICATION_RUNTIME_RTC_PERIOD_MS
 	int "Runtime RTC sample period (ms)"

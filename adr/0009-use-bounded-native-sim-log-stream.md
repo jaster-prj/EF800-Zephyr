@@ -8,7 +8,7 @@
 
 The Virtual EF800 uses a single gateway-owned binary front-panel connection for
 LCD state, keypad input, plugin control, and virtual-device administration. The
-production EF800Application logging backend currently writes through the EF800
+production EF800 Application logging backend currently writes through the EF800
 console path, leaving browser users without startup and runtime diagnostics. A
 second simulator connection would conflict with the single-client boundary in
 ADR-0004, while direct socket writes from logging code could block application
@@ -35,7 +35,7 @@ firmware console routing.
 
 ## Consequences
 
-- Browser users can inspect EF800Application startup and runtime diagnostics without
+- Browser users can inspect EF800 Application startup and runtime diagnostics without
   opening a separate native-sim console path.
 - Logging remains non-blocking with respect to browser availability and socket
   failures.

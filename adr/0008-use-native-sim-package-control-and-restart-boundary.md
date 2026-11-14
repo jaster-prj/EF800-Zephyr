@@ -6,7 +6,7 @@
 
 ## Context
 
-The Virtual EF800 already runs production EF800Application in a dedicated native_sim container and exposes a localhost web gateway. Plugin discovery is intentionally startup-only because package files, plugin instances, UART ownership, and workspace resources must not be changed while active. Physical `.PMP` packages target ARM, while native_sim executes a host-native binary and needs a separate package target profile.
+The Virtual EF800 already runs production EF800 Application in a dedicated native_sim container and exposes a localhost web gateway. Plugin discovery is intentionally startup-only because package files, plugin instances, UART ownership, and workspace resources must not be changed while active. Physical `.PMP` packages target ARM, while native_sim executes a host-native binary and needs a separate package target profile.
 
 The browser must be able to install native-sim packages and configure virtual devices without switching USB storage modes or receiving Docker-socket access. A host bind mount is not the Zephyr virtual FAT filesystem used by production plugin discovery.
 
@@ -14,7 +14,7 @@ The browser must be able to install native-sim packages and configure virtual de
 
 Native-sim plugins will be built as a distinct native executable `.PMP` profile and will never be treated as physical ARM packages. Browser package management will use the private simulator control connection owned by the gateway. The simulator will validate uploads, write them atomically into its virtual FAT plugin directory, and report restart-required state.
 
-Plugin activation will occur only after an explicit browser restart operation. A supervised simulator runtime will preserve the virtual flash volume while restarting the native_sim process, allowing normal EF800Application startup discovery to load the newly installed package.
+Plugin activation will occur only after an explicit browser restart operation. A supervised simulator runtime will preserve the virtual flash volume while restarting the native_sim process, allowing normal EF800 Application startup discovery to load the newly installed package.
 
 Virtual device docking will use the same bounded simulator control boundary and existing host-owned Port service, rather than exposing filesystem, UART, or Docker internals to the browser or plugin.
 

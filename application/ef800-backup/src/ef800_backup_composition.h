@@ -1,6 +1,6 @@
 /* SPDX-License-Identifier: Apache-2.0 */
 /** @file
- * @brief Read composition-backed LCD contrast mode for BackupApplication.
+ * @brief Read composition-backed LCD contrast mode for EF800 Backup.
  */
 #ifndef EF800_BACKUP_COMPOSITION_H_
 #define EF800_BACKUP_COMPOSITION_H_

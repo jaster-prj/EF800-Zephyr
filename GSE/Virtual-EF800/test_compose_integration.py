@@ -40,7 +40,7 @@ class ComposeIntegrationTests(unittest.TestCase):
         panel = subprocess.run(["curl", "--fail", "http://127.0.0.1:8080/"],
                                cwd=ROOT, text=True, capture_output=True, timeout=30,
                                check=True)
-        self.assertIn("EF800Application logs", panel.stdout)
+        self.assertIn("EF800 Application logs", panel.stdout)
         config = self.compose("config")
         self.assertIn("127.0.0.1", config.stdout)
         self.assertNotIn('published: "8800"', config.stdout)

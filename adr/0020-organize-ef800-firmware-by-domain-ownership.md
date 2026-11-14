@@ -6,7 +6,7 @@
 
 ## Context
 
-Several EF800 firmware entry points contain multiple workflows, state machines, and hardware interactions. Large files make it difficult to identify mutable-state ownership and review behavior changes. The images differ in MCU, memory layout, and peripheral ownership, so similarly named applications do not imply that their implementations should be merged into one shared module. EF800Application additionally has one physical/native-sim composition and package/host ownership boundaries that must remain intact.
+Several EF800 firmware entry points contain multiple workflows, state machines, and hardware interactions. Large files make it difficult to identify mutable-state ownership and review behavior changes. The images differ in MCU, memory layout, and peripheral ownership, so similarly named applications do not imply that their implementations should be merged into one shared module. EF800 Application additionally has one physical/native-sim composition and package/host ownership boundaries that must remain intact.
 
 ## Decision
 
@@ -19,5 +19,5 @@ Refactoring shall proceed in behavior-preserving increments. Per-domain structur
 - Firmware entry points should become smaller composition boundaries while domain code remains independently reviewable.
 - Source manifests, include paths, and target-specific adapters must make image ownership explicit.
 - Domain modules may expose meaningful seams for native tests, but splitting a function alone does not justify a test.
-- EF800Application physical and native-sim builds must continue to use the same production composition and shared source manifest.
+- EF800 Application physical and native-sim builds must continue to use the same production composition and shared source manifest.
 - Refactoring must preserve plugin host ownership, boot/update safety, storage/USB exclusivity, and all other existing compatibility contracts.

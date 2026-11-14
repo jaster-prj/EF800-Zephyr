@@ -11,7 +11,7 @@ Task 2.1 increment: architecture-specific L496 handoff now lives in
 watchdog, and handoff remain separate modules/services coordinated by boot
 `main()`. Startup order and recovery policy were left in the composition root.
 
-Task 2.3 review: BackupApplication already has cohesive composition and MTP
+Task 2.3 review: EF800 Backup already has cohesive composition and MTP
 adapter modules. Its remaining entry-point responsibilities are ordered startup,
 exclusive no-format configuration/data mounts, recovery-directory preparation,
 LCD initialization, and startup-failure unmount cleanup. These operations share
@@ -22,9 +22,9 @@ module boundary was justified by this review, so no Backup code was moved.
 
 | Image | Composition root and source composition | Main dependency direction |
 |---|---|---|
-| EF800Application (L496) | `application/ef800-application/src/main.c` (7,771 lines) plus the common manifest `application/ef800-application/ef800-application-sources.cmake` and physical/native platform adapters. | `main.c` owns startup/UI workflow and binds the shared policy/domain modules: persistence/workspace, position, ports/UART registry, measurement/plugin host, keyboard host/update client, composition, USB/storage, RTC/battery, LCD/UI, and virtual adapters. Physical/native-sim use the same common production manifest; platform-specific adapters are appended by CMake. Plugin package behavior remains in `application/plugins/measurement-plugin` and its ABI/shared worker SDK; host owns hardware and session lifetime. |
+| EF800 Application (L496) | `application/ef800-application/src/main.c` (7,771 lines) plus the common manifest `application/ef800-application/ef800-application-sources.cmake` and physical/native platform adapters. | `main.c` owns startup/UI workflow and binds the shared policy/domain modules: persistence/workspace, position, ports/UART registry, measurement/plugin host, keyboard host/update client, composition, USB/storage, RTC/battery, LCD/UI, and virtual adapters. Physical/native-sim use the same common production manifest; platform-specific adapters are appended by CMake. Plugin package behavior remains in `application/plugins/measurement-plugin` and its ABI/shared worker SDK; host owns hardware and session lifetime. |
 | L496 second-level bootloader | `application/ef800-bootloader/src/main.c` (313 lines), `boot_update.c`, early/reset watchdog adapters, and shared boot decision, update/metadata, console/log, watchdog, and QSPI layout modules. | Entry point reads flash/vector state and metadata, asks shared decision/update policy, coordinates watchdog and recovery, then uses the local CMSIS handoff adapter. QSPI partition constants and linker/device-tree contracts are checked with build assertions. |
-| BackupApplication | `application/ef800-backup/src/main.c` (206 lines), `ef800_backup_composition.c`, `ef800_backup_usb_mtp.c`, and shared composition, storage/persistence, watchdog, LCD contrast, console/log, and update modules. | Entry point owns recovery startup and filesystem mounts; shared QSPI-layout/composition policy is consulted before mounts; MTP transport is isolated in the Backup adapter and ZephyrMTP dependency. It is the exclusive Backup USB/filesystem owner while active. |
+| EF800 Backup | `application/ef800-backup/src/main.c` (206 lines), `ef800_backup_composition.c`, `ef800_backup_usb_mtp.c`, and shared composition, storage/persistence, watchdog, LCD contrast, console/log, and update modules. | Entry point owns recovery startup and filesystem mounts; shared QSPI-layout/composition policy is consulted before mounts; MTP transport is isolated in the Backup adapter and ZephyrMTP dependency. It is the exclusive Backup USB/filesystem owner while active. |
 | Keyboard application (L431) | `application/keyboard-application/src/{main,keyboard_matrix,keyboard_i2c_service,keyboard_key_names}.c`; shared keyboard translation and matrix-debounce, boot policy, update protocol, update, and watchdog modules. | Matrix GPIO scan and debounce now have separate modules; I2C status/update transport and bounded request-response handoff are in `keyboard_i2c_service.c`. UART command/repeat/reporting and updater-only flash transaction/session remain in `main.c`; shared modules hold reusable protocol, policy, and package validation. |
 | Keyboard bootloader (L431) | `application/keyboard-bootloader/src/{main,keyboard_boot_handoff,keyboard_boot_probe,keyboard_boot_flash}.c`, shared keyboard boot policy, update/vector validation, and watchdog modules. | `keyboard_boot_probe.c` owns the bounded I2C probe and GPIO request adapters; `keyboard_boot_flash.c` owns application/updater vector reads and validation; entry point owns recovery orchestration; `keyboard_boot_handoff.c` owns Cortex-M cleanup/branch; shared policy decides updater-entry/recovery. |
 | Keyboard updater (L431) | `application/keyboard-updater/src/{main,keyboard_updater_transport}.c`, shared keyboard update framing/validation, update, and watchdog modules. | `keyboard_updater_transport.c` owns bounded I2C frame collection, response transport, and response-before-reboot handshaking; main context retains version/command processing, session state, partition checks, flash operations, and integrity checks. |
@@ -36,7 +36,7 @@ Twister manifests; plugin host/package inputs are separately selected by
 
 ## State and resource ownership hotspots
 
-### EF800Application
+### EF800 Application
 
 - `main.c:92-194` contains static device handles, keyboard UART queue/mutex/
   semaphore and request flags, board driver instances, persistence/composition,
@@ -57,10 +57,10 @@ Twister manifests; plugin host/package inputs are separately selected by
   a mutex/semaphore and state flags. Plugin UART claims, worker/session, and
   async results must be reconciled and torn down on assignment change, submenu
   exit, and failure. Workspace persistence is routed through the shared
-  persistence/journal APIs. EF800Application QSPI FAT mounting remains gated by
+  persistence/journal APIs. EF800 Application QSPI FAT mounting remains gated by
   the existing QSPI ownership decision; do not create a competing mount.
 
-### L496 bootloader and BackupApplication
+### L496 bootloader and EF800 Backup
 
 - L496 bootloader's static state is mostly local to `main`: opened Main/Backup
   flash areas, metadata and validity/dirty flags, boot-target decisions, and
@@ -75,7 +75,7 @@ Twister manifests; plugin host/package inputs are separately selected by
   mounting. If subsequent startup fails, it unmounts whichever filesystems were
   mounted; successful mounts live while recovery MTP is active. The watchdog
   thread has static stack/thread storage and runs for the application lifetime.
-  Never overlap Backup MTP ownership with EF800Application mounts.
+  Never overlap Backup MTP ownership with EF800 Application mounts.
 
 ### Keyboard application family
 
@@ -122,7 +122,7 @@ remain in `main.c`; keep those as the next extraction boundary.
 
 ## Pre-refactor hotspots to review first
 
-1. EF800Application has the broadest cross-domain mutable state and the longest
+1. EF800 Application has the broadest cross-domain mutable state and the longest
    workflow function surface. Prioritize ownership of workspace/editor state,
    assignment/UART claims, measurement/plugin lifecycle, keyboard update,
    display/navigation, and board adapters in separate increments.

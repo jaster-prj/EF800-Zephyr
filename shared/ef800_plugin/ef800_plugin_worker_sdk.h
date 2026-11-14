@@ -88,7 +88,7 @@ int32_t ef800_plugin_worker_log(
 	struct ef800_plugin_worker_binding *binding, const char *message,
 	uint32_t length);
 
-/* One imported symbol, resolved by EF800Application to its SVC-only stub. */
+/* One imported symbol, resolved by EF800 Application to its SVC-only stub. */
 int ef800_plugin_worker_syscall(struct ef800_plugin_worker_mailbox *mailbox);
 
 #endif /* EF800_PLUGIN_WORKER_SDK_H */

@@ -41,7 +41,7 @@
 
 ## 6. Production workflow and front-panel integration
 
-- [x] 6.1 Verify persistence, workspace, metadata, plugin registration, port assignment, and EF800Application initialization execute against disposable virtual storage.
+- [x] 6.1 Verify persistence, workspace, metadata, plugin registration, port assignment, and EF800 Application initialization execute against disposable virtual storage.
 - [x] 6.2 Verify semantic front-panel press, release, and release-all events traverse the emulated keyboard UART and existing keyboard/application handlers.
 - [x] 6.3 Verify browser gateway and direct headless clients receive the production-generated LCD state and remain compatible with the bounded simulator protocol.
 - [x] 6.4 Add native-sim startup and healthy-profile acceptance tests that run without a connected front panel.

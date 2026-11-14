@@ -1,6 +1,6 @@
 # Battery state of charge
 
-EF800Application selects one SOC acquisition path through the restart-scoped
+EF800 Application selects one SOC acquisition path through the restart-scoped
 `BATSOC` COMPOSITION group:
 
 | Token | Source | Behavior |
@@ -68,7 +68,7 @@ Install it with `battery table set <string>` only when this approximate
 voltage-based estimate is acceptable. This is not a battery protection limit;
 do not use it as a substitute for a BMS or a calibrated fuel gauge.
 
-Calibration is installed and inspected with the EF800Application shell:
+Calibration is installed and inspected with the EF800 Application shell:
 
 ```text
 battery table show
@@ -77,7 +77,7 @@ battery table set <contiguous-hex-string>
 
 The serial shell is available by default on the DebugConsole. To transfer files
 with the raw serial MCUmgr filesystem protocol instead, enter `mcumgr start`;
-that mode pauses shell input until EF800Application is reset.
+that mode pauses shell input until EF800 Application is reset.
 
 Select the source through the physical target's COMPOSITION-backed shell
 command:
@@ -124,7 +124,7 @@ viewers, while disconnected, and when `BATSOC0` is active.
 With `BATSOC2`, the virtual MAX17048-compatible device reports the configured
 SOC and its valid VCELL value. With `BATSOC1`, the configured SOC is inverse-
 interpolated through the active table into the Zephyr ADC emulator, and the
-normal EF800Application ADC read and forward lookup are used. With `BATSOC0`, no
+normal EF800 Application ADC read and forward lookup are used. With `BATSOC0`, no
 SOC is published. The simulator input is transient and resets to 80% when the
 simulator process starts; it is not saved in target configuration.
 

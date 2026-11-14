@@ -28,7 +28,7 @@ try {
     $serial.Open()
     $serial.DiscardInBuffer()
     $serial.WriteLine("")
-    $startup = Read-Until -Pattern "uart:~\$|ef800 EF800Application" -Description "EF800Application startup"
+    $startup = Read-Until -Pattern "uart:~\$|ef800 EF800 Application" -Description "EF800 Application startup"
     $serial.WriteLine("plugin status")
     $status = Read-Until -Pattern "plugin|storage|Unknown command" -Description "production plugin status"
     Write-Output $startup
@@ -37,7 +37,7 @@ try {
         Write-Output "BLOCKED: EF800 internal storage is unavailable"
         exit 2
     }
-    Write-Output "PASS: production EF800Application acceptance console is reachable"
+    Write-Output "PASS: production EF800 Application acceptance console is reachable"
 } finally {
     if ($serial.IsOpen) { $serial.Close() }
     $serial.Dispose()

@@ -13,6 +13,7 @@
 #include <zephyr/fs/fs.h>
 
 #include "ef800_keyboard_package.h"
+#include "ef800_firmware_package.h"
 
 struct ef800_keyboard_update_plan {
 	uint32_t image_base;
@@ -28,9 +29,9 @@ struct ef800_keyboard_update_transaction {
 	bool *active;
 	/* Opaque argument passed to every platform callback below. */
 	void *context;
-	/* Return true when the package storage is mounted / USB MSC is requested. */
+	/* True when external USB storage owns the filesystem (MTP or MSC). */
 	bool (*storage_mounted)(void *context);
-	bool (*usb_msd_requested)(void *context);
+	bool (*storage_externally_owned)(void *context);
 	/* Enter resident/fallback updater or wait for service/application readiness. */
 	int (*enter_resident_updater)(void *context);
 	int (*wait_application_service)(void *context);
@@ -40,6 +41,38 @@ struct ef800_keyboard_update_transaction {
 	int (*wait_application)(void *context,
 		const struct ef800_keyboard_package_header *header);
 };
+
+enum ef800_keyboard_update_result {
+	EF800_KEYBOARD_UPDATE_SKIPPED,
+	EF800_KEYBOARD_UPDATE_COMPLETE,
+	EF800_KEYBOARD_UPDATE_FAILED,
+};
+
+struct ef800_keyboard_update_coordinator {
+	void *context;
+	int (*package_present)(void *context, const char *package_path,
+			       bool *present);
+	int (*run_package)(void *context, const char *package_path);
+	int (*report)(void *context, enum ef800_firmware_target_id target,
+		      enum ef800_keyboard_update_result status, int result);
+};
+
+/** Run versioned keyboard packages in Updater, Bootloader, Application order.
+ * Missing targets are reported as skipped; a failed target is reported and
+ * prevents later targets from running.
+ */
+int ef800_keyboard_update_coordinate(
+	const struct ef800_keyboard_update_coordinator *coordinator,
+	const char *const package_paths[3]);
+
+/** @brief Resolve a staged keyboard package path to its authorized common ID.
+ * @param package_path Complete staged path, including its expected filename.
+ * @param target_id Receives the EFW1 keyboard target ID.
+ * @return 0 for one of the three versioned keyboard package paths; -EINVAL for
+ *         NULL arguments or a path/name that does not identify a keyboard target.
+ */
+int ef800_keyboard_update_package_select(
+	const char *package_path, enum ef800_firmware_target_id *target_id);
 
 /** @brief Map package image kind to its authorized partition and service address.
  * @param image_kind Application, bootloader, or updater package kind.
@@ -57,15 +90,16 @@ int ef800_keyboard_update_plan_select(uint8_t image_kind,
 int ef800_keyboard_update_transaction_run(
 	const struct ef800_keyboard_update_transaction *transaction);
 
-/** @brief Validate a package header and CRC of its complete image payload.
+/** @brief Validate a legacy or target-bound package and its image CRC.
  * @param file Open package file positioned arbitrarily; it is repositioned.
  * @param header Receives the validated package header.
  * @param file_size Total package file size in bytes.
+ * @param expected_target EFW1 target selected from its staged filename.
  * @return 0 when valid; negative errno for malformed data, I/O, or CRC failure.
  */
 int ef800_keyboard_update_read_package(
 	struct fs_file_t *file, struct ef800_keyboard_package_header *header,
-	size_t file_size);
+	size_t file_size, enum ef800_firmware_target_id expected_target);
 
 /** @brief Send a framed updater command and poll for its bounded response.
  * @param i2c Ready I2C controller device.

@@ -1,8 +1,8 @@
 ## Context
 
-The current PluginManager integration has a host-side measurement submenu and display/session model, while the Elta3 and FTS3XX protocol implementations are already isolated in the measurement-plugin SDK. EF800Application still contains legacy device-specific dependencies and must decide actions and presentation details that belong to the selected package. The target is a package boundary in which Elta3 and Fennel1 are complete measurement implementations, while EF800Application remains a generic host for resources and rendering.
+The current PluginManager integration has a host-side measurement submenu and display/session model, while the Elta3 and FTS3XX protocol implementations are already isolated in the measurement-plugin SDK. EF800 Application still contains legacy device-specific dependencies and must decide actions and presentation details that belong to the selected package. The target is a package boundary in which Elta3 and Fennel1 are complete measurement implementations, while EF800 Application remains a generic host for resources and rendering.
 
-The EF800 display is a fixed T6963 device and the keyboard link has raw framing owned by EF800Application. Packages therefore cannot draw pixels or consume UART bytes directly. The existing bounded screen/session abstractions and host-controlled port service provide the appropriate extension points, but their ABI must be available to externally loaded packages and validated before activation.
+The EF800 display is a fixed T6963 device and the keyboard link has raw framing owned by EF800 Application. Packages therefore cannot draw pixels or consume UART bytes directly. The existing bounded screen/session abstractions and host-controlled port service provide the appropriate extension points, but their ABI must be available to externally loaded packages and validated before activation.
 
 There are no repository-level ADRs currently in force. Existing `plugin-integration` and `remove-legacy-device` planning artifacts establish relevant direction: external measurement packages are the runtime source of truth, package discovery is startup-scoped, and host resource ownership must not move into plugins.
 
@@ -13,7 +13,7 @@ There are no repository-level ADRs currently in force. Existing `plugin-integrat
 - Make Elta3 and Fennel1 independently buildable and installable `.pmp` measurement packages.
 - Move package-specific submenu declarations, logical keyboard actions, measurement state, formatting, and bounded display-model generation into the respective packages.
 - Extend and version the PluginManager/EF800 measurement contract for submenu metadata, input dispatch, and display models.
-- Keep raw keyboard parsing, global navigation, LCD hardware access, port/UART ownership, assignment policy, and plugin lifecycle in EF800Application.
+- Keep raw keyboard parsing, global navigation, LCD hardware access, port/UART ownership, assignment policy, and plugin lifecycle in EF800 Application.
 - Remove the legacy `ef800_device_plugin` production dependency from the host path.
 - Preserve explicit bounds, ABI validation, unsupported-action behavior, package diagnostics, and independent package discovery.
 
@@ -28,19 +28,19 @@ There are no repository-level ADRs currently in force. Existing `plugin-integrat
 
 ### Use a package-owned measurement session API
 
-The measurement interface will expose package callbacks or a package-owned session API for action declarations, logical key handling, measurement invocation, and display-model rendering. The package instance owns submenu selection and presentation state. EF800Application supplies the port service and invokes the package at serialized session boundaries.
+The measurement interface will expose package callbacks or a package-owned session API for action declarations, logical key handling, measurement invocation, and display-model rendering. The package instance owns submenu selection and presentation state. EF800 Application supplies the port service and invokes the package at serialized session boundaries.
 
 This is preferred over keeping a generic host submenu with device-specific callback switches because it removes the duplicate device catalog and lets each package evolve its actions and presentation with its protocol. A separate UI package would add package pairing and lifecycle complexity without helping measurement devices.
 
 ### Return declarative bounded display models
 
-Packages will return a fixed-size display model containing bounded title/text rows, selected action state, status information, and optional footer hints. EF800Application validates the model and renders it in the existing host-owned body region below the header. The package never receives a T6963 handle or drawing primitive.
+Packages will return a fixed-size display model containing bounded title/text rows, selected action state, status information, and optional footer hints. EF800 Application validates the model and renders it in the existing host-owned body region below the header. The package never receives a T6963 handle or drawing primitive.
 
-This preserves the existing LCD ownership boundary while moving device-specific formatting out of EF800Application. Rejecting oversized models is preferred over truncation because truncated measurement values and status text can be misleading.
+This preserves the existing LCD ownership boundary while moving device-specific formatting out of EF800 Application. Rejecting oversized models is preferred over truncation because truncated measurement values and status text can be misleading.
 
 ### Forward logical keys after host filtering
 
-EF800Application will continue decoding raw keyboard bytes and handling global keys, back, and cancel. Only remaining logical events are forwarded to the active package. The package returns an explicit result such as consumed, unsupported, request-back, or error, allowing the host to retain session and navigation policy.
+EF800 Application will continue decoding raw keyboard bytes and handling global keys, back, and cancel. Only remaining logical events are forwarded to the active package. The package returns an explicit result such as consumed, unsupported, request-back, or error, allowing the host to retain session and navigation policy.
 
 This avoids exposing keyboard protocol details and prevents packages from bypassing global safety/navigation controls. It also allows Fennel1 to reject directional actions based on its declared capability rather than relying on host-side conditionals.
 
@@ -66,7 +66,7 @@ Elta3 and Fennel1 will retain their established package IDs unless implementatio
 - [A package can return malformed display data] -> Validate every bound and reject the complete model instead of truncating individual strings or rows.
 - [Moving formatting into packages can duplicate common display code] -> Keep generic bounded model helpers in the SDK, but keep device-specific labels and result formatting in each package.
 - [Host and package session lifetimes can become mismatched] -> Keep port service/context validity through package destruction and test teardown ordering explicitly.
-- [Legacy code may remain reachable through shared measurement helpers] -> Remove production source-list and include dependencies, then use symbol/search checks and host build tests to verify EF800Application has no device-specific dispatch path.
+- [Legacy code may remain reachable through shared measurement helpers] -> Remove production source-list and include dependencies, then use symbol/search checks and host build tests to verify EF800 Application has no device-specific dispatch path.
 - [Only one package may be installed] -> Treat package discovery independently and preserve valid package operation when the other package is absent or invalid.
 
 ## Migration Plan
@@ -75,7 +75,7 @@ Elta3 and Fennel1 will retain their established package IDs unless implementatio
 2. Adapt the SDK runtime and test harness to expose action declarations, logical-key dispatch, measurement state, and bounded display models.
 3. Split Elta3 and Fennel1 sources, descriptors, metadata, build targets, and package output names.
 4. Implement Elta3 directional actions and result presentation in the Elta3 package; implement Fennel1 measurement-only behavior and presentation in the Fennel1 package.
-5. Change EF800Application to invoke the generic package session contract, render validated display models, and forward only host-approved logical keys.
+5. Change EF800 Application to invoke the generic package session contract, render validated display models, and forward only host-approved logical keys.
 6. Remove legacy `ef800_device_plugin` production dependencies and host-side device-specific submenu/formatting branches.
 7. Add native package/host tests, package verification tests, discovery compatibility tests, and target build checks.
 8. Validate independent `.pmp` installation, missing-package behavior, assignment/readiness behavior, session teardown, and all required firmware/image gates.

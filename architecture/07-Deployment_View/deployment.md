@@ -8,9 +8,9 @@ interchangeable.
 
 | Artifact / device | Deployment location | Contract |
 |---|---|---|
-| L496 Bootloader | Internal `0x08000000`, 64 KiB | Starts at hardware-reset handoff, supervises Main/Backup, update and boot-state policy. |
-| L496 BackupApplication | Internal `0x08010000`, 128 KiB | Recovery application; MTP access to Configuration and Shared Data. |
-| L496 EF800Application | Internal `0x08030000`, 832 KiB | Normal instrument; fixed address is a compatibility contract. |
+| L496 EF800 Bootloader | Internal `0x08000000`, 64 KiB | Starts at hardware-reset handoff, supervises Main/Backup, update and boot-state policy. |
+| L496 EF800 Backup | Internal `0x08010000`, 128 KiB | Recovery application; MTP access to Configuration and Shared Data. |
+| L496 EF800 Application | Internal `0x08030000`, 832 KiB | Normal instrument; fixed address is a compatibility contract. |
 | QSPI NVS | QSPI offset `0x000000`, 32 KiB | Boot selection/failure record only. |
 | QSPI Configuration | QSPI offset `0x008000`, 992 KiB | Settings, composition, assignments, profiles, and workspace selection. |
 | QSPI Shared Data | QSPI offset `0x100000`, 3072 KiB | Workspace/data, plugins, and Main firmware update staging. |

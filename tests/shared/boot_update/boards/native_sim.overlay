@@ -24,31 +24,37 @@
 &flash0 {
 	partitions {
 		ef800_boot_partition: partition@0 {
+			compatible = "zephyr,mapped-partition";
 			label = "ef800-bootloader-test";
 			reg = <0x00000000 0x00010000>;
 		};
 
 		ef800_backup_partition: partition@10000 {
+			compatible = "zephyr,mapped-partition";
 			label = "ef800-backup-test";
 			reg = <0x00010000 0x00020000>;
 		};
 
 		ef800_main_partition: partition@30000 {
+			compatible = "zephyr,mapped-partition";
 			label = "ef800-application-test";
 			reg = <0x00030000 0x000D0000>;
 		};
 
 		qspi_bootstate_partition: partition@100000 {
+			compatible = "zephyr,mapped-partition";
 			label = "qspi-boot-state-test";
 			reg = <0x00100000 0x00008000>;
 		};
 
 		qspi_configuration_partition: partition@108000 {
+			compatible = "zephyr,mapped-partition";
 			label = "qspi-configuration-test";
 			reg = <0x00108000 0x00018000>;
 		};
 
 		qspi_storage_partition: partition@120000 {
+			compatible = "zephyr,mapped-partition";
 			label = "qspi-shared-data-test";
 			reg = <0x00120000 0x00060000>;
 		};

@@ -1,5 +1,5 @@
 @startuml 2_main_components
-title EF800 — EF800Application Components
+title EF800 — EF800 Application Components
 left to right direction
 
 rectangle "Composition root\napplication/ef800-application/src/main.c" as root

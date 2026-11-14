@@ -13,12 +13,12 @@
 - `adr/0003-use-native-sim-for-behavioral-ef800.md` - behavioral simulation context for regression coverage.
 - `adr/0004-use-web-gateway-for-virtual-ef800-front-panel.md` - front-panel test access context.
 - `adr/0005-use-zephyr-device-emulation-for-production-native-sim.md` - production-path native-sim validation context.
-- `adr/0006-use-single-ef800-application-target-for-physical-and-native-sim.md` - shared EF800Application implementation boundary.
+- `adr/0006-use-single-ef800-application-target-for-physical-and-native-sim.md` - shared EF800 Application implementation boundary.
 - `adr/0007-use-configurable-packed-t6963-renderer.md` - LCD renderer context for the editor display.
 - `adr/0008-use-native-sim-package-control-and-restart-boundary.md` - native-sim lifecycle context.
 - `adr/0009-use-bounded-native-sim-log-stream.md` - bounded simulator diagnostics context.
 - `adr/0010-plugin-owned-measurement-navigation.md` - measurement navigation remains plugin-owned; workspace editing is generic and record-format agnostic.
-- `adr/0011-use-mtp-for-concurrent-usb-file-access.md` - MTP shares filesystem-mediated access with EF800Application.
+- `adr/0011-use-mtp-for-concurrent-usb-file-access.md` - MTP shares filesystem-mediated access with EF800 Application.
 - `adr/0012-use-file-backed-target-composition-profiles.md` - recoverable file-update pattern for bounded persistent state.
 - `adr/0013-partition-qspi-for-recovery-and-shared-mtp-access.md` - shared Data FAT storage ownership and MTP visibility.
 

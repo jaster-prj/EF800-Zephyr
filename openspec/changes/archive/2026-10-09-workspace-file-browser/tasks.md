@@ -13,7 +13,7 @@
 - [x] 2.4 Implement `Show current Position` by scanning the selected workspace and retaining the last position record, including the explicit no-position state.
 - [x] 2.5 Handle no selected workspace, missing/read-failing files, empty files, and viewer back-navigation without mutating workspace data.
 
-## 3. EF800Application Menu Integration
+## 3. EF800 Application Menu Integration
 
 - [x] 3.1 Move restore, load, create, and list workspace actions into a workspace-management child menu under Settings while preserving their existing behavior and shortcuts where possible.
 - [x] 3.2 Keep the main-menu entry named `Workspace` and add `Show Measurements` and `Show current Position` entries with correct selection counts and display rendering.

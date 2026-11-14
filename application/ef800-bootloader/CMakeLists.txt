@@ -13,6 +13,7 @@ target_sources(app PRIVATE
 	src/boot_watchdog_reset.c
 	${CMAKE_CURRENT_LIST_DIR}/../../shared/ef800_boot/ef800_boot_decision.c
 	${CMAKE_CURRENT_LIST_DIR}/../../shared/ef800_update/ef800_update.c
+	${CMAKE_CURRENT_LIST_DIR}/../../shared/ef800_update/ef800_firmware_package.c
 	${CMAKE_CURRENT_LIST_DIR}/../../shared/ef800_update/ef800_metadata.c
 	${CMAKE_CURRENT_LIST_DIR}/../../shared/ef800_ports/ef800_console.c
 	${CMAKE_CURRENT_LIST_DIR}/../../shared/ef800_ports/ef800_log_backend.c

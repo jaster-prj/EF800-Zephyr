@@ -1,5 +1,5 @@
 /* SPDX-License-Identifier: Apache-2.0 */
-/** @file @brief Initialize EF800Application services and run the EF800 UI loop. */
+/** @file @brief Initialize EF800 Application services and run the EF800 UI loop. */
 #include <stdbool.h>
 #include <errno.h>
 #include <limits.h>
@@ -60,8 +60,13 @@
 #include "ef800_keyboard_i2c.h"
 #include "ef800_keyboard_update.h"
 #include "ef800_keyboard_update_service.h"
+#include "ef800_application_version.h"
+#include "ef800_backup_update.h"
+#include "ef800_bootloader_update.h"
 #include "ef800_keyboard_update_protocol.h"
 #include "ef800_update.h"
+#include "ef800_firmware_coordinator.h"
+#include "ef800_metadata.h"
 #include "ef800_mcumgr_transport.h"
 #include "ef800_plugin_host.h"
 #include "ef800_memory_pool.h"
@@ -78,7 +83,7 @@
 LOG_MODULE_REGISTER(ef800_app_app, LOG_LEVEL_INF);
 
 #if defined(CONFIG_BOARD_NATIVE_SIM) && defined(CONFIG_USBD_MSC_CLASS)
-#error "USBMSD0 native-sim must not compile the EF800Application MSC class"
+#error "USBMSD0 native-sim must not compile the EF800 Application MSC class"
 #endif
 
 /* lpuart1 is the EF800 board's PG7/PC0 keyboard link. */
@@ -88,9 +93,21 @@ LOG_MODULE_REGISTER(ef800_app_app, LOG_LEVEL_INF);
 #define LCD_NODE EF800_USER_NODE
 #define LCD_COLUMNS 40U
 #define STATUS_LINE_SIZE 80U
-#define EF800_KEYBOARD_PACKAGE_PATH "/DATA:/fwu/EF800_KEYBOARD.pkg"
+#define EF800_KEYBOARD_PACKAGE_PATH \
+	"/DATA:/fwu/" EF800_FIRMWARE_PACKAGE_FILE_KEYBOARD_APP
+#define EF800_APPLICATION_PACKAGE_PATH \
+	"/DATA:/fwu/" EF800_FIRMWARE_PACKAGE_FILE_APPLICATION
+#define EF800_BOOTLOADER_PACKAGE_PATH \
+	"/DATA:/fwu/" EF800_FIRMWARE_PACKAGE_FILE_BOOTLOADER
+#define EF800_KEYBOARD_UPDATER_PACKAGE_PATH \
+	"/DATA:/fwu/" EF800_FIRMWARE_PACKAGE_FILE_KEYBOARD_UPDATER
+#define EF800_KEYBOARD_BOOT_PACKAGE_PATH \
+	"/DATA:/fwu/" EF800_FIRMWARE_PACKAGE_FILE_KEYBOARD_BOOT
+#define EF800_KEYBOARD_APP_PACKAGE_PATH \
+	"/DATA:/fwu/" EF800_FIRMWARE_PACKAGE_FILE_KEYBOARD_APP
 #define EF800_KEYBOARD_UPLOAD_MAX_SIZE \
-	(EF800_KEYBOARD_PACKAGE_HEADER_SIZE + EF800_KEYBOARD_PACKAGE_LIMIT)
+	(EF800_FIRMWARE_PACKAGE_HEADER_SIZE + \
+	 EF800_FIRMWARE_L431_APPLICATION_SIZE)
 #define KEYBOARD_UPDATE_RESPONSE_TIMEOUT_MS 30000U
 #define EF800_KEYBOARD_UPLOAD_ACK 0x06U
 
@@ -109,6 +126,7 @@ static atomic_t keyboard_ready_indication;
 static bool keyboard_updater_request_ready;
 static bool keyboard_debug_active;
 static bool keyboard_update_active;
+static atomic_t firmware_update_coordinator_active = ATOMIC_INIT(0);
 
 static void keyboard_uart_isr(const struct device *dev, void *user_data);
 
@@ -844,7 +862,7 @@ static enum ef800_port_uart_id port_uart_id_for_console(uint8_t port_id)
 	}
 }
 
-static int reconcile_port_uart_state(void)
+static int reconcile_port_uart_state_for_port(uint8_t required_port)
 {
 #ifndef CONFIG_BOARD_NATIVE_SIM
 	uint8_t debug_port = 0U;
@@ -922,8 +940,8 @@ static int reconcile_port_uart_state(void)
 		return result;
 	}
 	LOG_INF("Port UART registry initialized; restoring assignments");
-	result = ef800_application_port_workflow_claim_loaded_assignments(
-		&main_port_workflow);
+	result = ef800_application_port_workflow_claim_loaded_assignments_for_port(
+		&main_port_workflow, required_port);
 	if (result != 0) {
 		LOG_ERR("Port assignment restore failed: %d", result);
 		return result;
@@ -931,6 +949,11 @@ static int reconcile_port_uart_state(void)
 	ef800_port_uart_startup_complete(&port_uart_registry);
 	LOG_INF("Port routing reconcile complete");
 	return 0;
+}
+
+static int reconcile_port_uart_state(void)
+{
+	return reconcile_port_uart_state_for_port(0U);
 }
 
 #ifndef CONFIG_BOARD_NATIVE_SIM
@@ -1191,7 +1214,13 @@ static int keyboard_upload_validate_file(void)
 {
 	struct fs_file_t file;
 	struct fs_dirent entry;
-	struct ef800_keyboard_package_header header;
+	struct ef800_firmware_package_header header;
+	const struct ef800_firmware_semver coordinator = {
+		.major = EF800_APPLICATION_VERSION_MAJOR,
+		.minor = EF800_APPLICATION_VERSION_MINOR,
+		.patch = EF800_APPLICATION_VERSION_PATCH,
+	};
+	uint8_t wire_header[EF800_FIRMWARE_PACKAGE_HEADER_SIZE];
 	uint8_t buffer[256];
 	uint32_t crc = 0U;
 	uint32_t remaining;
@@ -1199,7 +1228,7 @@ static int keyboard_upload_validate_file(void)
 
 	result = fs_stat(EF800_KEYBOARD_PACKAGE_PATH, &entry);
 	if (result != 0 || entry.type != FS_DIR_ENTRY_FILE ||
-		entry.size < EF800_KEYBOARD_PACKAGE_HEADER_SIZE) {
+		entry.size < EF800_FIRMWARE_PACKAGE_HEADER_SIZE) {
 		return -EINVAL;
 	}
 	fs_file_t_init(&file);
@@ -1207,8 +1236,15 @@ static int keyboard_upload_validate_file(void)
 	if (result != 0) {
 		return result;
 	}
-	result = fs_read(&file, &header, sizeof(header)) == sizeof(header) &&
-		ef800_keyboard_package_valid(&header, entry.size) ? 0 : -EINVAL;
+	if (fs_read(&file, wire_header, sizeof(wire_header)) !=
+	    (ssize_t)sizeof(wire_header)) {
+		result = -EINVAL;
+	} else {
+		result = ef800_firmware_package_header_parse(
+			wire_header, sizeof(wire_header), (size_t)entry.size,
+			EF800_FIRMWARE_TARGET_KEYBOARD_APPLICATION,
+			EF800_FIRMWARE_HARDWARE_ID_L431, &coordinator, &header);
+	}
 	if (result == 0) {
 		remaining = header.image_size;
 		while (remaining != 0U) {
@@ -1243,9 +1279,15 @@ static int cmd_keyboard_upload(const struct shell *shell, size_t argc,
 
 	ARG_UNUSED(argc);
 	ARG_UNUSED(argv);
-	if (keyboard_update_active || !ef800_storage_is_mounted() ||
-		ef800_app_usb_msd_requested()) {
+	if (keyboard_update_active ||
+	    atomic_get(&firmware_update_coordinator_active) != 0 ||
+	    !ef800_storage_is_mounted() || ef800_app_usb_msd_requested() ||
+	    ef800_usb_manager_get() == EF800_USB_PERSONALITY_MTP) {
 		shell_error(shell, "keyboard upload unavailable: storage busy");
+		return -EBUSY;
+	}
+	if (!atomic_cas(&firmware_update_coordinator_active, 0, 1)) {
+		shell_error(shell, "keyboard upload unavailable: update is active");
 		return -EBUSY;
 	}
 	keyboard_update_active = true;
@@ -1331,6 +1373,7 @@ close_file:
 done:
 	ef800_shell_set_binary_mode(false);
 	keyboard_update_active = false;
+	atomic_clear(&firmware_update_coordinator_active);
 	if (result != 0) {
 		(void)ef800_console_write((const uint8_t *)"E", 1U);
 		shell_error(shell, "keyboard package upload failed: %d; file retained",
@@ -1518,10 +1561,11 @@ static bool keyboard_update_storage_mounted(void *context)
 	return ef800_storage_is_mounted();
 }
 
-static bool keyboard_update_usb_msd_requested(void *context)
+static bool keyboard_update_storage_externally_owned(void *context)
 {
 	ARG_UNUSED(context);
-	return ef800_app_usb_msd_requested();
+	return ef800_app_usb_msd_requested() ||
+		ef800_usb_manager_get() == EF800_USB_PERSONALITY_MTP;
 }
 
 static int keyboard_update_enter_resident_adapter(void *context)
@@ -1555,22 +1599,656 @@ static int keyboard_update_wait_application_adapter(void *context,
 	return keyboard_update_wait_app(header);
 }
 
-static int keyboard_update_run(void)
+struct firmware_update_coordinator_context {
+	struct ef800_keyboard_update_transaction keyboard_transaction;
+};
+
+static int firmware_update_journal_record(
+	enum ef800_firmware_target_id target,
+	enum ef800_firmware_journal_phase phase,
+	enum ef800_firmware_journal_result result,
+	const char *package_path);
+
+static int ef800_application_package_version_gate(void)
 {
-	const struct ef800_keyboard_update_transaction transaction = {
+	struct fs_dirent entry;
+	struct fs_file_t file;
+	struct ef800_firmware_package_header package;
+	const struct ef800_firmware_semver running_version = {
+		.major = EF800_APPLICATION_VERSION_MAJOR,
+		.minor = EF800_APPLICATION_VERSION_MINOR,
+		.patch = EF800_APPLICATION_VERSION_PATCH,
+	};
+	const struct ef800_firmware_semver bootloader_version = {
+		.major = EF800_FIRMWARE_INITIAL_VERSION_MAJOR,
+		.minor = EF800_FIRMWARE_INITIAL_VERSION_MINOR,
+		.patch = EF800_FIRMWARE_INITIAL_VERSION_PATCH,
+	};
+	uint8_t wire_header[EF800_FIRMWARE_PACKAGE_HEADER_SIZE];
+	uint8_t payload[512];
+	uint32_t crc = 0U;
+	uint32_t remaining;
+	int result = fs_stat(EF800_APPLICATION_PACKAGE_PATH, &entry);
+
+	if (result == -ENOENT) {
+		LOG_INF("EF800 Application package absent; continuing with later targets");
+		return firmware_update_journal_record(
+			EF800_FIRMWARE_TARGET_APPLICATION,
+			EF800_FIRMWARE_JOURNAL_SKIPPED,
+			EF800_FIRMWARE_JOURNAL_RESULT_SKIPPED, NULL);
+	}
+	if (result != 0) {
+		return firmware_update_journal_record(
+			EF800_FIRMWARE_TARGET_APPLICATION,
+			EF800_FIRMWARE_JOURNAL_RETRY_REQUIRED,
+			EF800_FIRMWARE_JOURNAL_RESULT_RETRY,
+			EF800_APPLICATION_PACKAGE_PATH) != 0 ? -EIO : result;
+	}
+	if (entry.type != FS_DIR_ENTRY_FILE ||
+	    entry.size < EF800_FIRMWARE_PACKAGE_HEADER_SIZE) {
+		(void)firmware_update_journal_record(
+			EF800_FIRMWARE_TARGET_APPLICATION,
+			EF800_FIRMWARE_JOURNAL_REJECTED,
+			EF800_FIRMWARE_JOURNAL_RESULT_REJECTED,
+			EF800_APPLICATION_PACKAGE_PATH);
+		return -EINVAL;
+	}
+	fs_file_t_init(&file);
+	result = fs_open(&file, EF800_APPLICATION_PACKAGE_PATH, FS_O_READ);
+	if (result != 0) {
+		return firmware_update_journal_record(
+			EF800_FIRMWARE_TARGET_APPLICATION,
+			EF800_FIRMWARE_JOURNAL_RETRY_REQUIRED,
+			EF800_FIRMWARE_JOURNAL_RESULT_RETRY,
+			EF800_APPLICATION_PACKAGE_PATH) != 0 ? -EIO : result;
+	}
+	if (fs_read(&file, wire_header, sizeof(wire_header)) !=
+	    (ssize_t)sizeof(wire_header)) {
+		result = -EIO;
+		goto out;
+	}
+	result = ef800_firmware_package_header_parse(
+		wire_header, sizeof(wire_header), (size_t)entry.size,
+		EF800_FIRMWARE_TARGET_APPLICATION, EF800_FIRMWARE_HARDWARE_ID_L496,
+		&bootloader_version, &package);
+	if (result != 0) {
+		goto out;
+	}
+	remaining = package.image_size;
+	while (remaining != 0U) {
+		size_t count = MIN(sizeof(payload), remaining);
+
+		if (fs_read(&file, payload, count) != (ssize_t)count) {
+			result = -EIO;
+			goto out;
+		}
+		crc = ef800_crc32_update(crc, payload, count);
+		remaining -= count;
+	}
+	if (crc != package.image_crc32) {
+		result = -EBADMSG;
+		goto out;
+	}
+	if (!ef800_firmware_semver_equal(&package.image_version,
+					 &running_version)) {
+		LOG_ERR("EF800_APP.pkg version %u.%u.%u does not match running "
+			"application %u.%u.%u; all later updates are held",
+			package.image_version.major, package.image_version.minor,
+			package.image_version.patch,
+			EF800_APPLICATION_VERSION_MAJOR,
+			EF800_APPLICATION_VERSION_MINOR,
+			EF800_APPLICATION_VERSION_PATCH);
+		result = ef800_firmware_application_update_gate(
+			true, &running_version, &package.image_version);
+		goto out;
+	}
+	LOG_INF("EF800_APP.pkg matches running application version %u.%u.%u",
+		EF800_APPLICATION_VERSION_MAJOR,
+		EF800_APPLICATION_VERSION_MINOR,
+		EF800_APPLICATION_VERSION_PATCH);
+	result = 0;
+out:
+	(void)fs_close(&file);
+	{
+		bool rejected = result == -ESTALE || result == -EBADMSG ||
+			result == -EINVAL || result == -EXDEV ||
+			result == -EPROTONOSUPPORT;
+		int journal_result = firmware_update_journal_record(
+			EF800_FIRMWARE_TARGET_APPLICATION,
+			result == 0 ? EF800_FIRMWARE_JOURNAL_COMPLETE :
+				(rejected ? EF800_FIRMWARE_JOURNAL_REJECTED :
+				 EF800_FIRMWARE_JOURNAL_RETRY_REQUIRED),
+			result == 0 ? EF800_FIRMWARE_JOURNAL_RESULT_SUCCESS :
+				(rejected ? EF800_FIRMWARE_JOURNAL_RESULT_REJECTED :
+				 EF800_FIRMWARE_JOURNAL_RESULT_RETRY),
+			EF800_APPLICATION_PACKAGE_PATH);
+
+		if (journal_result != 0) {
+			return journal_result;
+		}
+	}
+	return result;
+}
+
+static bool firmware_update_coordinator_ready(void *context)
+{
+	ARG_UNUSED(context);
+	return ef800_storage_is_mounted() &&
+		!ef800_app_usb_msd_requested() &&
+		ef800_usb_manager_get() != EF800_USB_PERSONALITY_MTP &&
+		ef800_usb_manager_get() != EF800_USB_PERSONALITY_MSC;
+}
+
+static int firmware_update_coordinator_package_present(void *context,
+	const char *package_path, bool *present)
+{
+	struct fs_dirent entry;
+	int result;
+
+	ARG_UNUSED(context);
+	if (package_path == NULL || present == NULL) {
+		return -EINVAL;
+	}
+	result = fs_stat(package_path, &entry);
+	if (result == -ENOENT) {
+		*present = false;
+		return 0;
+	}
+	if (result != 0) {
+		return result;
+	}
+	if (entry.type != FS_DIR_ENTRY_FILE) {
+		return -EINVAL;
+	}
+	*present = true;
+	return 0;
+}
+
+static int firmware_update_coordinator_run_target(void *context,
+	enum ef800_firmware_target_id target, const char *package_path)
+{
+	struct firmware_update_coordinator_context *coordinator_context = context;
+	int result;
+
+	/*
+	 * Bootloader presence is not authorization. It remains staged until the
+	 * user explicitly invokes bootloader_update from the Application shell.
+	 */
+	if (target == EF800_FIRMWARE_TARGET_BOOTLOADER) {
+		return -ENOTSUP;
+	}
+	result = firmware_update_journal_record(target,
+		EF800_FIRMWARE_JOURNAL_VALIDATED,
+		EF800_FIRMWARE_JOURNAL_RESULT_NONE, package_path);
+	if (result != 0) {
+		return result;
+	}
+	switch (target) {
+	case EF800_FIRMWARE_TARGET_APPLICATION:
+		return ef800_application_package_version_gate();
+	case EF800_FIRMWARE_TARGET_BACKUP:
+#if defined(CONFIG_EF800_APPLICATION_BACKUP_UPDATE)
+	{
+		const struct ef800_firmware_semver coordinator_version = {
+			.major = EF800_APPLICATION_VERSION_MAJOR,
+			.minor = EF800_APPLICATION_VERSION_MINOR,
+			.patch = EF800_APPLICATION_VERSION_PATCH,
+		};
+
+		return ef800_backup_update_install(package_path,
+			&coordinator_version);
+	}
+#else
+		return -ENOTSUP;
+#endif
+	case EF800_FIRMWARE_TARGET_KEYBOARD_UPDATER:
+	case EF800_FIRMWARE_TARGET_KEYBOARD_BOOTLOADER:
+	case EF800_FIRMWARE_TARGET_KEYBOARD_APPLICATION:
+	{
+		enum ef800_firmware_target_id selected_target;
+
+		result = ef800_keyboard_update_package_select(package_path,
+			&selected_target);
+		if (result != 0 || selected_target != target) {
+			return result != 0 ? result : -EXDEV;
+		}
+		coordinator_context->keyboard_transaction.package_path =
+			package_path;
+		return ef800_keyboard_update_transaction_run(
+			&coordinator_context->keyboard_transaction);
+	}
+	case EF800_FIRMWARE_TARGET_BOOTLOADER:
+		LOG_WRN("coordinator: EF800 Bootloader self-update unsupported; "
+			"use ST-LINK recovery");
+		return -ENOTSUP;
+	default:
+		return -EINVAL;
+	}
+}
+
+static int firmware_update_coordinator_report(void *context,
+	enum ef800_firmware_target_id target, const char *package_path,
+	enum ef800_firmware_coordinator_status status, int result)
+{
+	struct ef800_firmware_journal journal;
+	enum ef800_firmware_journal_phase phase;
+	enum ef800_firmware_journal_result journal_result;
+	bool rejected;
+
+	ARG_UNUSED(context);
+	switch (status) {
+	case EF800_FIRMWARE_COORDINATOR_SKIPPED:
+		phase = EF800_FIRMWARE_JOURNAL_SKIPPED;
+		journal_result = EF800_FIRMWARE_JOURNAL_RESULT_SKIPPED;
+		if (ef800_firmware_journal_read_current(&journal) == 0) {
+			for (size_t i = 0U; i < journal.target_count; ++i) {
+				if (journal.targets[i].target_id == target &&
+				    journal.targets[i].phase ==
+					EF800_FIRMWARE_JOURNAL_COMPLETE) {
+					/* Preserve verified completion across reboot;
+					 * successful installs may clean their package. */
+					return 0;
+				}
+			}
+		}
+		break;
+	case EF800_FIRMWARE_COORDINATOR_COMPLETE:
+		phase = EF800_FIRMWARE_JOURNAL_COMPLETE;
+		journal_result = EF800_FIRMWARE_JOURNAL_RESULT_SUCCESS;
+		break;
+	case EF800_FIRMWARE_COORDINATOR_UNSUPPORTED:
+		if (target == EF800_FIRMWARE_TARGET_BOOTLOADER &&
+		    ef800_firmware_journal_read_current(&journal) == 0) {
+			for (size_t i = 0U; i < journal.target_count; ++i) {
+				if (journal.targets[i].target_id == target &&
+				    journal.targets[i].phase ==
+					EF800_FIRMWARE_JOURNAL_COMPLETE) {
+					/* Manual completion remains authoritative. */
+					return 0;
+				}
+			}
+		}
+		phase = EF800_FIRMWARE_JOURNAL_UNSUPPORTED;
+		journal_result = EF800_FIRMWARE_JOURNAL_RESULT_UNSUPPORTED;
+		break;
+	case EF800_FIRMWARE_COORDINATOR_FAILED:
+		rejected = result == -EINVAL || result == -EBADMSG ||
+			result == -EXDEV || result == -EPROTONOSUPPORT ||
+			result == -EMSGSIZE || result == -ESTALE;
+		phase = rejected ? EF800_FIRMWARE_JOURNAL_REJECTED :
+			EF800_FIRMWARE_JOURNAL_RETRY_REQUIRED;
+		journal_result = rejected ?
+			EF800_FIRMWARE_JOURNAL_RESULT_REJECTED :
+			EF800_FIRMWARE_JOURNAL_RESULT_RETRY;
+		LOG_ERR("coordinator: target %u failed: %d", target, result);
+		break;
+	default:
+		return -EINVAL;
+	}
+	return firmware_update_journal_record(target, phase, journal_result,
+		package_path);
+}
+
+static int keyboard_update_run_impl(void)
+{
+	static const char *const package_paths[] = {
+		EF800_APPLICATION_PACKAGE_PATH,
+		"/DATA:/fwu/" EF800_FIRMWARE_PACKAGE_FILE_BACKUP,
+		EF800_KEYBOARD_UPDATER_PACKAGE_PATH,
+		EF800_KEYBOARD_BOOT_PACKAGE_PATH,
+		EF800_KEYBOARD_APP_PACKAGE_PATH,
+		"/DATA:/fwu/" EF800_FIRMWARE_PACKAGE_FILE_BOOTLOADER,
+	};
+	struct firmware_update_coordinator_context context = {
+		.keyboard_transaction = {
 		.i2c = keyboard_i2c,
-		.package_path = EF800_KEYBOARD_PACKAGE_PATH,
 		.active = &keyboard_update_active,
 		.storage_mounted = keyboard_update_storage_mounted,
-		.usb_msd_requested = keyboard_update_usb_msd_requested,
+		.storage_externally_owned =
+			keyboard_update_storage_externally_owned,
 		.enter_resident_updater = keyboard_update_enter_resident_adapter,
 		.wait_application_service = keyboard_update_wait_service_adapter,
 		.identify = keyboard_update_identify_adapter,
 		.enter_updater_fallback = keyboard_update_fallback_adapter,
 		.wait_application = keyboard_update_wait_application_adapter,
+		},
+	};
+	const struct ef800_firmware_coordinator coordinator = {
+		.context = &context,
+		.ready = firmware_update_coordinator_ready,
+		.package_present = firmware_update_coordinator_package_present,
+		.run_target = firmware_update_coordinator_run_target,
+		.report = firmware_update_coordinator_report,
 	};
 
-	return ef800_keyboard_update_transaction_run(&transaction);
+	return ef800_firmware_coordinate(&coordinator, package_paths);
+}
+
+static int keyboard_update_run(void)
+{
+	int result;
+
+	if (!atomic_cas(&firmware_update_coordinator_active, 0, 1)) {
+		return -EBUSY;
+	}
+	result = keyboard_update_run_impl();
+	atomic_clear(&firmware_update_coordinator_active);
+	return result;
+}
+
+static const char *firmware_update_target_name(
+	enum ef800_firmware_target_id target)
+{
+	switch (target) {
+	case EF800_FIRMWARE_TARGET_BOOTLOADER:
+		return "EF800 Bootloader";
+	case EF800_FIRMWARE_TARGET_BACKUP:
+		return "EF800 Backup";
+	case EF800_FIRMWARE_TARGET_APPLICATION:
+		return "EF800 Application";
+	case EF800_FIRMWARE_TARGET_KEYBOARD_UPDATER:
+		return "Keyboard Updater";
+	case EF800_FIRMWARE_TARGET_KEYBOARD_BOOTLOADER:
+		return "Keyboard Bootloader";
+	case EF800_FIRMWARE_TARGET_KEYBOARD_APPLICATION:
+		return "Keyboard Application";
+	default:
+		return "Unknown";
+	}
+}
+
+static const char *firmware_update_phase_name(
+	enum ef800_firmware_journal_phase phase)
+{
+	switch (phase) {
+	case EF800_FIRMWARE_JOURNAL_PENDING:
+		return "pending";
+	case EF800_FIRMWARE_JOURNAL_VALIDATED:
+		return "validated";
+	case EF800_FIRMWARE_JOURNAL_ERASING:
+		return "erasing";
+	case EF800_FIRMWARE_JOURNAL_PROGRAMMING:
+		return "programming";
+	case EF800_FIRMWARE_JOURNAL_VERIFYING:
+		return "verifying";
+	case EF800_FIRMWARE_JOURNAL_COMPLETE:
+		return "complete";
+	case EF800_FIRMWARE_JOURNAL_REJECTED:
+		return "rejected";
+	case EF800_FIRMWARE_JOURNAL_RETRY_REQUIRED:
+		return "retry-required";
+	case EF800_FIRMWARE_JOURNAL_SKIPPED:
+		return "skipped";
+	case EF800_FIRMWARE_JOURNAL_UNSUPPORTED:
+		return "unsupported";
+	default:
+		return "invalid";
+	}
+}
+
+static int firmware_update_journal_record(
+	enum ef800_firmware_target_id target,
+	enum ef800_firmware_journal_phase phase,
+	enum ef800_firmware_journal_result result,
+	const char *package_path)
+{
+	struct ef800_firmware_journal journal = {0};
+	struct ef800_firmware_journal_target *entry = NULL;
+	struct fs_dirent dirent;
+	int rc = ef800_firmware_journal_read_current(&journal);
+
+	if (rc != 0 && rc != -ENOENT) {
+		return rc;
+	}
+	for (size_t i = 0U; i < journal.target_count; ++i) {
+		if (journal.targets[i].target_id == target) {
+			entry = &journal.targets[i];
+			break;
+		}
+	}
+	if (entry == NULL) {
+		if (journal.target_count >= EF800_FIRMWARE_JOURNAL_MAX_TARGETS) {
+			return -ENOSPC;
+		}
+		entry = &journal.targets[journal.target_count++];
+		memset(entry, 0, sizeof(*entry));
+		entry->target_id = target;
+	}
+	entry->phase = phase;
+	entry->result = result;
+	if (phase == EF800_FIRMWARE_JOURNAL_SKIPPED && package_path == NULL) {
+		entry->package_crc32 = 0U;
+		entry->image_crc32 = 0U;
+		entry->image_version = (struct ef800_firmware_semver){0};
+	}
+	if (package_path != NULL && fs_stat(package_path, &dirent) == 0 &&
+	    dirent.type == FS_DIR_ENTRY_FILE) {
+		struct fs_file_t file;
+		uint8_t wire[EF800_FIRMWARE_PACKAGE_HEADER_SIZE];
+		struct ef800_firmware_package_header package;
+		const struct ef800_firmware_semver application_version = {
+			.major = EF800_APPLICATION_VERSION_MAJOR,
+			.minor = EF800_APPLICATION_VERSION_MINOR,
+			.patch = EF800_APPLICATION_VERSION_PATCH,
+		};
+		const struct ef800_firmware_semver bootloader_version = {
+			.major = EF800_FIRMWARE_INITIAL_VERSION_MAJOR,
+			.minor = EF800_FIRMWARE_INITIAL_VERSION_MINOR,
+			.patch = EF800_FIRMWARE_INITIAL_VERSION_PATCH,
+		};
+		const struct ef800_firmware_semver *coordinator =
+			target == EF800_FIRMWARE_TARGET_APPLICATION ?
+			&bootloader_version : &application_version;
+		uint16_t hardware = target >=
+			EF800_FIRMWARE_TARGET_KEYBOARD_UPDATER ?
+			EF800_FIRMWARE_HARDWARE_ID_L431 :
+			EF800_FIRMWARE_HARDWARE_ID_L496;
+		uint32_t package_crc = 0U;
+		uint8_t buffer[512];
+		size_t remaining = (size_t)dirent.size;
+
+		fs_file_t_init(&file);
+		if (fs_open(&file, package_path, FS_O_READ) == 0) {
+			if (fs_read(&file, wire, sizeof(wire)) ==
+			    (ssize_t)sizeof(wire) &&
+			    ef800_firmware_package_header_parse(
+				wire, sizeof(wire), (size_t)dirent.size, target,
+				hardware, coordinator, &package) == 0) {
+				entry->image_crc32 = package.image_crc32;
+				entry->image_version = package.image_version;
+			}
+			if (fs_seek(&file, 0, FS_SEEK_SET) == 0) {
+				while (remaining != 0U) {
+					size_t count = MIN(sizeof(buffer), remaining);
+
+					if (fs_read(&file, buffer, count) !=
+					    (ssize_t)count) {
+						package_crc = 0U;
+						break;
+					}
+					package_crc = ef800_crc32_update(
+						package_crc, buffer, count);
+					remaining -= count;
+				}
+				entry->package_crc32 = package_crc;
+			}
+			(void)fs_close(&file);
+		}
+	}
+	return ef800_firmware_journal_write_current(&journal);
+}
+
+static int cmd_firmware_update_status(const struct shell *shell,
+				      size_t argc, char **argv)
+{
+	struct ef800_firmware_journal journal = {0};
+	int rc;
+
+	ARG_UNUSED(argc);
+	ARG_UNUSED(argv);
+	rc = ef800_firmware_journal_read_current(&journal);
+	if (rc == -ENOENT) {
+		shell_print(shell, "No firmware update transaction is recorded");
+		return 0;
+	}
+	if (rc != 0) {
+		shell_error(shell, "Firmware update journal unavailable: %d", rc);
+		return rc;
+	}
+	for (size_t i = 0U; i < journal.target_count; ++i) {
+		const struct ef800_firmware_journal_target *entry =
+			&journal.targets[i];
+
+		shell_print(shell,
+			"%s: %s result=%u package=%08x image=%08x version=%u.%u.%u",
+			firmware_update_target_name(entry->target_id),
+			firmware_update_phase_name(entry->phase), entry->result,
+			entry->package_crc32, entry->image_crc32,
+			entry->image_version.major, entry->image_version.minor,
+			entry->image_version.patch);
+		if (entry->phase == EF800_FIRMWARE_JOURNAL_UNSUPPORTED &&
+		    entry->target_id == EF800_FIRMWARE_TARGET_BOOTLOADER) {
+			shell_print(shell,
+				"  action: invoke bootloader_update; ST-LINK may be required after interruption");
+		} else if (entry->phase == EF800_FIRMWARE_JOURNAL_UNSUPPORTED &&
+			   entry->target_id == EF800_FIRMWARE_TARGET_BACKUP) {
+			shell_print(shell,
+				"  action: verify release gate and storage qualification");
+		} else if (entry->phase == EF800_FIRMWARE_JOURNAL_RETRY_REQUIRED) {
+			shell_print(shell, "  action: retry package after inspecting target");
+		} else if (entry->phase == EF800_FIRMWARE_JOURNAL_REJECTED) {
+			shell_print(shell, "  action: replace or correct rejected package");
+		}
+	}
+	return 0;
+}
+
+SHELL_CMD_REGISTER(firmware_update_status, NULL,
+	"Show per-target firmware update results and recovery actions",
+	cmd_firmware_update_status);
+
+static int main_shell_backup_update(const struct shell *shell)
+{
+	static const struct ef800_firmware_semver coordinator_version = {
+		.major = EF800_FIRMWARE_INITIAL_VERSION_MAJOR,
+		.minor = EF800_FIRMWARE_INITIAL_VERSION_MINOR,
+		.patch = EF800_FIRMWARE_INITIAL_VERSION_PATCH,
+	};
+	int result;
+
+	if (keyboard_update_active ||
+	    atomic_get(&firmware_update_coordinator_active) != 0 ||
+	    !ef800_storage_is_mounted() || ef800_app_usb_msd_requested() ||
+	    ef800_usb_manager_get() == EF800_USB_PERSONALITY_MTP) {
+		shell_error(shell, "Backup update unavailable: shared storage is busy");
+		return -EBUSY;
+	}
+	if (!atomic_cas(&firmware_update_coordinator_active, 0, 1)) {
+		shell_error(shell, "Backup update unavailable: update is active");
+		return -EBUSY;
+	}
+	keyboard_update_active = true;
+	result = ef800_backup_update_install(
+		"/DATA:/fwu/EF800_BACKUP.pkg", &coordinator_version);
+	keyboard_update_active = false;
+	atomic_clear(&firmware_update_coordinator_active);
+	if (result == 0) {
+		shell_print(shell, "EF800 Backup installed and verified");
+	} else {
+		shell_error(shell, "EF800 Backup update failed: %d; package retained",
+			    result);
+	}
+	return result;
+}
+
+static int main_shell_bootloader_update_phase(
+	void *context, enum ef800_firmware_journal_phase phase)
+{
+	enum ef800_firmware_journal_result journal_result =
+		phase == EF800_FIRMWARE_JOURNAL_COMPLETE ?
+		EF800_FIRMWARE_JOURNAL_RESULT_SUCCESS :
+		EF800_FIRMWARE_JOURNAL_RESULT_NONE;
+
+	ARG_UNUSED(context);
+	return firmware_update_journal_record(
+		EF800_FIRMWARE_TARGET_BOOTLOADER, phase, journal_result,
+		EF800_BOOTLOADER_PACKAGE_PATH);
+}
+
+static int main_shell_bootloader_update(const struct shell *shell)
+{
+	const struct ef800_firmware_semver coordinator_version = {
+		.major = EF800_APPLICATION_VERSION_MAJOR,
+		.minor = EF800_APPLICATION_VERSION_MINOR,
+		.patch = EF800_APPLICATION_VERSION_PATCH,
+	};
+	bool mtp_stopped = false;
+	int result;
+
+	if (keyboard_update_active ||
+	    atomic_get(&firmware_update_coordinator_active) != 0 ||
+	    !ef800_storage_is_mounted() || ef800_app_usb_msd_requested()) {
+		shell_error(shell,
+			"Bootloader update unavailable: shared storage is not exclusively owned");
+		return -EBUSY;
+	}
+	if (!atomic_cas(&firmware_update_coordinator_active, 0, 1)) {
+		shell_error(shell, "Bootloader update unavailable: update is active");
+		return -EBUSY;
+	}
+	keyboard_update_active = true;
+	result = 0;
+	if (ef800_usb_manager_get() == EF800_USB_PERSONALITY_MTP) {
+		result = ef800_usb_manager_set(EF800_USB_PERSONALITY_NONE);
+		if (result == 0) {
+			mtp_stopped = true;
+		}
+	}
+	if (result == 0 && (!ef800_storage_is_mounted() ||
+			    ef800_app_usb_msd_requested() ||
+			    ef800_usb_manager_get() != EF800_USB_PERSONALITY_NONE)) {
+		result = -EBUSY;
+	}
+	if (result == 0) {
+		result = ef800_bootloader_update_install(
+			EF800_BOOTLOADER_PACKAGE_PATH, &coordinator_version,
+			main_shell_bootloader_update_phase, NULL);
+	}
+	if (result != 0) {
+		bool rejected = result == -EINVAL || result == -EBADMSG ||
+			result == -EXDEV || result == -EPROTONOSUPPORT ||
+			result == -EMSGSIZE || result == -ESTALE;
+
+		(void)firmware_update_journal_record(
+			EF800_FIRMWARE_TARGET_BOOTLOADER,
+			rejected ? EF800_FIRMWARE_JOURNAL_REJECTED :
+				EF800_FIRMWARE_JOURNAL_RETRY_REQUIRED,
+			rejected ? EF800_FIRMWARE_JOURNAL_RESULT_REJECTED :
+				EF800_FIRMWARE_JOURNAL_RESULT_RETRY,
+			EF800_BOOTLOADER_PACKAGE_PATH);
+	}
+	keyboard_update_active = false;
+	atomic_clear(&firmware_update_coordinator_active);
+	if (result == 0) {
+		shell_print(shell,
+			"EF800 Bootloader installed and verified; rebooting to activate it");
+		k_msleep(150U);
+		sys_reboot(SYS_REBOOT_COLD);
+	} else {
+		if (mtp_stopped) {
+			int mtp_result =
+				ef800_usb_manager_set(EF800_USB_PERSONALITY_MTP);
+
+			if (mtp_result != 0) {
+				LOG_WRN("Could not restore MTP after Bootloader update error: %d",
+					mtp_result);
+			}
+		}
+		shell_error(shell,
+			"EF800 Bootloader update failed: %d; package retained; ST-LINK recovery may be required",
+			result);
+	}
+	return result;
 }
 
 static int main_shell_keyboard_boot_probe(uint8_t *version)
@@ -1608,7 +2286,7 @@ static void display_banner(void)
 {
 	clear_display();
 	display_line(0U, "EF800");
-	display_line(1U, "EF800Application");
+	display_line(1U, "EF800 Application");
 	display_line(6U, "Keyboard startup...");
 }
 
@@ -3658,13 +4336,28 @@ static int apply_usb_assignment_runtime(uint8_t old_builder_id,
 		new_builder_id, new_connection);
 	enum ef800_usb_transition transition = ef800_usb_personality_transition(
 		usb_personality_from_assignment(old_builder_id, old_connection), desired);
+	bool reserved_update_gate = false;
+	int result;
 
+	if (desired == EF800_USB_PERSONALITY_MTP ||
+	    desired == EF800_USB_PERSONALITY_MSC) {
+		if (!atomic_cas(&firmware_update_coordinator_active, 0, 2)) {
+			return -EBUSY;
+		}
+		reserved_update_gate = true;
+	}
 	if (desired == EF800_USB_PERSONALITY_MSC &&
 		!usb_msd_composition_enabled()) {
+		if (reserved_update_gate) {
+			atomic_clear(&firmware_update_coordinator_active);
+		}
 		return -ENOTSUP;
 	}
 	*restart_required = transition == EF800_USB_TRANSITION_RESTART;
 	if (*restart_required) {
+		if (reserved_update_gate) {
+			atomic_clear(&firmware_update_coordinator_active);
+		}
 		return 0;
 	}
 	if (desired == EF800_USB_PERSONALITY_MTP) {
@@ -3672,15 +4365,25 @@ static int apply_usb_assignment_runtime(uint8_t old_builder_id,
 		 * to prepare MTP roots while the raw-disk personality is active. */
 		if (ef800_app_usb_msd_requested()) {
 			*restart_required = true;
+			if (reserved_update_gate) {
+				atomic_clear(&firmware_update_coordinator_active);
+			}
 			return 0;
 		}
-		int ret = ef800_storage_prepare_mtp_roots();
+		result = ef800_storage_prepare_mtp_roots();
 
-		if (ret != 0) {
-			return ret;
+		if (result != 0) {
+			if (reserved_update_gate) {
+				atomic_clear(&firmware_update_coordinator_active);
+			}
+			return result;
 		}
 	}
-	return ef800_usb_manager_set(desired);
+	result = ef800_usb_manager_set(desired);
+	if (reserved_update_gate) {
+		atomic_clear(&firmware_update_coordinator_active);
+	}
+	return result;
 }
 
 static enum ef800_usb_personality usb_personality_from_assignment(
@@ -3835,7 +4538,7 @@ static void activate_port_assignment_entry(void)
 		result = ef800_application_port_workflow_remove_assignment(
 			&main_port_workflow, port->id);
 		if (result == 0) {
-			result = reconcile_port_uart_state();
+			result = reconcile_port_uart_state_for_port(port->id);
 		}
 		if (result == 0 && port->id == 4U) {
 			result = apply_usb_assignment_runtime(old_builder_id, old_connection,
@@ -4009,7 +4712,7 @@ static void commit_port_assignment_connection(void)
 			result = reconcile_port_uart_state();
 		}
 	#else
-		result = reconcile_port_uart_state();
+		result = reconcile_port_uart_state_for_port(port->id);
 	#endif
 		LOG_INF("Port UART reconciliation result=%d", result);
 	}
@@ -4842,7 +5545,8 @@ static int cmd_storage_format_qspi(const struct shell *shell, size_t argc,
 	}
 	qspi_format_confirmation_pending = false;
 
-	if (ef800_app_usb_msd_requested() ||
+	if (atomic_get(&firmware_update_coordinator_active) != 0 ||
+	    ef800_app_usb_msd_requested() ||
 	    ef800_usb_manager_get() == EF800_USB_PERSONALITY_MSC) {
 		shell_error(shell, "USB MSC owns the shared disk; disconnect/disable MSC before formatting");
 		return -EBUSY;
@@ -4997,7 +5701,7 @@ static void handle_keyboard_event(uint32_t event)
 #ifdef CONFIG_BOARD_NATIVE_SIM
 	if (virtual_power_off) {
 		if ((event & KB_EVENT_ON) != 0U) {
-			LOG_INF("Virtual EF800 power on: restarting EF800Application");
+			LOG_INF("Virtual EF800 power on: restarting EF800 Application");
 			exit(42);
 		}
 		return;
@@ -5339,11 +6043,13 @@ int main(void)
 		.keyboard_debug_active = &keyboard_debug_active,
 		.keyboard_boot_probe = main_shell_keyboard_boot_probe,
 		.keyboard_upload = cmd_keyboard_upload,
+		.backup_update = main_shell_backup_update,
+		.bootloader_update = main_shell_bootloader_update,
 		.composition_committed = main_shell_composition_committed,
 	};
 	result = ef800_application_shell_init(&shell_context);
 	if (result != 0) {
-		LOG_ERR("EF800Application shell context initialization failed: %d", result);
+		LOG_ERR("EF800 Application shell context initialization failed: %d", result);
 	}
 	ef800_keyboard_command_init(&keyboard_command, keyboard_uart, &keyboard_host);
 	(void)ef800_shell_init();
@@ -5602,13 +6308,6 @@ result = ef800_mcp23017_open(&mcp23017,
 	} else {
 		LOG_WRN("Keyboard updater-request PE0 GPIO unavailable");
 	}
-	if (result == 0 && startup_mtp_pending) {
-		result = ef800_usb_manager_set(EF800_USB_PERSONALITY_MTP);
-		LOG_INF("Deferred USB MTP startup result=%d", result);
-		if (result != 0) {
-			LOG_WRN("USB MTP startup unavailable: %d", result);
-		}
-	}
 	if (result == 0) {
 		result = gpio_pin_configure_dt(&keyboard_reset, GPIO_OUTPUT_INACTIVE);
 	}
@@ -5654,11 +6353,23 @@ result = ef800_mcp23017_open(&mcp23017,
 	} else {
 		LOG_INF("PB5 keyboard power-down output initialized inactive");
 	}
-	if (keyboard_rx_armed) {
-		result = keyboard_update_run();
-		if (result != 0 && result != -EAGAIN) {
-			LOG_ERR("keyboard update startup attempt failed: %d", result);
+	result = keyboard_update_run();
+	if (result != 0 && result != -EAGAIN) {
+		LOG_ERR("firmware update coordinator startup failed: %d", result);
+	}
+	/*
+	 * The startup coordinator must own the mounted FWU filesystem before MTP
+	 * takes the USB personality. Otherwise a persisted MTP assignment would
+	 * make the coordinator defer every staged update on every boot.
+	 */
+	if (startup_mtp_pending && mcp_controls_ready) {
+		int mtp_result = ef800_usb_manager_set(EF800_USB_PERSONALITY_MTP);
+
+		LOG_INF("Deferred USB MTP startup result=%d", mtp_result);
+		if (mtp_result != 0) {
+			LOG_WRN("USB MTP startup unavailable: %d", mtp_result);
 		}
+		startup_mtp_pending = false;
 	}
 
 	if (!mcp_controls_ready) {

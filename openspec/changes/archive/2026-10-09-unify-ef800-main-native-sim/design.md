@@ -9,7 +9,7 @@ The desired architecture is one production application target with two board con
 **Goals:**
 
 - Build `application/ef800-application` for both `ef800` and `native_sim`.
-- Maintain one shared production source manifest for EF800Application and shared services.
+- Maintain one shared production source manifest for EF800 Application and shared services.
 - Select physical or native-sim adapters explicitly by board/configuration.
 - Retain native peripheral emulators, profile controls, T6963 wiring, keyboard bridge, and browser/front-panel infrastructure.
 - Remove the duplicate virtual application wrapper and obsolete simplified virtual `main.c`.
@@ -24,14 +24,14 @@ The desired architecture is one production application target with two board con
 
 ## Decisions
 
-### Use `application/ef800-application` as the only EF800Application target
+### Use `application/ef800-application` as the only EF800 Application target
 
 The physical and native builds will use the same application directory and entry point. The old `application/ef800-virtual` wrapper will be removed after its retained infrastructure sources are moved or referenced from the shared target.
 
 Alternatives considered:
 
 - Keep two application wrappers: rejected because source lists and startup behavior can drift.
-- Move EF800Application into a new common application: rejected because it creates another migration path and disrupts the existing physical target.
+- Move EF800 Application into a new common application: rejected because it creates another migration path and disrupts the existing physical target.
 
 ### Define one shared source manifest and per-target adapter lists
 
@@ -49,7 +49,7 @@ This makes source parity visible and reviewable while preserving target-specific
 
 ### Select overlays and Kconfig by board
 
-The unified CMake target will select the physical STM32 overlay/configuration for `ef800` and the native-sim overlay/configuration for `native_sim`. The native overlay will provide the same logical node labels expected by EF800Application, while the physical overlay retains STM32 pinctrl, clocks, partitions, USB, and QSPI definitions.
+The unified CMake target will select the physical STM32 overlay/configuration for `ef800` and the native-sim overlay/configuration for `native_sim`. The native overlay will provide the same logical node labels expected by EF800 Application, while the physical overlay retains STM32 pinctrl, clocks, partitions, USB, and QSPI definitions.
 
 Common Kconfig remains in `prj.conf`; board-specific options move to board-specific configuration files where necessary. Native-only FAT formatting/profile options will not enter physical firmware.
 

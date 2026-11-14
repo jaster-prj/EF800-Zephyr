@@ -12,7 +12,7 @@
 #define EF800_BACKUP_USB_UDC_NODE DT_NODELABEL(usbotg_fs)
 
 BUILD_ASSERT(DT_NODE_HAS_STATUS(EF800_BACKUP_USB_UDC_NODE, okay),
-	"BackupApplication recovery MTP requires the fitted USB controller");
+	"EF800 Backup recovery MTP requires the fitted USB controller");
 
 USBD_DEVICE_DEFINE(ef800_backup_mtp_usbd,
 	DEVICE_DT_GET(EF800_BACKUP_USB_UDC_NODE),

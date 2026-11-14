@@ -16,6 +16,89 @@
 LOG_MODULE_REGISTER(ef800_keyboard_update_service, CONFIG_LOG_DEFAULT_LEVEL);
 
 #define KEYBOARD_UPDATE_POLL_MS 10U
+#define KEYBOARD_PACKAGE_PATH_UPDATER \
+	"/DATA:/fwu/" EF800_FIRMWARE_PACKAGE_FILE_KEYBOARD_UPDATER
+#define KEYBOARD_PACKAGE_PATH_BOOTLOADER \
+	"/DATA:/fwu/" EF800_FIRMWARE_PACKAGE_FILE_KEYBOARD_BOOT
+#define KEYBOARD_PACKAGE_PATH_APPLICATION \
+	"/DATA:/fwu/" EF800_FIRMWARE_PACKAGE_FILE_KEYBOARD_APP
+int ef800_keyboard_update_coordinate(
+	const struct ef800_keyboard_update_coordinator *coordinator,
+	const char *const package_paths[3])
+{
+	static const enum ef800_firmware_target_id targets[] = {
+		EF800_FIRMWARE_TARGET_KEYBOARD_UPDATER,
+		EF800_FIRMWARE_TARGET_KEYBOARD_BOOTLOADER,
+		EF800_FIRMWARE_TARGET_KEYBOARD_APPLICATION,
+	};
+
+	if (coordinator == NULL || package_paths == NULL ||
+	    coordinator->package_present == NULL ||
+	    coordinator->run_package == NULL || coordinator->report == NULL) {
+		return -EINVAL;
+	}
+	for (size_t i = 0U; i < ARRAY_SIZE(targets); ++i) {
+		bool present = false;
+		int result = coordinator->package_present(coordinator->context,
+			package_paths[i], &present);
+
+		if (result != 0) {
+			int report_result = coordinator->report(coordinator->context,
+				targets[i], EF800_KEYBOARD_UPDATE_FAILED, result);
+
+			if (report_result != 0) {
+				return report_result;
+			}
+			return result;
+		}
+		if (!present) {
+			result = coordinator->report(coordinator->context, targets[i],
+				EF800_KEYBOARD_UPDATE_SKIPPED, 0);
+			if (result != 0) {
+				return result;
+			}
+			continue;
+		}
+		result = coordinator->run_package(coordinator->context,
+			package_paths[i]);
+		if (result != 0) {
+			int report_result = coordinator->report(coordinator->context,
+				targets[i], EF800_KEYBOARD_UPDATE_FAILED, result);
+
+			if (report_result != 0) {
+				return report_result;
+			}
+			return result;
+		}
+		result = coordinator->report(coordinator->context, targets[i],
+			EF800_KEYBOARD_UPDATE_COMPLETE, 0);
+		if (result != 0) {
+			return result;
+		}
+	}
+	return 0;
+}
+
+int ef800_keyboard_update_package_select(
+	const char *package_path, enum ef800_firmware_target_id *target_id)
+{
+	if (package_path == NULL || target_id == NULL) {
+		return -EINVAL;
+	}
+	if (strcmp(package_path, KEYBOARD_PACKAGE_PATH_UPDATER) == 0) {
+		*target_id = EF800_FIRMWARE_TARGET_KEYBOARD_UPDATER;
+		return 0;
+	}
+	if (strcmp(package_path, KEYBOARD_PACKAGE_PATH_BOOTLOADER) == 0) {
+		*target_id = EF800_FIRMWARE_TARGET_KEYBOARD_BOOTLOADER;
+		return 0;
+	}
+	if (strcmp(package_path, KEYBOARD_PACKAGE_PATH_APPLICATION) == 0) {
+		*target_id = EF800_FIRMWARE_TARGET_KEYBOARD_APPLICATION;
+		return 0;
+	}
+	return -EINVAL;
+}
 
 int ef800_keyboard_update_plan_select(uint8_t image_kind,
 	struct ef800_keyboard_update_plan *plan)
@@ -55,16 +138,70 @@ int ef800_keyboard_update_plan_select(uint8_t image_kind,
 
 int ef800_keyboard_update_read_package(
 	struct fs_file_t *file, struct ef800_keyboard_package_header *header,
-	size_t file_size)
+	size_t file_size, enum ef800_firmware_target_id expected_target)
 {
 	uint8_t buffer[1024];
 	uint32_t crc = 0U;
 	uint32_t remaining;
 
-	if (file == NULL || header == NULL || fs_seek(file, 0, FS_SEEK_SET) != 0 ||
-	    fs_read(file, header, sizeof(*header)) != sizeof(*header) ||
-	    !ef800_keyboard_package_valid(header, file_size)) {
+	if (file == NULL || header == NULL || expected_target == 0U ||
+	    fs_seek(file, 0, FS_SEEK_SET) != 0) {
 		return -EINVAL;
+	}
+	{
+		uint8_t wire_header[EF800_FIRMWARE_PACKAGE_HEADER_SIZE];
+		struct ef800_firmware_package_header parsed;
+		struct ef800_firmware_semver coordinator = {
+			.major = EF800_FIRMWARE_INITIAL_VERSION_MAJOR,
+			.minor = EF800_FIRMWARE_INITIAL_VERSION_MINOR,
+			.patch = EF800_FIRMWARE_INITIAL_VERSION_PATCH,
+		};
+		uint8_t image_kind;
+
+		if (fs_read(file, wire_header, sizeof(wire_header)) !=
+		    (ssize_t)sizeof(wire_header)) {
+			return -EINVAL;
+		}
+		if (expected_target == EF800_FIRMWARE_TARGET_KEYBOARD_UPDATER) {
+			image_kind = EF800_KEYBOARD_IMAGE_UPDATER;
+		} else if (expected_target ==
+			   EF800_FIRMWARE_TARGET_KEYBOARD_BOOTLOADER) {
+			image_kind = EF800_KEYBOARD_IMAGE_BOOTLOADER;
+		} else if (expected_target ==
+			   EF800_FIRMWARE_TARGET_KEYBOARD_APPLICATION) {
+			image_kind = EF800_KEYBOARD_IMAGE_APPLICATION;
+		} else {
+			return -EINVAL;
+		}
+		{
+			int rc = ef800_firmware_package_header_parse(
+				wire_header, sizeof(wire_header), file_size,
+				expected_target, EF800_FIRMWARE_HARDWARE_ID_L431,
+				&coordinator, &parsed);
+
+			if (rc != 0) {
+				return rc;
+			}
+		}
+		if (parsed.image_version.major > UINT8_MAX ||
+		    parsed.image_version.minor > UINT8_MAX ||
+		    parsed.image_version.patch > UINT8_MAX) {
+			return -ERANGE;
+		}
+		*header = (struct ef800_keyboard_package_header){
+			.magic = EF800_KEYBOARD_PACKAGE_MAGIC,
+			.format = EF800_KEYBOARD_PACKAGE_FORMAT,
+			.header_size = parsed.header_size,
+			.target_id = EF800_KEYBOARD_PACKAGE_TARGET,
+			.image_base = parsed.load_address,
+			.image_size = parsed.image_size,
+			.image_crc32 = parsed.image_crc32,
+			.version_major = (uint8_t)parsed.image_version.major,
+			.version_minor = (uint8_t)parsed.image_version.minor,
+			.version_patch = (uint8_t)parsed.image_version.patch,
+			.image_kind = image_kind,
+			.flags = 0U,
+		};
 	}
 	if (fs_seek(file, header->header_size, FS_SEEK_SET) != 0) {
 		return -EIO;
@@ -89,6 +226,7 @@ int ef800_keyboard_update_transaction_run(
 	struct fs_file_t file;
 	struct ef800_keyboard_package_header header;
 	struct ef800_keyboard_update_plan plan;
+	enum ef800_firmware_target_id expected_target = 0U;
 	uint8_t data[EF800_KB_UPDATE_BLOCK_MAX];
 	uint8_t payload[EF800_KB_UPDATE_BLOCK_MAX + 7U];
 	uint8_t response[EF800_KB_UPDATE_RESPONSE_MAX];
@@ -97,10 +235,10 @@ int ef800_keyboard_update_transaction_run(
 	int result;
 	bool package_invalid = false;
 
-	if (transaction == NULL || transaction->i2c == NULL ||
-	    transaction->package_path == NULL || transaction->active == NULL ||
+	if (transaction == NULL || transaction->package_path == NULL ||
+	    transaction->active == NULL ||
 	    transaction->storage_mounted == NULL ||
-	    transaction->usb_msd_requested == NULL ||
+	    transaction->storage_externally_owned == NULL ||
 	    transaction->enter_resident_updater == NULL ||
 	    transaction->wait_application_service == NULL ||
 	    transaction->identify == NULL ||
@@ -110,8 +248,13 @@ int ef800_keyboard_update_transaction_run(
 	}
 	if (*transaction->active ||
 	    !transaction->storage_mounted(transaction->context) ||
-	    transaction->usb_msd_requested(transaction->context)) {
+	    transaction->storage_externally_owned(transaction->context)) {
 		return -EAGAIN;
+	}
+	result = ef800_keyboard_update_package_select(
+		transaction->package_path, &expected_target);
+	if (result != 0) {
+		return result;
 	}
 	result = fs_stat(transaction->package_path, &entry);
 	if (result == -ENOENT) {
@@ -126,7 +269,8 @@ int ef800_keyboard_update_transaction_run(
 		return result;
 	}
 	*transaction->active = true;
-	result = ef800_keyboard_update_read_package(&file, &header, entry.size);
+	result = ef800_keyboard_update_read_package(&file, &header, entry.size,
+						    expected_target);
 	if (result != 0) {
 		package_invalid = true;
 		goto cleanup;

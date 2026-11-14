@@ -21,6 +21,7 @@ target_sources(app PRIVATE
 	${CMAKE_CURRENT_LIST_DIR}/../../shared/ef800_drivers/ef800_max17043.c
 	${CMAKE_CURRENT_LIST_DIR}/../../shared/ef800_drivers/ef800_t6963.c
 	${CMAKE_CURRENT_LIST_DIR}/../../shared/ef800_update/ef800_update.c
+	${CMAKE_CURRENT_LIST_DIR}/../../shared/ef800_update/ef800_firmware_package.c
 	${CMAKE_CURRENT_LIST_DIR}/../../shared/ef800_composition/ef800_composition.c
 	${CMAKE_CURRENT_LIST_DIR}/../../shared/ef800_persistence/ef800_persistence.c
 	${ZEPHYR_HAL_STM32_MODULE_DIR}/stm32cube/stm32l4xx/drivers/src/stm32l4xx_hal_gpio.c

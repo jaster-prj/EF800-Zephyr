@@ -9,7 +9,7 @@
 | FAT and USB MSC cannot safely own the shared disk concurrently. | Physical FAT-to-MSC transfer requires unmount-before-MSC. MSC-to-FAT is restart-gated where the USB worker may still be active. MTP is filesystem-mediated. |
 | Device-next MTP is supplied by the pinned `zephyr-mtp` west module. | Integration follows that module's API and must be revisited as Zephyr support evolves. |
 | External packages use the pinned PluginManager module and an EF800 contract. | Package format, target ABI, allowed services, image bounds, and discovery path are integration constraints. Native `.PMP` packages are not physical ARM artifacts. |
-| Physical and simulated builds share EF800Application production sources. | Platform-specific adapters and devicetree differ; behavioral similarity is intentional, hardware equivalence is not implied. |
+| Physical and simulated builds share EF800 Application production sources. | Platform-specific adapters and devicetree differ; behavioral similarity is intentional, hardware equivalence is not implied. |
 | Firmware builds are performed in the reusable Zephyr devcontainer. | Do not install/run west on the Windows host. Manifest revisions and container state are part of reproducible build setup. |
 | Engineering firmware can contain destructive QSPI behavior. | `CONFIG_EF800_APPLICATION_REFORMAT_LEGACY_QSPI` is development-only and must be disabled for production/data-preserving use. |
 

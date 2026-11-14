@@ -35,7 +35,9 @@ int ef800_application_shell_init(const struct ef800_application_shell_context *c
 	    context->keyboard_command == NULL ||
 	    context->keyboard_debug_active == NULL ||
 	    context->keyboard_boot_probe == NULL ||
-	    context->keyboard_upload == NULL) {
+	    context->keyboard_upload == NULL ||
+	    context->backup_update == NULL ||
+	    context->bootloader_update == NULL) {
 		return -EINVAL;
 	}
 	shell_context = *context;
@@ -479,7 +481,7 @@ static int cmd_mcumgr_start(const struct shell *shell, size_t argc, char **argv)
 	}
 	*shell_context.mcumgr_transport_active = true;
 	shell_print(shell,
-		"MCUmgr raw FS transport active; reset EF800Application to restore shell input");
+		"MCUmgr raw FS transport active; reset EF800 Application to restore shell input");
 	return 0;
 }
 
@@ -585,7 +587,7 @@ static int cmd_keyboard_boot_probe(const struct shell *shell, size_t argc,
 	return result;
 }
 
-/** @brief Delegate keyboard package upload to the EF800Application adapter.
+/** @brief Delegate keyboard package upload to the EF800 Application adapter.
  * @param shell Shell used by the upload callback.
  * @param argc Upload command argument count.
  * @param argv Upload command arguments.
@@ -737,13 +739,40 @@ SHELL_STATIC_SUBCMD_SET_CREATE(keyboard_commands,
 	SHELL_CMD_ARG(boot-probe, NULL,
 		"Assert JP7 updater request and reset into updater bootloader",
 		cmd_keyboard_boot_probe, 1, 0),
-	SHELL_CMD_ARG(upload, NULL, "Upload EF800_KEYBOARD.pkg via DebugConsole",
+	SHELL_CMD_ARG(upload, NULL,
+		"Upload EF800_KEYBOARD_APP.pkg via DebugConsole",
 		cmd_keyboard_upload, 1, 0),
 	SHELL_CMD(debug, &keyboard_debug_commands, "Keyboard debug input", NULL),
 	SHELL_SUBCMD_SET_END
 );
 
 SHELL_CMD_REGISTER(keyboard, &keyboard_commands, "Keyboard commands", NULL);
+
+#if CONFIG_EF800_APPLICATION_BACKUP_UPDATE
+static int cmd_backup_update(const struct shell *shell, size_t argc, char **argv)
+{
+	ARG_UNUSED(argc);
+	ARG_UNUSED(argv);
+	return shell_context.backup_update(shell);
+}
+
+SHELL_CMD_REGISTER(backup_update, NULL,
+	"Validate and install the staged EF800 Backup package", cmd_backup_update);
+#endif
+
+#if CONFIG_EF800_APPLICATION_BOOTLOADER_UPDATE
+static int cmd_bootloader_update(const struct shell *shell, size_t argc,
+				 char **argv)
+{
+	ARG_UNUSED(argc);
+	ARG_UNUSED(argv);
+	return shell_context.bootloader_update(shell);
+}
+
+SHELL_CMD_REGISTER(bootloader_update, NULL,
+	"Manually validate and install staged EF800_BOOT.pkg",
+	cmd_bootloader_update);
+#endif
 
 #if defined(CONFIG_THREAD_MONITOR) && defined(CONFIG_THREAD_STACK_INFO) && \
 	defined(CONFIG_INIT_STACKS)

@@ -1,6 +1,6 @@
 ## Why
 
-The native-sim EF800 can already execute the production EF800Application and expose a browser front panel, but external plugin packages cannot yet be built for native_sim, uploaded through the browser, or activated against simulated instruments. This prevents an end-to-end demonstration of plugin discovery, port services, bounded UI, and virtual-device behavior without switching USB storage modes or using physical hardware.
+The native-sim EF800 can already execute the production EF800 Application and expose a browser front panel, but external plugin packages cannot yet be built for native_sim, uploaded through the browser, or activated against simulated instruments. This prevents an end-to-end demonstration of plugin discovery, port services, bounded UI, and virtual-device behavior without switching USB storage modes or using physical hardware.
 
 ## What Changes
 

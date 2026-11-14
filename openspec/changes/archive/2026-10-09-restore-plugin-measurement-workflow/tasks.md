@@ -20,12 +20,12 @@
 - [x] 3.4 Make Fixmessung use updated workspace context, increment the point, and start the next measurement without returning to the parent menu.
 - [x] 3.5 Keep plugin measurement failures, invalid input, and host append failures diagnosable in the plugin display without corrupting plugin state.
 
-## 4. EF800Application Integration
+## 4. EF800 Application Integration
 
-- [x] 4.1 Remove host-owned measurement editor and pending-action branches from EF800Application and render only plugin display models.
+- [x] 4.1 Remove host-owned measurement editor and pending-action branches from EF800 Application and render only plugin display models.
 - [x] 4.2 Route generic plugin append requests to the selected workspace without interpreting serialized measurement lines.
 - [x] 4.3 Verify plugin session lifetime and UART ownership remain single-instance across the complete plugin workflow.
-- [x] 4.4 Preserve package-owned instrument behavior and avoid adding Elta3 or Fennel1 protocol-specific branches to EF800Application.
+- [x] 4.4 Preserve package-owned instrument behavior and avoid adding Elta3 or Fennel1 protocol-specific branches to EF800 Application.
 
 ## 5. Automated Coverage
 

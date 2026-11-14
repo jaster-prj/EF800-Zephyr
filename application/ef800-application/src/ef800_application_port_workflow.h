@@ -1,6 +1,6 @@
 /* SPDX-License-Identifier: Apache-2.0 */
 /** @file
- * @brief EF800Application port assignment, reconciliation, and UART-claim policy.
+ * @brief EF800 Application port assignment, reconciliation, and UART-claim policy.
  */
 #ifndef EF800_APPLICATION_PORT_WORKFLOW_H
 #define EF800_APPLICATION_PORT_WORKFLOW_H
@@ -55,6 +55,21 @@ int ef800_application_port_workflow_load_measurement_ports(
  */
 int ef800_application_port_workflow_claim_loaded_assignments(
 	struct ef800_application_port_workflow *workflow);
+
+/** @brief Restore assignments, requiring only one selected port to be ready.
+ *
+ * @details Errors on other ports are logged and skipped so stale or
+ * unsupported assignments cannot block an independent port edit. A zero
+ * required_port preserves the all-ports result semantics.
+ *
+ * @param workflow Workflow state and hardware adapter callbacks.
+ * @param required_port Port whose readiness determines the return value, or
+ *                      zero to require every assigned port.
+ * @return 0 when the required port (or all ports) restored; negative errno
+ *         when the required port (or any port in all-ports mode) fails.
+ */
+int ef800_application_port_workflow_claim_loaded_assignments_for_port(
+	struct ef800_application_port_workflow *workflow, uint8_t required_port);
 
 /** @brief Map a plugin ID to the UART owner used by the port registry.
  * @param workflow Workflow and plugin registry; may be NULL for legacy mapping.

@@ -13,13 +13,15 @@
 #include <zephyr/sys/util.h>
 
 #include "ef800_update.h"
+#include "ef800_firmware_package.h"
 #include "ef800_qspi_layout.h"
 #include "ef800_watchdog.h"
 #include "boot_trace.h"
 
-LOG_MODULE_REGISTER(ef800_boot_update, LOG_LEVEL_INF);
+LOG_MODULE_REGISTER(ef800_boot_update, LOG_LEVEL_WRN);
 
-#define EF800_UPDATE_PATH "/DATA:/fwu/EF800_FW.bin"
+#define EF800_PACKAGE_PATH "/DATA:/fwu/EF800_APP.pkg"
+#define EF800_BOOTSTRAP_PATH "/DATA:/fwu/EF800_FW.bin"
 #define EF800_UPDATE_CHUNK 1024U
 #define EF800_VECTOR_BYTES (2U * sizeof(uint32_t))
 
@@ -64,7 +66,12 @@ static int verify_update_crc(struct fs_file_t *file, off_t source_offset,
 		(void)ef800_watchdog_feed();
 		remaining -= count;
 	}
-	return crc == expected_crc ? 0 : -EBADMSG;
+	if (crc != expected_crc) {
+		LOG_ERR("update CRC mismatch: expected=0x%08x actual=0x%08x",
+			expected_crc, crc);
+		return -EBADMSG;
+	}
+	return 0;
 }
 
 static int erase_partition_watchdog_safe(const struct flash_area *area)
@@ -211,8 +218,17 @@ int ef800_boot_install_update(const struct flash_area *main_area,
 	struct fs_dirent entry;
 	const struct flash_area *boot_state_area;
 	struct ef800_update_header header;
+	struct ef800_firmware_package_header package_header;
+	struct ef800_firmware_semver coordinator_version = {
+		.major = EF800_FIRMWARE_INITIAL_VERSION_MAJOR,
+		.minor = EF800_FIRMWARE_INITIAL_VERSION_MINOR,
+		.patch = EF800_FIRMWARE_INITIAL_VERSION_PATCH,
+	};
+	uint8_t package_wire_header[EF800_FIRMWARE_PACKAGE_HEADER_SIZE];
 	uint32_t magic;
 	uint32_t vector[2];
+	uint32_t expected_crc = 0U;
+	const char *update_path = EF800_PACKAGE_PATH;
 	off_t source_offset = 0;
 	size_t image_size;
 	bool mounted = false;
@@ -222,7 +238,7 @@ int ef800_boot_install_update(const struct flash_area *main_area,
 	int rc;
 
 	fs_file_t_init(&file);
-	LOG_INF("EF800Application update scan: %s", EF800_UPDATE_PATH);
+	LOG_INF("EF800 Application update scan: %s", EF800_PACKAGE_PATH);
 	ef800_boot_trace("boot update: scan begin\r\n");
 	rc = flash_area_open(PARTITION_ID(qspi_bootstate_partition),
 		&boot_state_area);
@@ -240,7 +256,7 @@ int ef800_boot_install_update(const struct flash_area *main_area,
 		return rc;
 	}
 	if (legacy_layout) {
-		LOG_WRN("legacy monolithic QSPI FAT detected; EF800Application update scan skipped");
+		LOG_WRN("legacy monolithic QSPI FAT detected; EF800 Application update scan skipped");
 		return -ENOTSUP;
 	}
 	rc = fs_mount(&mount);
@@ -252,7 +268,20 @@ int ef800_boot_install_update(const struct flash_area *main_area,
 	mounted = true;
 	LOG_INF("update filesystem mounted");
 	ef800_boot_trace("boot update: filesystem mounted\r\n");
-	rc = fs_stat(EF800_UPDATE_PATH, &entry);
+	rc = fs_stat(update_path, &entry);
+	if (rc < 0) {
+		/*
+		 * The raw legacy path is a recovery/bootstrap fallback only. Never
+		 * let it overwrite a valid, package-aware EF800 Application.
+		 */
+		if (partition_is_valid(main_area, main_address, sram_address,
+				       sram_size)) {
+			rc = -ENOENT;
+			goto out;
+		}
+		update_path = EF800_BOOTSTRAP_PATH;
+		rc = fs_stat(update_path, &entry);
+	}
 	if (rc < 0 || entry.type != FS_DIR_ENTRY_FILE) {
 		rc = rc < 0 ? rc : -ENOENT;
 		LOG_WRN("update file unavailable: %d", rc);
@@ -267,7 +296,7 @@ int ef800_boot_install_update(const struct flash_area *main_area,
 		ef800_boot_trace_result("update file size", rc);
 		goto out;
 	}
-	rc = fs_open(&file, EF800_UPDATE_PATH, FS_O_READ);
+	rc = fs_open(&file, update_path, FS_O_READ);
 	if (rc < 0) {
 		LOG_ERR("update file open failed: %d", rc);
 		ef800_boot_trace_result("update file open", rc);
@@ -279,7 +308,35 @@ int ef800_boot_install_update(const struct flash_area *main_area,
 		rc = -EIO;
 		goto out;
 	}
-	if (magic == EF800_UPDATE_MAGIC) {
+	if (strcmp(update_path, EF800_PACKAGE_PATH) == 0) {
+		if (entry.size < sizeof(package_wire_header) ||
+		    fs_seek(&file, 0, FS_SEEK_SET) < 0 ||
+		    file_read_exact(&file, package_wire_header,
+				    sizeof(package_wire_header)) < 0) {
+			rc = -EINVAL;
+			ef800_boot_trace_result("package header read", rc);
+			goto out;
+		}
+		rc = ef800_firmware_package_header_parse(
+			package_wire_header, sizeof(package_wire_header),
+			(size_t)entry.size,
+			EF800_FIRMWARE_TARGET_APPLICATION,
+			EF800_FIRMWARE_HARDWARE_ID_L496,
+			&coordinator_version, &package_header);
+		if (rc != 0) {
+			ef800_boot_trace_result("package header validation", rc);
+			goto out;
+		}
+		image_size = package_header.image_size;
+		source_offset = package_header.header_size;
+		expected_crc = package_header.image_crc32;
+		has_crc = true;
+		LOG_INF("package image: size=%u base=0x%08x crc=0x%08x version=%u.%u.%u",
+			(unsigned int)image_size, package_header.load_address,
+			package_header.image_crc32, package_header.image_version.major,
+			package_header.image_version.minor,
+			package_header.image_version.patch);
+	} else if (magic == EF800_UPDATE_MAGIC) {
 		if (entry.size < sizeof(header) || fs_seek(&file, 0, FS_SEEK_SET) < 0 ||
 			file_read_exact(&file, &header, sizeof(header)) < 0 ||
 			!ef800_update_header_valid(&header, entry.size, main_address,
@@ -290,6 +347,7 @@ int ef800_boot_install_update(const struct flash_area *main_area,
 		}
 		image_size = header.image_size;
 		source_offset = header.header_size;
+		expected_crc = header.image_crc32;
 		has_crc = true;
 		LOG_INF("header image: size=%u base=0x%08x crc=0x%08x",
 			(unsigned int)image_size, header.load_address,
@@ -314,7 +372,7 @@ int ef800_boot_install_update(const struct flash_area *main_area,
 	ef800_boot_trace("boot update: image/vector validated\r\n");
 	if (has_crc) {
 		rc = verify_update_crc(&file, source_offset, image_size,
-				       header.image_crc32);
+				       expected_crc);
 		if (rc < 0) {
 			LOG_ERR("update CRC validation failed: %d", rc);
 			ef800_boot_trace_result("CRC validation", rc);
@@ -324,7 +382,7 @@ int ef800_boot_install_update(const struct flash_area *main_area,
 		ef800_boot_trace("boot update: CRC validated\r\n");
 	}
 	rc = copy_update_image(&file, main_area, source_offset, image_size, has_crc,
-					       has_crc ? header.image_crc32 : 0U);
+					       expected_crc);
 	if (rc < 0 || !partition_is_valid(main_area, main_address, sram_address,
 						  sram_size)) {
 		rc = rc < 0 ? rc : -EBADMSG;
@@ -332,13 +390,13 @@ int ef800_boot_install_update(const struct flash_area *main_area,
 		ef800_boot_trace("boot update: installed image verification failed\r\n");
 		goto out;
 	}
-	LOG_INF("installed EF800Application image verified");
+	LOG_INF("installed EF800 Application image verified");
 	ef800_boot_trace("boot update: image verified\r\n");
 	rc = fs_close(&file);
 	opened = false;
 	if (rc == 0) {
 		/* Deletion is best effort; the verified image is already installed. */
-		int unlink_rc = fs_unlink(EF800_UPDATE_PATH);
+		int unlink_rc = fs_unlink(update_path);
 
 		LOG_INF("update file cleanup: %d", unlink_rc);
 		ef800_boot_trace("boot update: update file cleanup attempted\r\n");
@@ -355,7 +413,7 @@ out:
 			rc = unmount_rc;
 		}
 	}
-	LOG_INF("EF800Application update scan complete: %d", rc);
+	LOG_INF("EF800 Application update scan complete: %d", rc);
 	ef800_boot_trace_result("scan complete", rc);
 	return rc;
 }

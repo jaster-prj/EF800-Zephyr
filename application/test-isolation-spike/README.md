@@ -52,7 +52,7 @@ L496 runtime configuration on hardware.
 This minimal spike disables Zephyr thread-local storage because its worker
 does not call libc. Production plugin TLS/libc requirements must be budgeted
 as a specific bounded partition; the spike must not grant an oversized libc
-range that overlaps EF800Application data.
+range that overlaps EF800 Application data.
 
 For the P-NUCLEO-WB55 board, the generic worker/fault path can also be built
 with the Zephyr `nucleo_wb55rg` target:
@@ -98,7 +98,7 @@ The printed partitions were RX text `0x20000000/1024`, RO/XN constants
 `user=1 result=0x5a PASS`.
 
 Each fault mode below was built separately, programmed only to the L496
-EF800Application slot at `0x08030000`, and observed on UART4/COM7 at 115200 8N1.
+EF800 Application slot at `0x08030000`, and observed on UART4/COM7 at 115200 8N1.
 Modes 1–5 returned to the privileged spike supervisor after Zephyr aborted the
 faulting worker. The fatal hook recorded only the reason and stacked PC, then
 returned to Zephyr's thread-abort path; the supervisor received its semaphore
@@ -113,7 +113,7 @@ notification and reported the worker as unprivileged.
 | 5 write privileged-stack guard | MPU Data Access Violation, reason 19, MMFAR `0x20004000`, worker PC `0x20000006`; the reported guard was 64 bytes and the supervisor was notified. |
 | 6 deep stack overflow (initial run before reboot fallback) | MPU stacking error plus Data Access Violation, MMFAR `0x20002f74`, reported PC `0x1c4bb538`; no `worker fault reported` line or supervisor notification followed. The target remained in the fatal path and required ST-LINK reprogramming. This is intentionally not classified as a recoverable plugin fault. |
 
-After mode 6, the normal worker-disabled EF800Application image was rebuilt,
+After mode 6, the normal worker-disabled EF800 Application image was rebuilt,
 verified linked at `0x08030000`, programmed with the L496 probe, and observed
 booting normally on COM7. Product userspace execution remains disabled. These
 results establish the L496 behavior of the recoverable and stack-fault spike
@@ -166,7 +166,7 @@ Mode 6 was also repeated with this fatal policy: the MPU stacking error/data
 access violation at `0x20002f74` (reported PC `0x43082102`, invalid exception
 frame) still produced no worker notification, then the target rebooted and
 confirmed the marker. After the probes, the normal
-worker-disabled EF800Application was restored at `0x08030000` and observed
+worker-disabled EF800 Application was restored at `0x08030000` and observed
 booting normally. Before restoration, a current mode-0 baseline image cleared
 the spike-only backup-register marker and passed `worker user=1 result=0x5a`.
 Rebuild/run mode 0 before repeating the same fault mode if its marker is still
@@ -202,7 +202,7 @@ MPU fault probes on the same 80 MHz setup produced these observations:
 These observations demonstrate target-side MPU execution/access behavior for
 the tested domain layout. They do not qualify Zephyr thread stacks or DMA
 buffers in external SRAM; those remain unsupported and must stay internal
-unless separately validated. This spike is not EF800Application integration or
+unless separately validated. This spike is not EF800 Application integration or
 production release approval.
 
 ## WB55 USER_USB CDC lifecycle test (spike only)

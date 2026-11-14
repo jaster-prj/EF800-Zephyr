@@ -38,7 +38,7 @@ The simulator SHALL write accepted packages to a temporary file in the virtual F
 - **THEN** the package remains unavailable, the previous final package is preserved, and the browser receives an error
 
 ### Requirement: Activate packages only after explicit simulator restart
-The browser SHALL expose a separate restart operation, and a newly installed package SHALL become discoverable only after the simulator restarts and EF800Application performs its normal startup scan.
+The browser SHALL expose a separate restart operation, and a newly installed package SHALL become discoverable only after the simulator restarts and EF800 Application performs its normal startup scan.
 
 #### Scenario: User restarts after upload
 - **WHEN** the user presses Restart simulator after a successful package upload

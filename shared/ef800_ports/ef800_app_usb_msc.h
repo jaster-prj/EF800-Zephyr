@@ -1,5 +1,5 @@
 /* SPDX-License-Identifier: Apache-2.0 */
-/** @file @brief Start/stop EF800Application USB mass-storage exposure safely. */
+/** @file @brief Start/stop EF800 Application USB mass-storage exposure safely. */
 #ifndef EF800_APPLICATION_USB_MSC_H
 #define EF800_APPLICATION_USB_MSC_H
 
@@ -15,7 +15,7 @@ int ef800_app_usb_msc_start(void);
  */
 int ef800_app_usb_msc_stop(void);
 
-/** @brief Query whether EF800Application MSC is active.
+/** @brief Query whether EF800 Application MSC is active.
  * @return True when MSC is enabled.
  */
 bool ef800_app_usb_msc_is_active(void);

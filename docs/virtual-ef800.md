@@ -4,11 +4,11 @@ The virtual EF800 is a Zephyr `native_sim` behavioral target. It does not
 emulate STM32 registers or require EF800 hardware. The interactive deployment
 runs in its own Compose-managed simulator container.
 
-The native target executes the production EF800Application composition root.
+The native target executes the production EF800 Application composition root.
 GPIO, UART, I2C, RTC, battery, MCP23017, T6963, keyboard, and FAT-storage
 dependencies are supplied by project-local native-sim emulators or Zephyr
 simulators. The default profile is healthy and uses disposable storage.
-The virtual DS3231 I2C device follows native_sim's host-UTC clock. EF800Application
+The virtual DS3231 I2C device follows native_sim's host-UTC clock. EF800 Application
 reads it through the production RTC driver once per second, applies the configured
 UTC offset and DST adjustment, and refreshes the LCD header with local `HH:MM`.
 
@@ -36,11 +36,11 @@ but only one explicit controller can send keypad events. Stop with:
 docker compose -f docker-compose.virtual-ef800.yml down
 ```
 
-## EF800Application MTP file view
+## EF800 Application MTP file view
 
-The browser file panel lists only EF800Application's named `Data`, `Plugins`,
+The browser file panel lists only EF800 Application's named `Data`, `Plugins`,
 and `FWU` MTP storages. It does not expose Configuration, NVS, or raw flash.
-On a clean virtual image, select EF800Application's USB MTP personality:
+On a clean virtual image, select EF800 Application's USB MTP personality:
 
 1. Acquire keypad control.
 2. From Main menu, press `e` for Settings, then `p` for Port assignment.
@@ -51,7 +51,7 @@ The browser then lists folders, downloads files, and accepts drag-and-drop or
 file-picker uploads into the current directory. The gateway rejects absolute or
 traversal paths and limits each browser file to 32 KiB. Transfers use bounded
 simulator messages, the in-process Zephyr USB host, the native-sim virtual UHC
-and UDC, and EF800Application's production device-next MTP class. The browser
+and UDC, and EF800 Application's production device-next MTP class. The browser
 gateway does not read or write the simulator filesystem directly. Progress,
 completion, failure, and cancellation are surfaced in the file panel; a
 download is offered only after byte count and checksum verification.
@@ -59,9 +59,9 @@ download is offered only after byte count and checksum verification.
 This verifies behavioral native-sim MTP flow only. It is not physical USB, QSPI
 qualification, or a request to flash a target.
 
-## EF800Application diagnostics
+## EF800 Application diagnostics
 
-The browser front panel includes a bounded **EF800Application logs** panel for the
+The browser front panel includes a bounded **EF800 Application logs** panel for the
 native-sim target. It receives startup and runtime records through the existing
 gateway-owned front-panel connection, replays the simulator's recent history after
 connection, and then follows live records. Records carry severity and sequence
@@ -82,7 +82,7 @@ timing, or fitted peripheral wiring.
 
 Upload native-sim measurement `.PMP` files through the MTP file panel by
 selecting the `Plugins` storage. The same 32 KiB browser transfer limit,
-relative-path checks, virtual USB host, and production EF800Application MTP class
+relative-path checks, virtual USB host, and production EF800 Application MTP class
 apply. Plugin discovery is startup-only; upload does not hot-load code. Request
 a simulator restart separately to make new packages available to normal startup
 discovery.

@@ -1,19 +1,19 @@
 ## Context
 
-EF800Application currently uses Zephyr's next-generation USB device stack with separate CDC and MSC contexts. USB MSC requires FAT to be unmounted before the host receives raw disk access, and the MSC worker is not considered safely quiescent for a same-boot FAT remount. Port 4 assignment changes currently display a general reboot hint rather than applying safe USB-only changes at runtime.
+EF800 Application currently uses Zephyr's next-generation USB device stack with separate CDC and MSC contexts. USB MSC requires FAT to be unmounted before the host receives raw disk access, and the MSC worker is not considered safely quiescent for a same-boot FAT remount. Port 4 assignment changes currently display a general reboot hint rather than applying safe USB-only changes at runtime.
 
 Zephyr v4.4.2 does not include MTP, but upstream PR `zephyrproject-rtos/zephyr#86832` implements MTP almost entirely as a self-contained USB class using public device-next and filesystem APIs. EF800 can carry an audited snapshot as a temporary Zephyr module instead of modifying the persistent Zephyr checkout. The module must retain Apache-2.0 provenance and be removable when the selected Zephyr release provides compatible upstream support.
 
-The QSPI FAT volume is mounted at `/EF800:`. EF800Application already creates `data` and `fwu` as needed, package infrastructure uses `plugins`, firmware update uses `/EF800:/fwu/EF800_FW.bin`, and keyboard update uses `/EF800:/fwu/EF800_KEYBOARD.pkg`. The current FatFS configuration uses long-filename BSS storage and is not reentrant. The current USB device thread stack is 1024 bytes, while MTP testing upstream has required a larger stack.
+The QSPI FAT volume is mounted at `/EF800:`. EF800 Application already creates `data` and `fwu` as needed, package infrastructure uses `plugins`, firmware bootstrap uses `/EF800:/fwu/EF800_FW.bin`, and keyboard updates use the target-specific `EF800_KEYBOARD_UPDATER.pkg`, `EF800_KEYBOARD_BOOT.pkg`, and `EF800_KEYBOARD_APP.pkg` names. The current FatFS configuration uses long-filename BSS storage and is not reentrant. The current USB device thread stack is 1024 bytes, while MTP testing upstream has required a larger stack.
 
-The accepted ADR set contains no supersession chain and does not constrain physical USB personality management. ADR 0008 keeps plugin activation restart-bound for native simulation; the same startup-only package discovery already used by physical EF800Application remains intact rather than introducing plugin hot replacement.
+The accepted ADR set contains no supersession chain and does not constrain physical USB personality management. ADR 0008 keeps plugin activation restart-bound for native simulation; the same startup-only package discovery already used by physical EF800 Application remains intact rather than introducing plugin hot replacement.
 
 ## Goals / Non-Goals
 
 **Goals:**
 
 - Supply a temporary, isolated MTP class compatible with Zephyr v4.4.2.
-- Keep FAT mounted while MTP and EF800Application access approved paths through filesystem APIs.
+- Keep FAT mounted while MTP and EF800 Application access approved paths through filesystem APIs.
 - Present `data`, `plugins`, and `fwu` as three MTP storages with independent 12-object limits.
 - Hot-switch safely among None, CDC DebugConsole, and MTP.
 - Preserve a reboot boundary for every transition to or from MSC.
@@ -42,7 +42,7 @@ The v4.4.2 compatibility layer will define the standard Image USB class value pr
 Alternatives considered:
 
 - Fork all of Zephyr: rejected because it broadens the maintained delta and complicates upgrades.
-- Copy the class into EF800Application: rejected because it couples reusable protocol code to EF800 application lifecycle code.
+- Copy the class into EF800 Application: rejected because it couples reusable protocol code to EF800 application lifecycle code.
 - Wait for upstream merge: rejected because the filesystem ownership requirement is current and the PR remains unmerged.
 
 ### Use a single serialized EF800 USB personality manager
@@ -66,7 +66,7 @@ A non-MSC transition performs:
 
 An activation failure restores the prior non-MSC mode or settles in None and reports the error. Requests arriving during a transition are serialized. MTP shutdown resets its protocol session and transfer state before CDC or None becomes active.
 
-Transitions entering or leaving MSC persist the requested assignment and then perform a controlled restart. On the next boot, existing ownership logic either mounts FAT for None/CDC/MTP or unmounts it before starting MSC. EF800Application never attempts a same-boot MSC-to-FAT handback.
+Transitions entering or leaving MSC persist the requested assignment and then perform a controlled restart. On the next boot, existing ownership logic either mounts FAT for None/CDC/MTP or unmounts it before starting MSC. EF800 Application never attempts a same-boot MSC-to-FAT handback.
 
 Alternatives considered:
 
@@ -87,7 +87,7 @@ Define one MTP instance with storage entries rooted at:
 /EF800:/fwu
 ```
 
-EF800Application creates missing roots before MTP activation. The module recursively indexes only below each supplied root. Set `CONFIG_USBD_MTP_STORAGES_PER_INSTANCE=3` and `CONFIG_USBD_MTP_MAX_HANDLES=12`; each storage owns an independent object table. The volume root is never registered, so `.configuration` remains unreachable through MTP.
+EF800 Application creates missing roots before MTP activation. The module recursively indexes only below each supplied root. Set `CONFIG_USBD_MTP_STORAGES_PER_INSTANCE=3` and `CONFIG_USBD_MTP_MAX_HANDLES=12`; each storage owns an independent object table. The volume root is never registered, so `.configuration` remains unreachable through MTP.
 
 The three storage IDs report the same underlying volume capacity because they share FAT. That host-visible duplication is accepted for the bounded first release. If the imported API cannot provide friendly storage descriptions independently of paths, add a small backward-compatible module field for `Data`, `Plugins`, and `FWU` rather than changing filesystem paths.
 
@@ -133,7 +133,7 @@ The host matrix includes Windows native WPD/Explorer and Linux `libmtp` through 
 
 ## Migration Plan
 
-1. Add and pin the standalone MTP module; build its sample/class against Zephyr v4.4.2 before EF800Application integration.
+1. Add and pin the standalone MTP module; build its sample/class against Zephyr v4.4.2 before EF800 Application integration.
 2. Add append-only MTP assignment IDs and native metadata/transition tests without changing the current runtime path.
 3. Add atomic upload handling and module tests, including cancellation and orphan cleanup.
 4. Enable FatFS reentrancy/LFN stack mode and establish memory baselines.

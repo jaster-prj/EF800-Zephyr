@@ -14,9 +14,9 @@
 
 ## 3. Implement Memory Domains and Worker Supervision
 
-- [x] 3.1 Enable the required EF800Application userspace, MPU, stack-guard, thread, and fatal-diagnostic configuration and add an aligned isolation arena that preserves W^X permissions.
+- [x] 3.1 Enable the required EF800 Application userspace, MPU, stack-guard, thread, and fatal-diagnostic configuration and add an aligned isolation arena that preserves W^X permissions.
 - [x] 3.2 Implement the privileged loader mapping lifecycle for plugin text, rodata, data/BSS, mailbox, and user stack, including zeroization and generation changes before reuse.
-- [x] 3.3 Implement a dedicated unprivileged worker that performs external create, destroy, Measurement, Calculation, render, and input entry calls while the EF800Application UI thread remains schedulable.
+- [x] 3.3 Implement a dedicated unprivileged worker that performs external create, destroy, Measurement, Calculation, render, and input entry calls while the EF800 Application UI thread remains schedulable.
 - [x] 3.4 Implement the privileged supervisor with serialized submission, generation-tagged completion, operation-specific absolute deadlines, timeout termination, and stale-response rejection.
 
 ## 4. Mediate Host Services
@@ -44,7 +44,7 @@
 ## 7. Migrate Production Packages
 
 - [x] 7.1 Rebuild the independent Elta3 and FTS3XX packages against the isolated SDK and route all port access through the mediated gateway while preserving current serial defaults and protocol behavior.
-- [x] 7.2 Move Calculation transformation and all Measurement create/destroy/render/input/measure calls off the EF800Application thread and remove the production direct function-pointer invocation fallback.
+- [x] 7.2 Move Calculation transformation and all Measurement create/destroy/render/input/measure calls off the EF800 Application thread and remove the production direct function-pointer invocation fallback.
 - [x] 7.3 Preserve current bounded display, logical keyboard, measurement record, explicit workspace mutation, assignment, and missing/incompatible package behavior for successful invocations.
 
 ## 8. Verify and Close the Release Gate
@@ -54,6 +54,6 @@
 - [ ] 8.3 Demonstrate on hardware that each recoverable plugin failure quarantines the package, restores UART/resource ownership, displays the diagnostic, returns to the correct menu, and leaves another valid plugin operational.
 - [ ] 8.4 Demonstrate on hardware that host, privileged service, kernel, ISR, nested, and ambiguous faults reboot instead of being mislabeled as recovered plugin failures.
 - [ ] 8.5 Run normal Elta3 and FTS3XX protocol/UI acceptance, Calculation/workspace tests, and the complete native test suite without weakening expected frames or bounded-result checks.
-- [x] 8.6 Pristine-build all four firmware targets, run `application/scripts/verify-images.sh`, inspect EF800Application map/RAM/stack growth, and confirm the fixed image contract still passes.
+- [x] 8.6 Pristine-build all four firmware targets, run `application/scripts/verify-images.sh`, inspect EF800 Application map/RAM/stack growth, and confirm the fixed image contract still passes.
 - [x] 8.7 Update the plugin contract/security documentation with measured isolation limits, tested fault classes, timeout policy, remaining authenticity/storage gates, and the new native/target test baseline; keep obsolete `docs/migration-status.md` deleted.
-- [x] 8.8 Keep arbitrary external packages unqualified for production release unless every MPU, fault, timeout, cleanup, normal-operation, build, image-layout, authenticity, and hardware acceptance gate in this change passes; engineering EF800Application execution remains isolated in the userspace worker.
+- [x] 8.8 Keep arbitrary external packages unqualified for production release unless every MPU, fault, timeout, cleanup, normal-operation, build, image-layout, authenticity, and hardware acceptance gate in this change passes; engineering EF800 Application execution remains isolated in the userspace worker.

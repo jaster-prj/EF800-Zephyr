@@ -1,6 +1,6 @@
 ## 1. Shared production source composition
 
-- [x] 1.1 Extract the common EF800Application and shared-service source list into a reusable CMake manifest.
+- [x] 1.1 Extract the common EF800 Application and shared-service source list into a reusable CMake manifest.
 - [x] 1.2 Update `application/ef800-application/CMakeLists.txt` to consume the common manifest without changing the physical source composition.
 - [x] 1.3 Add explicit physical and native-sim adapter source selections for watchdog, USB MSC, emulated devices, wiring, and front-panel support.
 - [x] 1.4 Add a source-parity check or build-time diagnostic that makes physical/native source-list drift visible.
@@ -21,7 +21,7 @@
 
 ## 4. Build and runtime verification
 
-- [x] 4.1 Build `application/ef800-application` for `native_sim` with the production EF800Application and healthy emulated peripherals.
+- [x] 4.1 Build `application/ef800-application` for `native_sim` with the production EF800 Application and healthy emulated peripherals.
 - [x] 4.2 Run the native-sim startup and front-panel smoke checks, including FAT storage, RTC, MCP23017, T6963, battery, keyboard, and profile initialization.
 - [x] 4.3 Build `application/ef800-application` for the physical `ef800` board and verify the fixed image contract remains unchanged.
 - [x] 4.4 Run the native Twister suite and Virtual EF800 deployment build using the unified target.

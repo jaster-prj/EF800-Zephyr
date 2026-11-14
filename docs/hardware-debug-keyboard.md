@@ -1,24 +1,24 @@
 # Hardware debug keyboard
 
-This guide describes how to test EF800Application workflows on physical EF800
+This guide describes how to test EF800 Application workflows on physical EF800
 hardware without pressing the fitted keyboard. The test host connects to the
-EF800Application console and sends semantic key names. EF800Application sends
+EF800 Application console and sends semantic key names. EF800 Application sends
 those names to the keyboard controller, which resolves each name to its matrix
 key and current scancode. The controller then emits the same PS/2-like
 scancode bytes used for physical keyboard input.
 
-The debug interface does not bypass EF800Application keyboard processing:
+The debug interface does not bypass EF800 Application keyboard processing:
 
 ```text
 test host console
-    -> EF800Application shell
-    -> EF800Application keyboard UART
+    -> EF800 Application shell
+    -> EF800 Application keyboard UART
     -> keyboard controller name/matrix/scancode mapping
     -> normal keyboard UART scancode output
-    -> EF800Application keyboard parser and application handlers
+    -> EF800 Application keyboard parser and application handlers
 ```
 
-The bootloader and BackupApplication do not consume keyboard-controller UART
+The EF800 Bootloader and EF800 Backup do not consume keyboard-controller UART
 input. They need no debug-keyboard command handling.
 
 ## Connections
@@ -30,7 +30,7 @@ UART4 through the CP2102 bridge on `COM7`, 115200 baud, 8 data bits, no parity,
 1 stop bit (115200 8N1). The hwdebug image's USB CDC console is a separate
 port, currently `COM10`.
 
-Bootloader, BackupApplication, and EF800Application emit the Zephyr startup
+EF800 Bootloader, EF800 Backup, and EF800 Application emit the Zephyr startup
 banner and route logs to the same UART4 connection.
 ```
 
@@ -38,7 +38,7 @@ Do not connect the terminal to the binary keyboard-controller link. The
 controller link is:
 
 ```text
-EF800Application LPUART1 to keyboard-controller USART3
+EF800 Application LPUART1 to keyboard-controller USART3
 115200 baud, 8 data bits, no parity, 1 stop bit (115200 8N1)
 ```
 
@@ -76,25 +76,25 @@ Flash the matching images at the fixed addresses:
 
 | Image | Target | Address |
 |---|---|---:|
-| Second-level bootloader | L496 | `0x08000000` |
-| BackupApplication | L496 | `0x08010000` |
-| EF800Application | L496 | `0x08030000` |
+| EF800 Bootloader | L496 | `0x08000000` |
+| EF800 Backup | L496 | `0x08010000` |
+| EF800 Application | L496 | `0x08030000` |
 | Keyboard Controller | L431 | controller application flash |
 
-Never flash a EF800Application image linked at `0x08000000`; it overlaps the
-second-level bootloader. Keep EF800Application FAT mounting and bootloader
+Never flash a EF800 Application image linked at `0x08000000`; it overlaps the
+second-level bootloader. Keep EF800 Application FAT mounting and bootloader
 update storage disabled until the QSPI hardware gates are verified.
 
 ## Console preparation
 
-Open a terminal on the normal EF800Application UART4/CP2102 console (`COM7`) at
+Open a terminal on the normal EF800 Application UART4/CP2102 console (`COM7`) at
 `115200 8N1` and capture the complete session log. Disable terminal-local echo
 if commands appear twice. USART1 is a product port and is not the fixed shell
 console in the current board configuration.
 
 Reset the target and wait for the normal boot output and the keyboard startup
 completion message. The debug commands should not be used before the keyboard
-controller has started and EF800Application has initialized its keyboard UART.
+controller has started and EF800 Application has initialized its keyboard UART.
 
 ## Key names
 
@@ -168,7 +168,7 @@ keyboard debug release shift
 keyboard debug stop
 ```
 
-EF800Application should process the `A` make while Shift is held and therefore
+EF800 Application should process the `A` make while Shift is held and therefore
 receive uppercase `A`. Releasing `a` must not release Shift.
 
 A Ctrl sequence can exercise the existing Ctrl+V application event:
@@ -196,8 +196,8 @@ keyboard debug stop
 
 Before the existing debug-disable response completes, the controller emits a
 normal break sequence for `a` and `shift`, clears virtual typematic state, and
-then finishes the existing debug-mode command. EF800Application must no longer
-have either key held after the command. EF800Application then restores normal
+then finishes the existing debug-mode command. EF800 Application must no longer
+have either key held after the command. EF800 Application then restores normal
 keyboard scanning.
 
 The stop command does not require the test host to know the scancodes. The
@@ -245,7 +245,7 @@ No application key, event, UART response, or echoed request should result from
 the unknown name.
 
 Do not include `off` in the default smoke test. The `off` key invokes
-EF800Application's real power-down output and should be tested only when that
+EF800 Application's real power-down output and should be tested only when that
 hardware behavior is understood and monitored.
 
 ## Physical keyboard isolation
@@ -274,7 +274,7 @@ keyboard debug stop
 
 The controller releases all virtual keys before leaving debug mode. If the
 keyboard UART or either MCU was reset during a request, reset both applications
-before continuing so the EF800Application translator and controller virtual
+before continuing so the EF800 Application translator and controller virtual
 state start from the same clean state. Capture the console log for any failed
 cleanup.
 
@@ -299,24 +299,24 @@ silent, debug stop releases every virtual key, and physical input resumes.
 When USB MSD is unavailable, use the MCUmgr filesystem transport on the
 selected DebugConsole. MCUmgr owns the DebugConsole binary stream while the
 transport is active; the interactive shell is paused during this operation.
-The shell is available by default. Enter `mcumgr start` on the EF800Application
-shell before starting the raw serial SMP host; reset EF800Application after the
+The shell is available by default. Enter `mcumgr start` on the EF800 Application
+shell before starting the raw serial SMP host; reset EF800 Application after the
 transfer to restore shell access.
 
 The package is uploaded to:
 
 ```text
-/EF800:/fwu/EF800_KEYBOARD.pkg
+/EF800:/fwu/EF800_KEYBOARD_APP.pkg
 ```
 
 The MCUmgr host must use raw serial SMP at `115200 8N1` on the selected
 DebugConsole. The equivalent host operation is:
 
 ```text
-fs upload EF800_KEYBOARD.pkg /EF800:/fwu/EF800_KEYBOARD.pkg
+fs upload EF800_KEYBOARD_APP.pkg /EF800:/fwu/EF800_KEYBOARD_APP.pkg
 ```
 
-After the upload completes, reset EF800Application to validate and process the
+After the upload completes, reset EF800 Application to validate and process the
 package. The package header and payload CRC are checked before the keyboard
 controller update starts.
 
@@ -326,7 +326,7 @@ diagnostic path and must not be used for production transfer testing.
 The package path remains:
 
 ```text
-/EF800:/fwu/EF800_KEYBOARD.pkg
+/EF800:/fwu/EF800_KEYBOARD_APP.pkg
 ```
 
 The hwdebug image returns `K` only after both the transfer CRC and the package

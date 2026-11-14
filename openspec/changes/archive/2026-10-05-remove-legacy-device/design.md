@@ -1,8 +1,8 @@
 ## Context
 
-EF800 currently stores port assignments twice: a compact 40-byte boot metadata record uses one 4-bit builder ID and one 4-bit connection ID per port, while FAT-backed `port_assignment_N` records already carry a full 32-bit plugin ID. IDs `2` and `3` currently represent Elta3 and FTS3XX/Fennel1 in shared validation, a fixed port-device table, and EF800Application dispatch. External plugin discovery happens before assignment initialization in EF800Application, but the current registry also registers those legacy implementations as built-ins.
+EF800 currently stores port assignments twice: a compact 40-byte boot metadata record uses one 4-bit builder ID and one 4-bit connection ID per port, while FAT-backed `port_assignment_N` records already carry a full 32-bit plugin ID. IDs `2` and `3` currently represent Elta3 and FTS3XX/Fennel1 in shared validation, a fixed port-device table, and EF800 Application dispatch. External plugin discovery happens before assignment initialization in EF800 Application, but the current registry also registers those legacy implementations as built-ins.
 
-The bootloader and EF800Application both consume shared metadata. Port 4 has special USB personality behavior, and DebugDevice, USB MSD, and BlueNRG are not measurement plugins and must remain functional. The metadata partition is fixed at 32 KiB, so a larger fixed record fits without a partition change.
+The bootloader and EF800 Application both consume shared metadata. Port 4 has special USB personality behavior, and DebugDevice, USB MSD, and BlueNRG are not measurement plugins and must remain functional. The metadata partition is fixed at 32 KiB, so a larger fixed record fits without a partition change.
 
 ## Goals / Non-Goals
 
@@ -13,7 +13,7 @@ The bootloader and EF800Application both consume shared metadata. Port 4 has spe
 - Migrate version 1 metadata safely, explicitly clearing legacy IDs `2` and `3`.
 - Reconcile persisted assignment files against the ready external measurement registry after discovery.
 - Preserve non-measurement boot, console, USB, and recovery assignments.
-- Remove the legacy device table from EF800Application runtime dispatch while retaining protocol implementation code only where packaging requires it.
+- Remove the legacy device table from EF800 Application runtime dispatch while retaining protocol implementation code only where packaging requires it.
 
 **Non-Goals:**
 
@@ -35,11 +35,11 @@ The shared decoder/metadata reader will recognize version 1 sufficiently to migr
 
 ### Keep system assignments in metadata, external plugin assignments in full-ID records
 
-Version 2 metadata will carry full IDs for all supported port assignments so bootloader and EF800Application can preserve system behavior without legacy builder decoding. The FAT-backed assignment records remain authoritative for detailed plugin assignment state, and reconciliation keeps the two sources consistent where applicable.
+Version 2 metadata will carry full IDs for all supported port assignments so bootloader and EF800 Application can preserve system behavior without legacy builder decoding. The FAT-backed assignment records remain authoritative for detailed plugin assignment state, and reconciliation keeps the two sources consistent where applicable.
 
 ### Discover before reconcile
 
-EF800Application will discover external plugins before semantic assignment validation. The registry is the source of truth for whether a measurement plugin is currently loaded and ready. A registry entry that is missing, diagnostic-only, non-measurement, or unavailable cannot satisfy a persisted measurement assignment.
+EF800 Application will discover external plugins before semantic assignment validation. The registry is the source of truth for whether a measurement plugin is currently loaded and ready. A registry entry that is missing, diagnostic-only, non-measurement, or unavailable cannot satisfy a persisted measurement assignment.
 
 ### Clear stale assignments instead of preserving diagnostics as active devices
 
@@ -51,12 +51,12 @@ The fixed Elta3/FTS3XX device descriptors are removed from measurement assignmen
 
 ### Remove built-in measurement registration
 
-The current built-in Elta3/Fennel1 registry registration is incompatible with Option C and will be removed. External packages are the only measurement registry entries. Legacy protocol functions may remain in the SDK/package source tree but must not be reachable through EF800Application's assignment or runtime dispatch path.
+The current built-in Elta3/Fennel1 registry registration is incompatible with Option C and will be removed. External packages are the only measurement registry entries. Legacy protocol functions may remain in the SDK/package source tree but must not be reachable through EF800 Application's assignment or runtime dispatch path.
 
 ## Risks / Trade-offs
 
 - [Risk] Existing Elta3/Fennel1 users lose persisted assignments. -> [Mitigation] Make the clearing explicit, versioned, logged, and covered by migration tests; do not silently remap IDs.
-- [Risk] Bootloader and EF800Application images may be upgraded independently. -> [Mitigation] Keep v1 decoding/migration in shared code and make v2 validation strict; deploy shared metadata support in all L496 images together.
+- [Risk] Bootloader and EF800 Application images may be upgraded independently. -> [Mitigation] Keep v1 decoding/migration in shared code and make v2 validation strict; deploy shared metadata support in all L496 images together.
 - [Risk] A missing external package causes measurement assignments to disappear. -> [Mitigation] Treat this as intentional, show only ready loaded plugins, and preserve unrelated system assignments.
 - [Risk] Port 4 USB personality could regress during metadata rewrite. -> [Mitigation] Preserve existing NVS-authoritative Port 4 handling and add reboot/USB transition regression coverage.
 - [Risk] Full-ID records could be interpreted as legacy builder IDs by old code. -> [Mitigation] Bump the explicit metadata/assignment versions and remove legacy semantic resolution from the new path.
@@ -66,7 +66,7 @@ The current built-in Elta3/Fennel1 registry registration is incompatible with Op
 1. Add version 2 metadata structures, encoding, CRC, validation, and v1 migration helpers in shared code.
 2. Update bootloader metadata handling and tests so v1 can migrate and v2 controls boot state safely.
 3. Remove built-in measurement registration and legacy device assignment descriptors.
-4. Discover external plugins before loading and reconciling assignments in EF800Application.
+4. Discover external plugins before loading and reconciling assignments in EF800 Application.
 5. Reconcile metadata and FAT assignment records, clearing IDs `2`, `3`, unknown IDs, and unavailable/non-measurement plugins.
 6. Replace port UI enumeration and measurement startup/dispatch with registry-driven external plugin behavior.
 7. Run metadata, persistence, plugin, migration, bootloader, native, image-layout, and all firmware build gates.

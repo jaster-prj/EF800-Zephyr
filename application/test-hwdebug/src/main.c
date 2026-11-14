@@ -48,7 +48,7 @@ static void print_help(void)
 		"  keyboard id-raw\r\n"
 		"  keyboard i2c-status\r\n"
 		"  keyboard i2c-rom-test (no flash erase/write)\r\n"
-		"  keyboard update /DATA:/fwu/EF800_KEYBOARD.pkg\r\n"
+		"  keyboard update /DATA:/fwu/EF800_KEYBOARD_APP.pkg\r\n"
 		"  keyboard receive\r\n"
 		"  keyboard bootloader probe\r\n"
 		"  display test|interactive|status|wr-test [count]\r\n"

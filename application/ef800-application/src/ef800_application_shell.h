@@ -1,6 +1,6 @@
 /* SPDX-License-Identifier: Apache-2.0 */
 /** @file
- * @brief EF800Application Shell commands for RTC, composition, battery, memory,
+ * @brief EF800 Application Shell commands for RTC, composition, battery, memory,
  *        keyboard, and management diagnostics.
  */
 #ifndef EF800_APPLICATION_SHELL_H
@@ -30,6 +30,10 @@ struct ef800_application_shell_context {
 	int (*keyboard_boot_probe)(uint8_t *version);
 	/* Upload adapter; returns a shell-command status code. */
 	int (*keyboard_upload)(const struct shell *shell, size_t argc, char **argv);
+	/* Install the staged EF800 Backup package when storage is exclusively owned. */
+	int (*backup_update)(const struct shell *shell);
+	/* Manually install the staged EF800 Bootloader package. */
+	int (*bootloader_update)(const struct shell *shell);
 	/* Called after a composition change has been committed successfully. */
 	void (*composition_committed)(void *context);
 	/* Opaque argument supplied to composition_committed. */

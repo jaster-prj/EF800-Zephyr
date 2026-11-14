@@ -12,7 +12,7 @@
 
 ## Repository-Level ADRs Created
 
-- `adr/0001-package-owned-measurement-ui.md` - Packages own measurement submenu, logical input, and bounded display behavior while EF800Application owns hardware and lifecycle resources.
+- `adr/0001-package-owned-measurement-ui.md` - Packages own measurement submenu, logical input, and bounded display behavior while EF800 Application owns hardware and lifecycle resources.
 
 ## Notes
 

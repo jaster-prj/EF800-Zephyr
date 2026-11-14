@@ -6,8 +6,8 @@ Assessment date: 2026-11-12. This project does not require a particular MISRA ed
 
 - Reused the running `EF800_Devcontainer`; west topdir is `/workspace`, manifest is `application/manifest-repo/west.yml`, and Zephyr is `v4.4.2`.
 - Installed Cppcheck `2.17.1` and clang-tidy `22.1.8` in the devcontainer. No repository source or tracked build configuration was changed for the trial.
-- Generated six isolated Zephyr configurations under ignored `build/misra-pilot/fresh-*` directories. The EF800Application configuration was also fully built. The compile databases contain the actual GNU Arm GCC `14.3.0` C17 options, Zephyr Kconfig/generated include paths, and target flags.
-- EF800-owned application/shared C translation units identified by the six compile databases: EF800Application 54, BackupApplication 13, L496 bootloader 11, keyboard application 7, keyboard bootloader 4, keyboard updater 4. Generated files and Zephyr/west module sources were excluded by path ownership.
+- Generated six isolated Zephyr configurations under ignored `build/misra-pilot/fresh-*` directories. The EF800 Application configuration was also fully built. The compile databases contain the actual GNU Arm GCC `14.3.0` C17 options, Zephyr Kconfig/generated include paths, and target flags.
+- EF800-owned application/shared C translation units identified by the six compile databases: EF800 Application 54, EF800 Backup 13, L496 bootloader 11, keyboard application 7, keyboard bootloader 4, keyboard updater 4. Generated files and Zephyr/west module sources were excluded by path ownership.
 - `west twister -T application/tests -p native_sim --inline-logs --no-clean -x CMAKE_EXPORT_COMPILE_COMMANDS=ON` passed all 26 configurations and 175 test cases. Compile databases were generated for those configurations.
 - After extracting keyboard matrix debounce and application I2C service, the
   repeatable `application/scripts/run-c-quality.py` runner passed against all
@@ -28,7 +28,7 @@ Assessment date: 2026-11-12. This project does not require a particular MISRA ed
 - clang-tidy can analyze the six Zephyr databases after dropping a small explicit set of GCC-only options it does not accept and adding `--target=arm-none-eabi`. The trial retained the target CPU/Thumb/ABI flags, C17 mode, defines, generated Zephyr configuration, and include paths. This adaptation is a tool-compatibility workaround, not the compiler invocation and not proof that every compiler semantic is preserved; keep the removed options documented and revalidate when toolchains change.
 - A focused check set (`bugprone-sizeof-expression`, `bugprone-suspicious-memset-usage`, `readability-misleading-indentation`) completed successfully over the EF800-owned sources in all six image compile databases: 101 source entries after the keyboard-family extractions and no findings. It also completed over the standalone plugin host test sources and the native test configurations.
 - The native test pilot applied the same focused checks to EF800-owned test/shared inputs for all 26 configurations. A separate core-analyzer trial reported one null-dereference warning inside a Zephyr byte-order header while analyzing the virtual-USB test. This is external code and was not treated as an EF800 finding.
-- Adding `clang-analyzer-core.uninitialized.Assign` / `clang-analyzer-core.NullDereference` reported three EF800Application warnings at ADC/GPIO API call sites. The analyzer does not model Zephyr's successful syscall output writes in these paths; keep these checks supplemental until each warning can be reviewed, and do not gate on them as-is.
+- Adding `clang-analyzer-core.uninitialized.Assign` / `clang-analyzer-core.NullDereference` reported three EF800 Application warnings at ADC/GPIO API call sites. The analyzer does not model Zephyr's successful syscall output writes in these paths; keep these checks supplemental until each warning can be reviewed, and do not gate on them as-is.
 - Host `clang-tidy` initially could not use the container compile database because its `/workspace/...` working directories were unavailable on the host. Running clang-tidy `22.1.8` in the devcontainer against the adjusted database resolved that environment mismatch.
 - No `.clang-format` configuration exists. Do not apply default clang-format output blindly; first agree on formatting conventions and add a project configuration if automated formatting is wanted.
 
@@ -74,5 +74,5 @@ Assessment date: 2026-11-12. This project does not require a particular MISRA ed
 ## Limitations and next work
 
 - This pilot does not constitute MISRA assessment or conformance, and no standard edition is part of the project's requirement.
-- The six image compile databases are freshly configured; only EF800Application was fully built in the isolated pilot directory. Native tests and plugin tests were built and executed as described above.
+- The six image compile databases are freshly configured; only EF800 Application was fully built in the isolated pilot directory. Native tests and plugin tests were built and executed as described above.
 - Report exact analyzer/compiler versions, removed flags, inputs, and output with any future quality run. Do not claim checks for an image/test/package configuration that was not analyzed.

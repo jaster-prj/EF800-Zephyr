@@ -10,7 +10,7 @@ The new QSPI layout is:
 | Configuration FAT | `0x008000` | 992 KiB | Private EF800 configuration |
 | Shared Data FAT | `0x100000` | 3072 KiB | `data`, `plugins`, and `fwu` |
 
-The development EF800Application enables
+The development EF800 Application enables
 `CONFIG_EF800_APPLICATION_REFORMAT_LEGACY_QSPI=y`. Before it reads boot metadata or
 mounts storage, it checks QSPI offset zero for a validated legacy monolithic
 FAT boot sector. **If that signature is found, the firmware formats the new
@@ -28,12 +28,12 @@ boot can recognize the old layout and retry. The boot-state partition is erased
 last, after the new FAT volumes have been created. A normal FAT mount failure
 or invalid NVS record by itself does **not** trigger this formatter.
 
-The Bootloader and BackupApplication remain non-formatting: when they encounter
-the old layout, the Bootloader skips its update scan and BackupApplication does
-not start recovery MTP. The normal boot path must reach EF800Application for the
+The EF800 Bootloader and EF800 Backup remain non-formatting: when they encounter
+the old layout, the EF800 Bootloader skips its update scan and EF800 Backup does
+not start recovery MTP. The normal boot path must reach EF800 Application for the
 development migration to run.
 
-Use the EF800Application maintenance command for a full-layout format:
+Use the EF800 Application maintenance command for a full-layout format:
 
 ```text
 storage format-qspi
@@ -45,7 +45,7 @@ within 30 seconds. It refuses to run while USB MSC owns the disk, stops other
 USB storage personalities, unmounts both FAT volumes, erases all three fixed
 QSPI partitions, creates the two FAT volumes, verifies their raw boot sectors,
 seeds and verifies the BATSOC0/LCDCONTR1 COMPOSITION slots, erases boot-state
-NVS, then reboots. BackupApplication intentionally remains non-formatting while
+NVS, then reboots. EF800 Backup intentionally remains non-formatting while
 its recovery MTP service may own the volumes.
 
 ## Production and data-preservation gate
@@ -69,14 +69,14 @@ Configuration partition start. The status register read `0x40` (QE set, WIP
 clear); erase and read operations were observed, but QSPI programming remains
 unqualified.
 
-The previous EF800Application boot logged `fs mount error (-19)` because an
+The previous EF800 Application boot logged `fs mount error (-19)` because an
 erased/unformatted layout was not provisioned. A development-only blank-layout
 formatter was tested: both `fs_mkfs()` calls returned success, but **both raw
 FAT boot-sector checks failed**; provisioning returned `-5`, and mounts were
 skipped. Boot-state NVS also reported an invalid CRC. The boot-time blank
 formatter is now disabled on the physical board to prevent repeated attempts.
-EF800Application has an explicit `storage format-qspi confirm` maintenance
-command. It was run from EF800Application: both FAT partitions were erased, but
+EF800 Application has an explicit `storage format-qspi confirm` maintenance
+command. It was run from EF800 Application: both FAT partitions were erased, but
 both raw boot-sector checks failed (`-5`, I/O verification failure). The
 boot-state NVS erase is deliberately deferred until FAT verification succeeds,
 so NVS was not erased by that failed attempt.
@@ -89,13 +89,13 @@ not use those raw-test results to diagnose program behavior. The later GPIO
 bit-bang read, which bypassed the STM32 QSPI peripheral, agreed with the Zephyr
 API for both FAT headers after the flash replacement.
 
-After the external flash was replaced and soldered, the EF800Application
+After the external flash was replaced and soldered, the EF800 Application
 maintenance command was run again. Both FAT boot-sector checks passed, and the
-subsequent EF800Application boot mounted Configuration and Shared Data. The
+subsequent EF800 Application boot mounted Configuration and Shared Data. The
 Zephyr flash API and GPIO bit-bang SPI reads agreed on the FAT headers at
-`0x008000` and `0x100000`. EF800Application loaded COMPOSITION generation 2
+`0x008000` and `0x100000`. EF800 Application loaded COMPOSITION generation 2
 (`BATSOC0`/`LCDCONTR1`) and reported BATSOC0 active. The normal
-Bootloader/BackupApplication/EF800Application images are installed; the
+EF800 Bootloader/EF800 Backup/EF800 Application images are installed; the
 DeviceTree partition map is unchanged. The earlier raw QSPI program diagnostic
 was not trustworthy for 1-1-1 reads and should not overturn the successful
 replacement-flash verification.
@@ -110,7 +110,7 @@ beginning at offset zero.
 
 On the development target, `storage format-qspi confirm` erased all 4 MiB and
 reported both Configuration and Shared Data raw FAT boot sectors verified;
-COMPOSITION `BATSOC0/LCDCONTR1` was also verified. EF800Application subsequently
+COMPOSITION `BATSOC0/LCDCONTR1` was also verified. EF800 Application subsequently
 mounted both volumes. As expected, the format reset Configuration data,
 including the Port 4 USB assignment. Port 4 was restored to USB MTP, the target
 enumerated as `2fe3:ef87`, and the three MTP roots exposed Data, Plugins, and

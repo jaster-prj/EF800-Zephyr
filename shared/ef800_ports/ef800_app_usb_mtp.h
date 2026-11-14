@@ -1,5 +1,5 @@
 /* SPDX-License-Identifier: Apache-2.0 */
-/** @file @brief Expose EF800Application workspace files through USB MTP. */
+/** @file @brief Expose EF800 Application workspace files through USB MTP. */
 #ifndef EF800_APPLICATION_USB_MTP_H_
 #define EF800_APPLICATION_USB_MTP_H_
 
@@ -15,7 +15,7 @@ int ef800_app_usb_mtp_start(void);
  */
 int ef800_app_usb_mtp_stop(void);
 
-/** @brief Query whether EF800Application MTP is active.
+/** @brief Query whether EF800 Application MTP is active.
  * @return True when MTP is enabled.
  */
 bool ef800_app_usb_mtp_is_active(void);

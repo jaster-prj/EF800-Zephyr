@@ -4,7 +4,7 @@ This document records the STM32L496 engineering target connected through the
 ST-LINK probe on 2026-09-02. The target was deliberately erased after the
 legacy firmware captures had been checked. The erase and blank-check state are
 historical; the target was later used for controlled Zephyr bootloader and
-EF800Application bring-up. See `docs/migration-status.md` for current status.
+EF800 Application bring-up. See `docs/migration-status.md` for current status.
 
 ## Connection
 
@@ -37,7 +37,7 @@ captures of the legacy image regions, not a complete 1 MiB flash dump.
 |---|---:|---:|---:|---:|---|
 | `Backup/Bootloader.bin` | `0x08000000` | `0x10000` | `0x2004FF00` | `0x0800BABD` | `9744963130DA78E17D46A653240EFC5BEDF6BE256BDD31A91D042B99F7AAF122` |
 | `Backup/BackupApplication.bin` | `0x08010000` | `0x20000` | `0x2004FF00` | `0x08024AE5` | `9A631AB596AD9CB8960F0795826681CD1CD95E4731D0409508BCBB48E7495D52` |
-| `Backup/EF800Application.bin` | `0x08030000` | `0x80000` | `0x2004FF00` | `0x08046FA9` | `DD8957F2FC685F07C464009BD1B0B091AFF9DBDF3B27B23F4C2EAB701E407FA1` |
+| `Backup/EF800 Application.bin` | `0x08030000` | `0x80000` | `0x2004FF00` | `0x08046FA9` | `DD8957F2FC685F07C464009BD1B0B091AFF9DBDF3B27B23F4C2EAB701E407FA1` |
 
 The captures cover `0x08000000..0x080AFFFF`. The final
 `0x080B0000..0x080FFFFF` range was not captured because the target was still

@@ -1,6 +1,6 @@
 /* SPDX-License-Identifier: Apache-2.0 */
 /** @file
- * @brief EF800Application shared storage ownership, file access, and RTC services.
+ * @brief EF800 Application shared storage ownership, file access, and RTC services.
  */
 #ifndef EF800_APP_FOUNDATION_H
 #define EF800_APP_FOUNDATION_H
@@ -24,12 +24,12 @@ enum ef800_storage_root {
 	EF800_STORAGE_DATA = 1,
 };
 
-/** @brief Initialize EF800Application storage and platform foundation services.
+/** @brief Initialize EF800 Application storage and platform foundation services.
  * @return 0 on success; negative errno if required platform setup fails.
  */
 int ef800_app_foundation_init(void);
 
-/** @brief Query whether all EF800Application storage roots are mounted.
+/** @brief Query whether all EF800 Application storage roots are mounted.
  * @return True when storage is mounted.
  */
 bool ef800_storage_is_mounted(void);
@@ -103,7 +103,7 @@ const char *ef800_storage_data_dir(void);
  */
 bool ef800_storage_valid_name(const char *name);
 
-/* Build and open a path below one of the legacy EF800Application directories. */
+/* Build and open a path below one of the legacy EF800 Application directories. */
 
 /** @brief Build a bounded path below a managed storage root.
  * @param root Root directory selector.
@@ -125,7 +125,7 @@ int ef800_storage_build_path(enum ef800_storage_root root, const char *name,
 int ef800_storage_open(struct fs_file_t *file, enum ef800_storage_root root,
 			       const char *name, fs_mode_t flags);
 
-/** @brief Query whether the EF800Application RTC is ready.
+/** @brief Query whether the EF800 Application RTC is ready.
  * @return True when the device is ready.
  */
 bool ef800_app_rtc_is_ready(void);

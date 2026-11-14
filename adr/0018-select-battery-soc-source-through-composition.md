@@ -6,7 +6,7 @@
 
 ## Context
 
-EF800 targets can use different battery SOC sources: no SOC source, an ADC voltage estimate, or a MAX17048-compatible fuel gauge. EF800Application currently reads the gauge directly, while target composition is the established restart-scoped mechanism for selecting target hardware and behavior. The virtual target must exercise these same production source paths without introducing a second battery implementation.
+EF800 targets can use different battery SOC sources: no SOC source, an ADC voltage estimate, or a MAX17048-compatible fuel gauge. EF800 Application currently reads the gauge directly, while target composition is the established restart-scoped mechanism for selecting target hardware and behavior. The virtual target must exercise these same production source paths without introducing a second battery implementation.
 
 The ADC estimate requires a chemistry-specific lookup table calibrated in millivolts at the ADC pin. Calibration is target data, not a hardware-source selection. A gauge may be absent because it is unpowered when the battery is disconnected, so runtime availability must not rewrite persistent COMPOSITION.
 
@@ -18,7 +18,7 @@ Battery SOC acquisition SHALL be selected by one mutually exclusive `BATSOC` COM
 - `BATSOC1` selects the PC1 ADC source and a separately stored, validated calibration table.
 - `BATSOC2` selects the MAX17048-compatible fuel gauge and is the default.
 
-EF800Application SHALL use a common runtime battery snapshot regardless of source. Source availability and read failures are runtime state, not composition changes. If BATSOC2 cannot be probed at startup, the application reports SOC unavailable for that boot and probes again after restart. ADC calibration remains separate from COMPOSITION and is managed through a bounded shell interface.
+EF800 Application SHALL use a common runtime battery snapshot regardless of source. Source availability and read failures are runtime state, not composition changes. If BATSOC2 cannot be probed at startup, the application reports SOC unavailable for that boot and probes again after restart. ADC calibration remains separate from COMPOSITION and is managed through a bounded shell interface.
 
 Native-sim SHALL model the same source choices through Zephyr device APIs. Its browser SOC input SHALL update a shared virtual battery state that drives the selected MAX17048-compatible response or, for BATSOC1, an ADC-emulated PC1 voltage derived from the active lookup table.
 

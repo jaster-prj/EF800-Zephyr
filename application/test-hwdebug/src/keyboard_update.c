@@ -15,8 +15,8 @@
 #include "flash.h"
 #include "keyboard_protocol.h"
 #include "peripheral_tests.h"
-#include "ef800_keyboard_package.h"
 #include "ef800_update.h"
+#include "ef800_firmware_package.h"
 
 #define KB_UPDATE_PATH_MAX 64U
 #define KB_UPDATE_MAX_SIZE (256U * 1024U)
@@ -31,9 +31,9 @@
 #define KB_ROM_ADDRESS 0x08000000U
 #define KB_ROM_DEVICE_ID 0x0435U
 #define KB_RX_MAGIC 0x424B4645U
-#define KB_RX_PATH "/DATA:/fwu/EF800_KEYBOARD.pkg"
-#define KB_PACKAGE_MAX_SIZE (EF800_KEYBOARD_PACKAGE_HEADER_SIZE + \
-	EF800_KEYBOARD_PACKAGE_LIMIT)
+#define KB_RX_PATH "/DATA:/fwu/EF800_KEYBOARD_APP.pkg"
+#define KB_PACKAGE_MAX_SIZE (EF800_FIRMWARE_PACKAGE_HEADER_SIZE + \
+	EF800_FIRMWARE_L431_APPLICATION_SIZE)
 
 static const struct device *const update_uart = DEVICE_DT_GET(DT_NODELABEL(lpuart1));
 static const struct device *const console_uart = DEVICE_DT_GET(DT_CHOSEN(zephyr_console));
@@ -111,8 +111,14 @@ static int receive_console_magic(void)
 static int validate_keyboard_package(void)
 {
 	struct fs_file_t file;
-	struct ef800_keyboard_package_header header;
+	struct ef800_firmware_package_header header;
 	struct fs_dirent entry;
+	uint8_t wire_header[EF800_FIRMWARE_PACKAGE_HEADER_SIZE];
+	const struct ef800_firmware_semver coordinator_version = {
+		.major = EF800_FIRMWARE_INITIAL_VERSION_MAJOR,
+		.minor = EF800_FIRMWARE_INITIAL_VERSION_MINOR,
+		.patch = EF800_FIRMWARE_INITIAL_VERSION_PATCH,
+	};
 	uint8_t buffer[256];
 	uint32_t crc = 0U;
 	uint32_t remaining;
@@ -120,7 +126,7 @@ static int validate_keyboard_package(void)
 
 	ret = fs_stat(KB_RX_PATH, &entry);
 	if (ret != 0 || entry.type != FS_DIR_ENTRY_FILE ||
-		entry.size < EF800_KEYBOARD_PACKAGE_HEADER_SIZE) {
+		entry.size < EF800_FIRMWARE_PACKAGE_HEADER_SIZE) {
 		return -EINVAL;
 	}
 	fs_file_t_init(&file);
@@ -128,8 +134,16 @@ static int validate_keyboard_package(void)
 	if (ret != 0) {
 		return ret;
 	}
-	ret = fs_read(&file, &header, sizeof(header)) == sizeof(header) &&
-		ef800_keyboard_package_valid(&header, entry.size) ? 0 : -EINVAL;
+	ret = fs_read(&file, wire_header, sizeof(wire_header)) ==
+		(ssize_t)sizeof(wire_header) ?
+		ef800_firmware_package_header_parse(wire_header,
+			sizeof(wire_header), (size_t)entry.size,
+			EF800_FIRMWARE_TARGET_KEYBOARD_APPLICATION,
+			EF800_FIRMWARE_HARDWARE_ID_L431,
+			&coordinator_version, &header) : -EINVAL;
+	if (ret == 0 && fs_seek(&file, header.header_size, FS_SEEK_SET) < 0) {
+		ret = -EIO;
+	}
 	if (ret == 0) {
 		remaining = header.image_size;
 		while (remaining != 0U) {
@@ -148,8 +162,9 @@ static int validate_keyboard_package(void)
 	(void)fs_close(&file);
 	if (ret == 0) {
 		hwdebug_console_printf("\r\nkeyboard receive: package valid version=%u.%u.%u "
-			"target=0x%04x size=%u\r\n", header.version_major,
-			header.version_minor, header.version_patch, header.target_id,
+			"target=%u size=%u\r\n", header.image_version.major,
+			header.image_version.minor, header.image_version.patch,
+			header.target_id,
 			(unsigned int)header.image_size);
 	}
 	return ret;

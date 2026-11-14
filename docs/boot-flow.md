@@ -20,11 +20,11 @@ Boot failure state transitions are:
 ```text
 MAIN + watchdog reset         -> increment failure counter
 MAIN + normal reset/shutdown  -> clear failure counter
-failure limit reached         -> start BackupApplication
-BACKUP + next boot            -> clear counter and retry EF800Application
+failure limit reached         -> start EF800 Backup
+BACKUP + next boot            -> clear counter and retry EF800 Application
 ```
 
-BackupApplication is therefore a one-boot recovery path. It does not become a
+EF800 Backup is therefore a one-boot recovery path. It does not become a
 permanent boot target merely because the persistent failure counter reached the
 configured limit.
 
@@ -37,17 +37,22 @@ the legacy internal backup application. MCUboot may be evaluated later, but it
 cannot be adopted without changing the fixed backup-image contract.
 # Keyboard controller watchdog recovery
 
-Keyboard application update packages use:
+Keyboard firmware packages use their target-specific names:
 
 ```text
-/EF800:/fwu/EF800_KEYBOARD.pkg
+/EF800:/fwu/EF800_KEYBOARD_UPDATER.pkg
+/EF800:/fwu/EF800_KEYBOARD_BOOT.pkg
+/EF800:/fwu/EF800_KEYBOARD_APP.pkg
 ```
 
-The package contains a 32-byte keyboard-specific header followed by the
-application-only image linked at `0x08008000`. The resident keyboard
-bootloader at `0x08000000..0x08007fff` is preserved. The header identifies the
-STM32 device `0x0435`, image size, image CRC32, load address, SemVer, and force
-flag.
+Each file is a target-bound EFW1 package. The application image is linked at
+`0x08008000`; the resident keyboard bootloader occupies
+`0x08000000..0x08007fff`.
+
+EF800 Application reports staged update outcomes with the `firmware_update_status`
+shell command. Retry-required targets should be inspected before restaging; a
+Bootloader target reported unsupported remains ST-LINK-only until its separate
+flash-safety qualification is complete.
 
 The STM32L431 keyboard controller has a resident bootloader and a relocated
 application. The bootloader keeps a CRC-protected handoff record in the

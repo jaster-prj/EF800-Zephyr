@@ -469,7 +469,7 @@ static void report_boot_state(void)
 	} else if (ret == EF800_METADATA_MIGRATED) {
 		LOG_INF("legacy boot-state NVS migrated to watchdog-only record");
 	} else if (ret != 0 || !valid) {
-		LOG_WRN("boot-state NVS unavailable; EF800Application continues with defaults: %d",
+		LOG_WRN("boot-state NVS unavailable; EF800 Application continues with defaults: %d",
 			ret);
 	} else {
 		LOG_INF("Bootloader state: main failures=%u target=%u",

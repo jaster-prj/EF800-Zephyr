@@ -14,7 +14,7 @@
 #define EF800_APPLICATION_USB_UDC_NODE DT_NODELABEL(usbotg_fs)
 
 BUILD_ASSERT(DT_NODE_HAS_STATUS(EF800_APPLICATION_USB_UDC_NODE, okay),
-		     "EF800Application USB MSC requires an enabled USB controller");
+		     "EF800 Application USB MSC requires an enabled USB controller");
 
 USBD_DEVICE_DEFINE(ef800_app_usbd,
 		   DEVICE_DT_GET(EF800_APPLICATION_USB_UDC_NODE),

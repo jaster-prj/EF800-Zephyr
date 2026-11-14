@@ -8,7 +8,7 @@ The project should make one `application/ef800-application` application buildabl
 
 - **BREAKING** Remove the `application/ef800-virtual` application wrapper and its obsolete standalone virtual `main.c` path.
 - Make `application/ef800-application` buildable for both `-b ef800` and `-b native_sim`.
-- Establish one shared production source manifest for both targets so EF800Application, keyboard, persistence, measurement, ports, plugins, and UI sources cannot drift.
+- Establish one shared production source manifest for both targets so EF800 Application, keyboard, persistence, measurement, ports, plugins, and UI sources cannot drift.
 - Move physical and native-sim differences into explicit target-specific Kconfig, devicetree overlays, and adapter source lists.
 - Preserve the native-sim emulated GPIO, UART, I2C, RTC, battery, storage, T6963, keyboard, profile, and front-panel infrastructure that is still required by the Virtual EF800.
 - Remove only duplicate virtual application-model implementations; retain virtual hardware emulators and front-panel protocol components.

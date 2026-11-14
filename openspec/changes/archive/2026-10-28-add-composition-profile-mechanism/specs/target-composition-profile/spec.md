@@ -27,7 +27,7 @@ The system SHALL resolve stored COMP-Nr. tokens through a repository-owned catal
 - **THEN** the effective composition is empty and existing EF800 runtime behavior remains unchanged
 
 #### Scenario: Configuration storage is unavailable
-- **WHEN** EF800Application cannot read configuration storage during startup
+- **WHEN** EF800 Application cannot read configuration storage during startup
 - **THEN** composition initialization completes with defaults and reports that no persisted profile was activated
 
 ### Requirement: Ignore and preserve unknown COMP-Nr. tokens
@@ -86,11 +86,11 @@ The composition service SHALL persist a committed profile with an incremented ge
 The system SHALL activate a persisted composition only when the composition service is initialized. Committing a changed profile SHALL NOT reconfigure running hardware, alter functions, modify assignments, or change the current effective snapshot; it SHALL report restart-required state until the next initialization.
 
 #### Scenario: Profile is committed during a boot
-- **WHEN** a pending profile is committed successfully while EF800Application is running
+- **WHEN** a pending profile is committed successfully while EF800 Application is running
 - **THEN** the active effective composition remains unchanged and restart-required state is reported
 
 #### Scenario: Application initializes after commit
-- **WHEN** EF800Application next initializes the composition service and the committed generation is valid
+- **WHEN** EF800 Application next initializes the composition service and the committed generation is valid
 - **THEN** that generation becomes the active stored profile and is resolved through the current catalog
 
 ### Requirement: Keep the initial mechanism composition-neutral
@@ -102,4 +102,4 @@ The initial composition mechanism SHALL NOT define meanings for example COMP-Nr.
 
 #### Scenario: Empty default profile is used
 - **WHEN** no target-profile record has been provisioned
-- **THEN** existing physical and native-sim EF800Application behavior remains unchanged
+- **THEN** existing physical and native-sim EF800 Application behavior remains unchanged

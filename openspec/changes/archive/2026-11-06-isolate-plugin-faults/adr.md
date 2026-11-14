@@ -8,7 +8,7 @@
 
 ## In-Force ADR Context Reviewed
 
-- `adr/0001-package-owned-measurement-ui.md` - Preserves package-owned logical UI and input while EF800Application retains hardware, resource, and navigation ownership.
+- `adr/0001-package-owned-measurement-ui.md` - Preserves package-owned logical UI and input while EF800 Application retains hardware, resource, and navigation ownership.
 
 ## Repository-Level ADRs Created
 

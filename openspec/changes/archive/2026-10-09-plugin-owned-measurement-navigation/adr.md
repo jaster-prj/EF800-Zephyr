@@ -12,7 +12,7 @@
 - `adr/0003-use-native-sim-for-behavioral-ef800.md` - keeps this workflow behavioral native-sim evidence only.
 - `adr/0004-use-web-gateway-for-virtual-ef800-front-panel.md` - preserves gateway ownership of interactive simulator control.
 - `adr/0005-use-zephyr-device-emulation-for-production-native-sim.md` - preserves production device/API boundaries.
-- `adr/0006-use-single-ef800-application-target-for-physical-and-native-sim.md` - preserves shared EF800Application composition.
+- `adr/0006-use-single-ef800-application-target-for-physical-and-native-sim.md` - preserves shared EF800 Application composition.
 - `adr/0007-use-configurable-packed-t6963-renderer.md` - preserves the LCD transport contract.
 - `adr/0008-use-native-sim-package-control-and-restart-boundary.md` - preserves startup-only package activation and restart boundaries.
 - `adr/0009-use-bounded-native-sim-log-stream.md` - preserves bounded gateway diagnostics.

@@ -2,24 +2,24 @@
 
 ## Purpose
 
-TBD: Define bounded native-sim EF800Application log history and live browser diagnostics.
+TBD: Define bounded native-sim EF800 Application log history and live browser diagnostics.
 
 ## Requirements
 
-### Requirement: Publish bounded native-sim EF800Application log records
-The Virtual EF800 native-sim target SHALL publish formatted EF800Application log
+### Requirement: Publish bounded native-sim EF800 Application log records
+The Virtual EF800 native-sim target SHALL publish formatted EF800 Application log
 records through the existing private front-panel protocol without blocking the
 logging producer on browser or socket availability. The log stream SHALL be
 native-sim-only and SHALL NOT alter physical EF800 console routing.
 
-#### Scenario: EF800Application emits a log record
-- **WHEN** a EF800Application module emits an enabled log record
+#### Scenario: EF800 Application emits a log record
+- **WHEN** a EF800 Application module emits an enabled log record
 - **THEN** the native simulator enqueues a bounded record containing a sequence,
   severity, and bounded diagnostic text for front-panel delivery
 
 #### Scenario: No browser is connected
-- **WHEN** EF800Application emits logs while the front-panel client is absent
-- **THEN** EF800Application continues without waiting for a client and the
+- **WHEN** EF800 Application emits logs while the front-panel client is absent
+- **THEN** EF800 Application continues without waiting for a client and the
   simulator retains only the configured bounded recent history
 
 #### Scenario: Log producer exceeds the queue bound
@@ -35,7 +35,7 @@ client before sending subsequent live records. Records SHALL carry monotonic
 sequence numbers so clients can identify gaps or discontinuities.
 
 #### Scenario: Gateway connects after startup logs
-- **WHEN** the gateway establishes the front-panel connection after EF800Application
+- **WHEN** the gateway establishes the front-panel connection after EF800 Application
   has emitted log records
 - **THEN** the simulator sends the retained history in oldest-to-newest order,
   marks replayed records, and then delivers new live records
@@ -108,6 +108,6 @@ console routing, STM32 behavior, ARM executable loading, MPU containment,
 electrical timing, or fitted peripheral wiring.
 
 #### Scenario: Native-sim diagnostic stream is used during debugging
-- **WHEN** a developer reviews EF800Application logs through the browser
+- **WHEN** a developer reviews EF800 Application logs through the browser
 - **THEN** the deployment identifies the records as virtual behavioral diagnostics
   and retains the existing hardware qualification boundary

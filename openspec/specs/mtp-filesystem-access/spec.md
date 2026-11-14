@@ -15,7 +15,7 @@ The system SHALL present `/EF800:/data`, `/EF800:/plugins`, and `/EF800:/fwu` as
 
 #### Scenario: Required directory is absent at startup
 - **WHEN** FAT mounts successfully and one of the three approved directories does not exist
-- **THEN** EF800Application creates that directory before MTP becomes available or reports MTP unavailable without exposing a broader fallback root
+- **THEN** EF800 Application creates that directory before MTP becomes available or reports MTP unavailable without exposing a broader fallback root
 
 ### Requirement: Each MTP storage has a bounded initial object capacity
 The system SHALL support at most 12 simultaneously indexed files and directories in each exposed MTP storage for the initial release. Objects in one storage SHALL NOT consume the object capacity of another storage, and capacity exhaustion SHALL fail safely without corrupting FAT or returning a successful partial upload.
@@ -32,11 +32,11 @@ The system SHALL support at most 12 simultaneously indexed files and directories
 - **WHEN** Plugins reaches its 12-object capacity and Data remains below capacity
 - **THEN** Data remains usable up to its independent capacity
 
-### Requirement: MTP and EF800Application share mounted FAT safely
-While MTP is selected, EF800Application SHALL retain filesystem ownership and MTP SHALL access QSPI only through Zephyr filesystem APIs. FAT operations from USB and application threads SHALL be serialized by a reentrant filesystem configuration, and raw MSC disk access SHALL remain inactive.
+### Requirement: MTP and EF800 Application share mounted FAT safely
+While MTP is selected, EF800 Application SHALL retain filesystem ownership and MTP SHALL access QSPI only through Zephyr filesystem APIs. FAT operations from USB and application threads SHALL be serialized by a reentrant filesystem configuration, and raw MSC disk access SHALL remain inactive.
 
 #### Scenario: Host reads while EF800 accesses another file
-- **WHEN** the host downloads a completed data file while EF800Application accesses a different file
+- **WHEN** the host downloads a completed data file while EF800 Application accesses a different file
 - **THEN** both operations use the mounted filesystem without unmounting FAT or exposing raw sectors
 
 #### Scenario: Same object would be modified concurrently
@@ -51,26 +51,26 @@ Switching away from MTP SHALL disconnect the host, cancel the current MTP sessio
 - **THEN** the transfer is cancelled, the USB context is shut down, and the incomplete open upload is not treated as a valid completed file
 
 #### Scenario: Firmware creates a file during an existing session
-- **WHEN** EF800Application completes a new file after the host's object table was built
+- **WHEN** EF800 Application completes a new file after the host's object table was built
 - **THEN** a newly opened MTP session discovers the completed file without requiring an EF800 restart
 
 ### Requirement: Plugin uploads preserve startup-only activation
-Packages uploaded to `/EF800:/plugins` SHALL NOT be loaded or hot-replaced in the running EF800Application. Existing package validation and discovery SHALL process them only through the startup package lifecycle.
+Packages uploaded to `/EF800:/plugins` SHALL NOT be loaded or hot-replaced in the running EF800 Application. Existing package validation and discovery SHALL process them only through the startup package lifecycle.
 
 #### Scenario: Host uploads a plugin
 - **WHEN** the host completes a plugin package upload during an MTP session
 - **THEN** the running plugin set is unchanged and the package is considered for validation and discovery on a subsequent startup
 
 ### Requirement: Update packages are validated before use
-The system SHALL preserve `/EF800:/fwu/EF800_FW.bin` and `/EF800:/fwu/EF800_KEYBOARD.pkg` as the firmware and keyboard update paths. Bootloader and EF800Application SHALL reject incomplete, corrupt, or wrong-target packages and SHALL NOT program an update merely because an MTP object with the expected filename exists.
+The system SHALL preserve `/EF800:/fwu/EF800_FW.bin` for one-time bootstrap and the target-specific package paths `EF800_KEYBOARD_UPDATER.pkg`, `EF800_KEYBOARD_BOOT.pkg`, and `EF800_KEYBOARD_APP.pkg`. EF800 Application SHALL reject incomplete, corrupt, or wrong-target packages and SHALL NOT program an update merely because an MTP object with the expected filename exists.
 
 #### Scenario: Firmware upload is interrupted by power loss
 - **WHEN** power is lost before `EF800_FW.bin` is completely transferred
 - **THEN** the next boot validates and rejects the incomplete image without programming it
 
 #### Scenario: Keyboard package is invalid
-- **WHEN** `EF800_KEYBOARD.pkg` fails size, integrity, format, or target validation
-- **THEN** EF800Application does not program the keyboard controller and reports the validation failure
+- **WHEN** a target-specific keyboard package fails size, integrity, format, or target validation
+- **THEN** EF800 Application does not program the keyboard controller and reports the validation failure
 
 ### Requirement: MTP interoperates with supported host platforms
 The MTP personality SHALL enumerate and transfer files with native Windows MTP support and representative Linux `libmtp` desktop integration. Qualification SHALL cover both transfer directions, nested directories, boundary-sized files, cancellation, disconnect, reconnect, and interrupted transfers on the physical STM32L496 target.
@@ -85,4 +85,4 @@ The MTP personality SHALL enumerate and transfer files with native Windows MTP s
 
 #### Scenario: Host disconnects unexpectedly
 - **WHEN** the USB cable is removed during or after a transfer
-- **THEN** EF800Application continues running, FAT remains mountable and consistent, and a later connection can establish a new MTP session
+- **THEN** EF800 Application continues running, FAT remains mountable and consistent, and a later connection can establish a new MTP session

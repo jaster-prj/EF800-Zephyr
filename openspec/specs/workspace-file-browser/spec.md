@@ -7,7 +7,7 @@ Provide bounded browsing of selected workspace records and the latest stored pos
 ## Requirements
 
 ### Requirement: Expose workspace browsing from the main menu
-The EF800Application SHALL keep a top-level menu entry named `Workspace` and SHALL provide `Show Measurements` and `Show current Position` entries beneath it. Workspace-management actions such as restoring, selecting, creating, and listing workspaces SHALL remain available under Settings and SHALL continue to operate on the selected workspace.
+The EF800 Application SHALL keep a top-level menu entry named `Workspace` and SHALL provide `Show Measurements` and `Show current Position` entries beneath it. Workspace-management actions such as restoring, selecting, creating, and listing workspaces SHALL remain available under Settings and SHALL continue to operate on the selected workspace.
 
 #### Scenario: User opens the Workspace menu
 - **WHEN** the user selects `Workspace` from the main menu
@@ -86,7 +86,7 @@ The workspace viewer SHALL support selected workspace files larger than 4096 byt
 - **THEN** the same Modify, Delete, and Cancel actions are available without interpreting or converting its record format
 
 ### Requirement: Delete a selected workspace row
-The EF800Application SHALL delete a selected workspace row only after explicit confirmation. Deletion SHALL remove exactly the selected row and its row ending, when present, without changing the bytes of other rows. A row SHALL remain deletable regardless of its length or record type.
+The EF800 Application SHALL delete a selected workspace row only after explicit confirmation. Deletion SHALL remove exactly the selected row and its row ending, when present, without changing the bytes of other rows. A row SHALL remain deletable regardless of its length or record type.
 
 #### Scenario: Confirm deletion
 - **WHEN** the user selects Delete and confirms the prompt
@@ -101,7 +101,7 @@ The EF800Application SHALL delete a selected workspace row only after explicit c
 - **THEN** the row is removed while the remaining workspace bytes are preserved
 
 ### Requirement: Modify a selected workspace row as bounded raw text
-The EF800Application SHALL provide an inline editor for the selected row's raw text, independent of measurement, position, or plugin record semantics. The editor SHALL support Left/Right caret movement, Insert-mode toggling between insertion and overwrite, Backspace and Delete character removal, Enter to save, and Escape to cancel. It SHALL not allow inserted characters to create a new row. The editor SHALL visibly indicate the caret and current insert/overwrite mode, and SHALL limit editable row content to 255 bytes; longer rows SHALL remain deletable but SHALL NOT be editable.
+The EF800 Application SHALL provide an inline editor for the selected row's raw text, independent of measurement, position, or plugin record semantics. The editor SHALL support Left/Right caret movement, Insert-mode toggling between insertion and overwrite, Backspace and Delete character removal, Enter to save, and Escape to cancel. It SHALL not allow inserted characters to create a new row. The editor SHALL visibly indicate the caret and current insert/overwrite mode, and SHALL limit editable row content to 255 bytes; longer rows SHALL remain deletable but SHALL NOT be editable.
 
 #### Scenario: Insert and overwrite characters
 - **WHEN** the user moves the caret, toggles Insert, and types within an editable row
@@ -150,7 +150,7 @@ The persistence layer SHALL apply confirmed row deletions and saved modification
 - **THEN** replacement streams unchanged ranges without allocating memory proportional to file size
 
 ### Requirement: Reject workspace edits when the source changed during editing
-Before committing a row modification or deletion, the EF800Application SHALL verify that the selected workspace still matches the source version from which the row was selected. If the source changed, the application SHALL reject the edit, preserve the current workspace file, and report a conflict so the user can reload the viewer. This check SHALL also be performed while MTP is active.
+Before committing a row modification or deletion, the EF800 Application SHALL verify that the selected workspace still matches the source version from which the row was selected. If the source changed, the application SHALL reject the edit, preserve the current workspace file, and report a conflict so the user can reload the viewer. This check SHALL also be performed while MTP is active.
 
 #### Scenario: MTP changes the workspace during editing
 - **WHEN** MTP changes the selected workspace after the row is loaded and before local commit
@@ -180,11 +180,11 @@ The workspace views SHALL require a selected workspace and SHALL present a diagn
 
 #### Scenario: User leaves a workspace view
 - **WHEN** the user presses the host back key while viewing measurements or the current position
-- **THEN** EF800Application returns to the Workspace menu and releases viewer state without applying an unconfirmed change
+- **THEN** EF800 Application returns to the Workspace menu and releases viewer state without applying an unconfirmed change
 
 #### Scenario: User cancels a row edit or action
 - **WHEN** the user cancels row actions, deletion confirmation, or row editing
-- **THEN** EF800Application returns to the appropriate browsing state without modifying the workspace file
+- **THEN** EF800 Application returns to the appropriate browsing state without modifying the workspace file
 
 #### Scenario: User views current position
 - **WHEN** the user opens `Show current Position`

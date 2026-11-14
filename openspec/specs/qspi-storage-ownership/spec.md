@@ -15,35 +15,35 @@ The 4 MiB external QSPI SHALL be divided into a 32 KiB NVS boot-state region at 
 
 #### Scenario: Boot-state NVS contains an invalid record
 - **WHEN** the Bootloader can access the boot-state NVS but its record is missing, corrupt, or fails validation
-- **THEN** it resets only the boot-state record to defaults and proceeds to a valid EF800Application without formatting either FAT region
+- **THEN** it resets only the boot-state record to defaults and proceeds to a valid EF800 Application without formatting either FAT region
 
 #### Scenario: QSPI or boot-state NVS cannot be accessed
 - **WHEN** the Bootloader cannot access the external boot-state NVS
-- **THEN** it uses default boot state, reports that the failure counter is unavailable, and attempts a valid EF800Application without formatting configuration or shared-data storage
+- **THEN** it uses default boot state, reports that the failure counter is unavailable, and attempts a valid EF800 Application without formatting configuration or shared-data storage
 
 ### Requirement: Configuration and shared-data ownership are independent
-EF800Application SHALL keep the configuration FAT mounted for application settings and composition profiles while it is running. The shared-data FAT SHALL be mounted by EF800Application for normal data/plugin/update workflows, or unmounted before EF800Application USB MSD transfers raw ownership to the host. The two FAT regions SHALL never be represented as one raw MSC disk while EF800Application continues to mount the shared-data FAT.
+EF800 Application SHALL keep the configuration FAT mounted for application settings and composition profiles while it is running. The shared-data FAT SHALL be mounted by EF800 Application for normal data/plugin/update workflows, or unmounted before EF800 Application USB MSD transfers raw ownership to the host. The two FAT regions SHALL never be represented as one raw MSC disk while EF800 Application continues to mount the shared-data FAT.
 
-#### Scenario: EF800Application operates with MTP
-- **WHEN** EF800Application selects MTP
+#### Scenario: EF800 Application operates with MTP
+- **WHEN** EF800 Application selects MTP
 - **THEN** it retains filesystem ownership of both configuration and shared-data FAT regions and services MTP operations through filesystem APIs
 
-#### Scenario: EF800Application hands shared data to MSD
+#### Scenario: EF800 Application hands shared data to MSD
 - **WHEN** the effective composition is `USBMSD1` and Port 4 selects USB MSD
-- **THEN** EF800Application preserves configuration access, unmounts only the shared-data FAT before MSC starts, and crosses the existing restart boundary
+- **THEN** EF800 Application preserves configuration access, unmounts only the shared-data FAT before MSC starts, and crosses the existing restart boundary
 
-#### Scenario: EF800Application does not support MSD in native-sim
+#### Scenario: EF800 Application does not support MSD in native-sim
 - **WHEN** the effective composition is `USBMSD0`
-- **THEN** EF800Application does not start an MSC worker or unmount the shared-data FAT for MSC
+- **THEN** EF800 Application does not start an MSC worker or unmount the shared-data FAT for MSC
 
-### Requirement: BackupApplication provides exclusive recovery access to QSPI filesystems
-BackupApplication SHALL mount the configuration and shared-data FAT regions for MTP recovery only while it is the active firmware image. It SHALL NOT concurrently expose a raw MSC view of either mounted FAT region.
+### Requirement: EF800 Backup provides exclusive recovery access to QSPI filesystems
+EF800 Backup SHALL mount the configuration and shared-data FAT regions for MTP recovery only while it is the active firmware image. It SHALL NOT concurrently expose a raw MSC view of either mounted FAT region.
 
-#### Scenario: BackupApplication starts recovery MTP
-- **WHEN** BackupApplication starts with usable QSPI volumes
+#### Scenario: EF800 Backup starts recovery MTP
+- **WHEN** EF800 Backup starts with usable QSPI volumes
 - **THEN** it mounts the configuration and shared-data FAT regions and exposes them through its recovery MTP personality
 
-#### Scenario: EF800Application and BackupApplication storage ownership
+#### Scenario: EF800 Application and EF800 Backup storage ownership
 - **WHEN** either application runs
 - **THEN** only that running application accesses the QSPI FAT regions, and the Bootloader is not concurrently using them
 

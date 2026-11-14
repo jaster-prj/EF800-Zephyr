@@ -232,11 +232,13 @@ cases. Keep `docs/migration-status.md` authoritative when the suite changes.
 The fixed internal-flash layout is part of the compatibility contract:
 
 ```text
-bootloader  0x08000000  0x00010000
-backup      0x08010000  0x00018000
-metadata    0x08028000  0x00008000
-main        0x08030000  0x000D0000
+EF800 Bootloader    0x08000000  0x00010000
+EF800 Backup        0x08010000  0x00020000
+EF800 Application   0x08030000  0x000D0000
 ```
+
+The internal-flash map has no metadata partition. Boot-state metadata is stored
+in the first 32 KiB QSPI partition at offset `0x00000000`.
 
 After a pristine build, verify both binary sizes and linked addresses:
 
@@ -248,17 +250,17 @@ Pass six alternate build directories when validating nonstandard local build
 names. Their order is bootloader, backup, main, keyboard, keyboard bootloader,
 and keyboard updater.
 
-Never flash an EF800Application image linked at `0x08000000`; it would overlap
+Never flash an EF800 Application image linked at `0x08000000`; it would overlap
 the second-level bootloader.
 
 ## Hardware Gates
 
-Keep EF800Application FAT mounting, bootloader update storage, and USB sharing
+Keep EF800 Application FAT mounting, bootloader update storage, and USB sharing
 release-gated until the fitted QSPI part, capacity, erase geometry, maximum
 frequency, and existing FAT volume are fully verified. The current recoverable
 bring-up target has mounted FAT successfully, but this is not production
-qualification. Never allow EF800Application to mount the QSPI FAT volume while
-BackupApplication exposes the same disk through USB MSC.
+qualification. Never allow EF800 Application to mount the QSPI FAT volume while
+EF800 Backup exposes the same disk through USB MSC.
 
 Hardware changes must also validate the MCP23017 wiring, USB-select polarity,
 keyboard reset and UART protocol, T6963 timing and polarity, board oscillator,

@@ -1,6 +1,6 @@
 # Refactor Implementation Evidence
 
-## L496 bootloader and BackupApplication
+## L496 bootloader and EF800 Backup
 
 - Extracted architecture-specific vector validation at handoff and Cortex-M
   processor cleanup into `application/ef800-bootloader/src/boot_handoff.c`.
@@ -10,7 +10,7 @@
 - Added full-partition CRC preservation assertions around rejected update
   packages for Main, Backup, and bootloader partitions. Covered bad CRC,
   truncated payload, and wrong load address in `tests/shared/boot_update`.
-- BackupApplication review found that composition, MTP, and LCD behavior are
+- EF800 Backup review found that composition, MTP, and LCD behavior are
   already separated. Startup mount preparation, recovery roots, and failure
   unmount cleanup remain together in the startup composition; no additional
   boundary was extracted because this is one lifetime-sensitive sequence.
@@ -109,10 +109,10 @@ hardware acceptance, which remains a closeout gate.
 - After integrating the UART protocol module into the shared native-test source
   manifest, the complete native suite passed all 26 configurations and 180 test
   cases. The plugin-host suite also passed all five CTest cases after removing
-  side effects from assertions. Reviewed and fixed the EF800Application's six
+  side effects from assertions. Reviewed and fixed the EF800 Application's six
   remaining Cppcheck style findings: const-correct validation, token pointer
   qualification, encoded-buffer scope, and mutable registry lookup that no
-  longer casts away the public lookup's const result. EF800Application builds;
+  longer casts away the public lookup's const result. EF800 Application builds;
   composition, persistence, and plugin native suites pass 47/47, and its
   configured Cppcheck database reports zero owned findings. The all-target
   rerun is in progress; other target/test/package groups remain unreviewed and
@@ -125,7 +125,7 @@ hardware acceptance, which remains a closeout gate.
   fault-reset suppressions because the test must reset injected faults between
   commit and recovery operations, and two callback-observation suppressions in
   the plugin service test. The affected native configurations pass 76/76 cases;
-  EF800Application Cppcheck remains zero. Follow-up Cppcheck review also cleared
+  EF800 Application Cppcheck remains zero. Follow-up Cppcheck review also cleared
   the native-sim USB peer style findings and the measurement plugin host
   findings. Plugin host CTest passes 5/5, and the affected USB, keyboard, and
   LCD native suites pass 24/24. The latest all-target quality rerun passed:
@@ -164,22 +164,22 @@ hardware acceptance, which remains a closeout gate.
   C-quality results/profile, regression counts, image sizes/addresses, and
   remaining hardware qualifications.
 
-## EF800Application / external-SRAM sequencing
+## EF800 Application / external-SRAM sequencing
 
 - Task 4.1 is completed by explicit sequencing, not by claiming the related
   `external-sram-memory-pool` OpenSpec change is complete. That change still has
   pending plugin declaration-validation/integration and target MPU/fault
   acceptance work.
-- EF800Application domain moves that relocate persistent state, alter static
+- EF800 Application domain moves that relocate persistent state, alter static
   allocation, plugin admission, pool selection, or MPU layout are sequenced
   after those external-SRAM tasks. No memory-pool or plugin-host source was
   moved in this increment. Any future extraction must preserve internal-only
   fallback, plugin memory ownership, and common physical/native source
   composition, and must rerun the applicable pool/plugin checks.
 
-## EF800Application workspace editor increment
+## EF800 Application workspace editor increment
 
-- Began task 4.2 with the selected narrow boundary: the EF800Application retains
+- Began task 4.2 with the selected narrow boundary: the EF800 Application retains
   display/menu navigation, while `ef800_workspace_row_editor` owns bounded raw
   row text, caret, insert/overwrite mode, and character editing operations. Its
   host still commits through the version-checked, journaled workspace API, so
@@ -190,7 +190,7 @@ hardware acceptance, which remains a closeout gate.
   backspace/delete, row-ending metadata retention, and the 255-byte limit.
   Focused native-sim editor tests pass (1 configuration, 2 cases), and the
   workspace persistence suite passes (1 configuration, 15 cases).
-- Added the editor source to the common EF800Application source manifest. Both
+- Added the editor source to the common EF800 Application source manifest. Both
   physical and native-sim pristine builds report 51 common sources and pass.
   Native-only build guards were corrected for target-specific STM32 UART
   headers, plugin arena capacity constants, and optional user-worker scratch

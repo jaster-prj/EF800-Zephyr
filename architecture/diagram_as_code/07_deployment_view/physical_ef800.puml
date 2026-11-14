@@ -4,9 +4,9 @@ top to bottom direction
 
 node "EF800 PCB" {
   node "STM32L496ZGT6 — Main / Debug" as l496 {
-    artifact "Bootloader\n0x08000000 / 64 KiB" as bl
-    artifact "BackupApplication\n0x08010000 / 128 KiB" as backup
-    artifact "EF800Application\n0x08030000 / 832 KiB" as main
+    artifact "EF800 Bootloader\n0x08000000 / 64 KiB" as bl
+    artifact "EF800 Backup\n0x08010000 / 128 KiB" as backup
+    artifact "EF800 Application\n0x08030000 / 832 KiB" as main
     database "Internal flash\n1 MiB" as internal
     component "QSPI controller" as qspi_ctl
     database "External QSPI Bank 1\n32 KiB NVS\n992 KiB Configuration FAT\n3072 KiB Shared Data FAT" as qspi

@@ -1,6 +1,6 @@
 /* SPDX-License-Identifier: Apache-2.0 */
 /** @file
- * @brief Render EF800Application menus and domain views through the T6963 API.
+ * @brief Render EF800 Application menus and domain views through the T6963 API.
  */
 #ifndef EF800_APPLICATION_DISPLAY_H
 #define EF800_APPLICATION_DISPLAY_H
