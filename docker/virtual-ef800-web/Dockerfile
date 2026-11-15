@@ -1,5 +1,5 @@
 # syntax=docker/dockerfile:1.7
-FROM python:3.13-slim-bookworm@sha256:a1165e272e578941b84abc79e4ab38a0305cd12803a5c4247979ac7655f4d641 AS runtime
+FROM python:3.15-slim-bookworm AS runtime
 RUN useradd --system --home-dir /app --shell /usr/sbin/nologin virtualef800
 WORKDIR /app
 COPY GSE/Virtual-EF800/requirements.txt ./requirements.txt
