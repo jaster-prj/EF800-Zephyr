@@ -26,7 +26,7 @@ jobs:
         run: ln -s /workspace ./zephyr_workspace
 
       - name: Checkout application
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
         with:
           path: ./zephyr_workspace/application
 
