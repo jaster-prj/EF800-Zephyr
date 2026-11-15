@@ -174,7 +174,7 @@ jobs:
           cp application/build/keyboard-application/zephyr/zephyr.bin application/artifacts/keyboard-application.bin
 
       - name: Publish images
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: ef800-zephyr-images
           path: zephyr_workspace/application/artifacts/
